@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>사회복지 바이브코딩 아카이브</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="title-row">
+          <div class="brand">
+            <h1 class="room-title" id="roomTitle">아카이브</h1>
+            <p class="room-sub" id="roomSub"></p>
+          </div>
+          <button class="icon-btn" id="themeBtn" title="테마 전환">🌗</button>
+        </div>
+        <div class="controls">
+          <label class="search">
+            <span>🔍</span>
+            <input id="searchInput" type="search" placeholder="본문·작성자·날짜·노드 검색" autocomplete="off" />
+          </label>
+          <span class="filter">
+            <select id="participantFilter"><option value="">전체 참여자</option></select>
+          </span>
+        </div>
+        <nav class="tabs" id="tabs">
+          <div class="tab active" data-view="summary">주제별 지식</div>
+          <div class="tab" data-view="graph">관계망</div>
+          <div class="tab" data-view="timeline">타임라인</div>
+          <div class="tab" data-view="gallery">갤러리</div>
+          <div class="tab" data-view="stats">통계</div>
+        </nav>
+      </div>
+    </header>
+
+    <main class="view" id="view"><p class="hint">불러오는 중…</p></main>
+  </div>
+
+  <div class="lightbox" id="lightbox">
+    <span class="close" id="lightboxClose">×</span>
+    <img id="lightboxImg" alt="" />
+  </div>
+
+  <script src="data.js"></script>
+  <script src="graph.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
