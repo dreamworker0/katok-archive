@@ -1,0 +1,16 @@
+{
+  "name": "katok-archive",
+  "version": "1.0.0",
+  "private": true,
+  "description": "카톡 아카이브 - Firestore 적재 도구 (프런트는 빌드 없이 동작)",
+  "scripts": {
+    "payload": "python -m scripts.build_firestore_payload",
+    "upload": "node scripts/upload_firestore.js",
+    "upload:dry": "node scripts/upload_firestore.js --dry-run",
+    "hosting": "python -m scripts.build_hosting",
+    "deploy": "firebase deploy"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.0"
+  }
+}

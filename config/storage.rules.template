@@ -1,0 +1,36 @@
+rules_version = '2';
+
+// 카톡 아카이브 이미지 — 회원 전용
+//
+// 주의: Storage 규칙은 Firestore를 읽을 수 없다(교차 서비스 조회 미지원).
+// 그래서 P1에서는 멤버 이메일 목록을 config/members.json 으로부터 생성해 박아 넣는다.
+// 이 파일은 템플릿이며, 실제 storage.rules 는
+//   python scripts/build_firestore_payload.py
+// 가 __MEMBER_EMAILS__ 를 치환해 생성한다. (멤버 변경 시 재생성 + 재배포 필요)
+//
+// P2에서 Cloud Functions로 Custom Claims를 부여하면
+//   request.auth.token.member == true
+// 한 줄로 대체되어 재배포가 필요 없어진다.
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isMember() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() in [
+__MEMBER_EMAILS__
+        ];
+    }
+
+    // 아카이브 이미지: 멤버 읽기 전용. 업로드는 Admin SDK로만.
+    match /images/{allPaths=**} {
+      allow read: if isMember();
+      allow write: if false;
+    }
+
+    // 그 밖의 모든 경로 차단
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

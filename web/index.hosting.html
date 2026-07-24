@@ -3,12 +3,21 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
   <title>사회복지 바이브코딩 아카이브</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <!-- 로컬 미리보기용. 데이터를 data.js 로 임베드하며 로그인이 없다. -->
-  <div class="app" id="appRoot">
+  <!-- 배포본: 대화 데이터를 담지 않는다. 로그인 후 Firestore 에서 받아온다. -->
+  <div class="gate" id="gate">
+    <div class="gate-card" id="gateBody">
+      <div class="gate-spinner"></div>
+      <p class="gate-desc">준비 중…</p>
+    </div>
+    <p class="gate-foot">구성원 전용 아카이브 · 대화 참여자만 열람할 수 있습니다</p>
+  </div>
+
+  <div class="app hidden" id="appRoot">
     <header class="topbar">
       <div class="topbar-inner">
         <div class="title-row">
@@ -46,9 +55,15 @@
     <img id="lightboxImg" alt="" />
   </div>
 
-  <script src="data.js"></script>
+  <!-- Firebase SDK: Hosting 예약 URL(동일 출처)로 서빙 — 외부 CDN 아님 -->
+  <script src="/__/firebase/12.16.0/firebase-app-compat.js"></script>
+  <script src="/__/firebase/12.16.0/firebase-auth-compat.js"></script>
+  <script src="/__/firebase/12.16.0/firebase-firestore-compat.js"></script>
+
+  <script src="firebase-config.js"></script>
   <script src="images.js"></script>
   <script src="graph.js"></script>
   <script src="app.js"></script>
+  <script src="boot.js"></script>
 </body>
 </html>

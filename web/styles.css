@@ -217,7 +217,33 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .lightbox img { max-width: 100%; max-height: 90vh; border-radius: 8px; }
 .lightbox .close { position: absolute; top: 14px; right: 18px; color: #fff; font-size: 32px; cursor: pointer; }
 
+/* ---------- 로그인 게이트 ---------- */
+.hidden { display: none !important; }
+.gate { min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; padding: 24px; gap: 18px; }
+.gate-card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+  box-shadow: var(--shadow); padding: 32px 28px; max-width: 420px; width: 100%; text-align: center; }
+.gate-title { margin: 0 0 10px; font-size: 20px; font-weight: 800; letter-spacing: -0.01em; }
+.gate-desc { margin: 0 0 18px; font-size: 14px; color: var(--ink-soft); line-height: 1.7; }
+.gate-btn { padding: 10px 18px; font-size: 14px; font-weight: 600; }
+.gate-foot { font-size: 12px; color: var(--ink-faint); margin: 0; text-align: center; }
+.gate-spinner { width: 30px; height: 30px; margin: 4px auto 16px; border-radius: 50%;
+  border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 로그인 사용자 칩 */
+.session { display: inline-flex; align-items: center; gap: 6px; }
+.session .chip { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 이미지 로드 실패 표시 */
+img.img-error { background: var(--surface-2); border-style: dashed; }
+/* 보호모드에서 아직 안 받아온 이미지 자리 */
+.imgs img:not([src]), .gallery img:not([src]) {
+  background: var(--surface-2) linear-gradient(90deg, transparent, rgba(128,128,128,.08), transparent);
+}
+
 @media (max-width: 560px) {
   .filter select { max-width: 38vw; }
   .doc { padding: 16px; }
+  .session .chip { max-width: 30vw; }
 }

@@ -30,7 +30,7 @@
     lightboxImg: document.getElementById("lightboxImg"),
     lightboxClose: document.getElementById("lightboxClose"),
   };
-  var state = { view: "summary", q: "", nick: "", graph: null };
+  var state = { view: "summary", q: "", nick: "", graph: null, session: null };
 
   // ---------- 유틸 ----------
   function esc(s) {
@@ -234,7 +234,7 @@
       } else {
         var single = m.images.length === 1 ? " single" : "";
         inner = '<div class="imgs' + single + '">' +
-          m.images.map(function (s) { return '<img loading="lazy" src="' + esc(s) + '" alt="" />'; }).join("") + "</div>";
+          m.images.map(function (s) { return '<img data-img="' + esc(s) + '" alt="" />'; }).join("") + "</div>";
       }
     } else if (m.is_file_share) {
       inner = '<div class="file-badge">📎 ' + linkify(esc(m.text.replace(/^파일:\s*/, ""))) + "</div>";
@@ -277,15 +277,16 @@
     if (!items.length) { el.view.innerHTML = '<p class="hint">표시할 이미지가 없어요.</p>'; return; }
     var html = ['<p class="room-sub" style="margin:0 0 12px">보관된 사진 ' + items.length + "장</p>", '<div class="gallery">'];
     items.forEach(function (it) {
-      html.push('<figure data-jump="m-' + it.id + '"><img loading="lazy" src="' + esc(it.src) +
+      html.push('<figure data-jump="m-' + it.id + '"><img data-img="' + esc(it.src) +
         '" alt="" /><figcaption>' + esc(it.date) + " · " + esc(it.nick) + "</figcaption></figure>");
     });
     html.push("</div>");
     el.view.innerHTML = html.join("");
     Array.prototype.forEach.call(el.view.querySelectorAll("figure"), function (fig) {
-      fig.querySelector("img").onclick = function () { openLightbox(this.src); };
+      fig.querySelector("img").onclick = function () { openLightbox(this); };
       fig.querySelector("figcaption").onclick = function () { jumpToTimeline(fig.getAttribute("data-jump")); };
     });
+    bindImages(el.view);
   }
 
   // ---------- 통계 ----------
@@ -324,10 +325,21 @@
   // ---------- 라이트박스 ----------
   function bindImages(scope) {
     Array.prototype.forEach.call(scope.querySelectorAll(".imgs img"), function (img) {
-      img.onclick = function () { openLightbox(img.src); };
+      img.onclick = function () { openLightbox(img); };
     });
+    // 보호모드에서는 화면에 들어올 때 인증 요청으로 받아온다
+    if (window.ArchiveImages) window.ArchiveImages.observe(scope);
   }
-  function openLightbox(src) { el.lightboxImg.src = src; el.lightbox.classList.add("on"); }
+  function openLightbox(img) {
+    var path = img.getAttribute("data-img");
+    // 이미 받아둔 blob URL 이 있으면 그대로, 없으면 경로로 해석
+    if (img.src) {
+      el.lightboxImg.src = img.src;
+    } else if (path && window.ArchiveImages) {
+      window.ArchiveImages.urlFor(path).then(function (u) { el.lightboxImg.src = u; });
+    }
+    el.lightbox.classList.add("on");
+  }
   function closeLightbox() { el.lightbox.classList.remove("on"); el.lightboxImg.src = ""; }
 
   // ---------- 검색·라우팅 ----------
@@ -351,8 +363,33 @@
     else if (state.view === "stats") renderStats();
   }
 
+  // 로그인한 사용자 표시 + 로그아웃 (보호모드에서만 세션이 주어진다)
+  function renderSession() {
+    var host = document.getElementById("sessionBox");
+    if (!host) return;
+    var s = state.session;
+    if (!s) { host.innerHTML = ""; return; }
+    host.innerHTML =
+      '<span class="chip" title="' + esc(s.user.email) + '">' +
+      esc(s.user.name) + (s.role === "admin" ? " · 관리자" : "") + "</span>" +
+      '<button class="icon-btn" id="signOutTop" title="로그아웃">로그아웃</button>';
+    var b = document.getElementById("signOutTop");
+    if (b) b.onclick = function () { s.signOut(); };
+  }
+
   // ---------- 초기화 ----------
-  function init() {
+  function init(session) {
+    // boot.js 가 Firestore 로드를 끝낸 뒤 호출하므로 여기서 다시 읽는다
+    A = window.ARCHIVE || {};
+    MSGS = A.messages || [];
+    CATS = A.categories || [];
+    STATS = A.stats || {};
+    DIGESTS = A.digests || {};
+    KNOW = A.knowledge || { nodes: [], edges: [] };
+    CAT_LABEL = {}; CATS.forEach(function (c) { CAT_LABEL[c.id] = c.label; });
+
+    state.session = session || null;
+    renderSession();
     el.roomTitle.textContent = A.chat_room || "아카이브";
     var t = STATS.totals || {};
     el.roomSub.textContent = (t.messages || 0) + "개 메시지 · " + (t.participants || 0) + "명 · " +
@@ -396,5 +433,9 @@
 
     render();
   }
-  init();
+
+  // 보호모드(hosting)에서는 boot.js 가 로그인·데이터 로드를 끝낸 뒤 start() 를 부른다.
+  // 로컬 미리보기(site/)에서는 data.js 가 이미 window.ARCHIVE 를 채워두므로 바로 시작.
+  window.ArchiveApp = { start: init };
+  if (window.ARCHIVE && window.ARCHIVE.messages) init(null);
 })();
