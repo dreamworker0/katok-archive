@@ -41,3 +41,8 @@ Thumbs.db
 
 # Codex 격리 작업공간
 /.worktrees/
+
+# 카톡 내보내기 작업 폴더 (원본 대화 txt — 커밋하지 않음)
+/inbox/*
+!/inbox/README.md
+/logs/
