@@ -189,19 +189,65 @@ def load_members() -> list[dict]:
         role = m.get("role") or "user"
         if role not in ("admin", "user"):
             role = "user"
-        members.append({"email": email, "name": m.get("name") or "", "role": role})
+        members.append({
+            "email": email,
+            "name": m.get("name") or "",
+            # 대화방 표시명. 아카이브 참여자와 로그인 계정을 잇는 유일한 고리라
+            # 오타가 나면 개인화가 조용히 어긋난다 — check_member_nicknames 가 잡는다.
+            "nickname": (m.get("nickname") or "").strip(),
+            "role": role,
+        })
     return members
 
 
+def check_member_nicknames(members: list[dict], participants: dict) -> list[str]:
+    """멤버의 nickname 이 실제 참여자 명단에 있는지 대조한다.
+
+    구글 계정(이메일)과 카톡 표시명은 공유하는 식별자가 없어 자동 매칭이 불가능하다.
+    사람이 손으로 넣는 값이므로, 발행 때마다 오타·미기입을 경고로 남긴다.
+    """
+    known = {p["nickname"] for p in participants.get("participants", [])}
+    warnings = []
+    for m in members:
+        if not m["nickname"]:
+            warnings.append("%s: nickname 미기입 (개인화 기능이 동작하지 않음)" % m["email"])
+        elif m["nickname"] not in known:
+            warnings.append(
+                "%s: nickname '%s' 이 참여자 명단에 없음 (오타 확인)"
+                % (m["email"], m["nickname"])
+            )
+    return warnings
+
+
+PLACEHOLDER = "__MEMBER_EMAILS__"
+
+
 def render_storage_rules(members: list[dict]) -> str:
-    """멤버 목록을 박아 넣은 storage.rules 텍스트를 만든다."""
+    """멤버 목록을 박아 넣은 storage.rules 텍스트를 만든다.
+
+    자리표시자 '줄 전체'가 일치할 때만 바꾼다. 통짜 문자열 치환을 쓰면 설명 주석에
+    같은 토큰이 있을 때 거기까지 바뀌고, 멤버가 2명 이상이면 목록 둘째 줄이 주석
+    밖으로 나가 규칙 컴파일이 깨진다(실제로 겪은 버그).
+    """
     template = (CONFIG / "storage.rules.template").read_text(encoding="utf-8")
     if members:
-        lines = ",\n".join('          "%s"' % m["email"] for m in members)
+        block = ",\n".join('          "%s"' % m["email"] for m in members)
     else:
         # 멤버가 없으면 아무도 통과하지 못하는 목록(빈 허용목록)을 넣는다.
-        lines = '          "__no_member_configured__"'
-    return template.replace("__MEMBER_EMAILS__", lines)
+        block = '          "__no_member_configured__"'
+
+    out, replaced = [], 0
+    for line in template.splitlines():
+        if line.strip() == PLACEHOLDER:
+            out.append(block)
+            replaced += 1
+        else:
+            out.append(line)
+    if replaced != 1:
+        raise SystemExit(
+            "storage.rules.template 의 자리표시자 줄이 %d개입니다 (정확히 1개여야 함)." % replaced
+        )
+    return "\n".join(out) + "\n"
 
 
 def build_payload() -> dict:
@@ -261,6 +307,7 @@ def build_payload() -> dict:
         },
         "messages_source": messages_raw,
         "members": members,
+        "member_warnings": check_member_nicknames(members, participants),
         "images": used_images,
         "exclusion_report": report,
     }
@@ -307,6 +354,8 @@ def main() -> None:
            m["image_count"])
     )
     print("멤버 %d명, storage.rules 생성" % len(payload["members"]))
+    for w in payload["member_warnings"]:
+        print("[닉네임 확인] %s" % w)
     if r["dropped_count"]:
         print("제외됨 %d건 %s" % (r["dropped_count"], r["dropped_by_reason"]))
     else:

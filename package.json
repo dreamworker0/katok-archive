@@ -8,6 +8,7 @@
     "upload": "node scripts/upload_firestore.js",
     "upload:dry": "node scripts/upload_firestore.js --dry-run",
     "hosting": "python -m scripts.build_hosting",
+    "claims": "node scripts/approve_claims.js",
     "deploy": "firebase deploy"
   },
   "dependencies": {

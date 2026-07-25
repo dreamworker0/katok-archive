@@ -8,6 +8,8 @@ rules_version = '2';
 //  3. 제외된 메시지는 애초에 발행본(chunks)에 들어가지 않는다 —
 //     "숨김"이 아니라 "미발행"이므로 devtools로도 볼 수 없다.
 //  4. 원본 전체(messagesSource)는 관리자만 읽는다. (P2 관리자 페이지용)
+//  5. 열람 신청(claims)은 아직 멤버가 아닌 사람이 쓸 수 있는 유일한 경로다.
+//     본인 이메일 문서 한 장만, 정해진 필드만 쓸 수 있다.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -46,6 +48,32 @@ service cloud.firestore {
     match /members/{memberEmail} {
       allow read: if signedIn() && (callerEmail() == memberEmail || isAdmin());
       allow write: if false;
+    }
+
+    // ── 열람 신청: 비멤버가 본인 것 한 장만 ──
+    //
+    // 참여자 명단(36명)을 화면에 뿌리지 않는 이유: 구글 계정만 있으면 누구나
+    // 로그인은 되므로, 목록을 보여주면 실명·소속이 그대로 노출된다. 그래서
+    // 본인이 대화방 표시명을 직접 적게 하고, 대조는 관리자가 로컬에서 한다.
+    match /claims/{claimEmail} {
+      allow get:  if signedIn() && (callerEmail() == claimEmail || isAdmin());
+      allow list: if isAdmin();
+
+      // 문서 ID를 본인 이메일로 고정해 1인 1건이 된다. 남의 신청서는 못 건드린다.
+      // requestedAt 은 서버 시각으로 못박아 위조를 막는다.
+      allow create, update: if signedIn()
+        && callerEmail() == claimEmail
+        && request.resource.data.keys().hasOnly(['nickname', 'displayName', 'requestedAt'])
+        && request.resource.data.nickname is string
+        && request.resource.data.nickname.size() >= 2
+        && request.resource.data.nickname.size() <= 40
+        && (!('displayName' in request.resource.data)
+            || (request.resource.data.displayName is string
+                && request.resource.data.displayName.size() <= 60))
+        && request.resource.data.requestedAt == request.time;
+
+      // 철회·승인 처리는 Admin SDK(scripts/approve_claims.js)로만
+      allow delete: if false;
     }
 
     // 그 밖의 모든 경로 차단

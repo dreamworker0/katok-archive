@@ -2,7 +2,9 @@
  *
  * 흐름
  *   1) Google 로그인 (Auth)
- *   2) members/{내이메일} 문서 조회 → 없으면 "권한 없음" 화면 (규칙이 막음)
+ *   2) members/{내이메일} 문서 조회
+ *        있음   → 3)
+ *        없음   → claims/{내이메일} 조회 → 신청 폼 또는 "승인 대기 중" 화면
  *   3) meta/archive + chunks + threads + digests + graph 로드 → window.ARCHIVE 조립
  *   4) 이미지 로더를 Storage 모드로 전환하고 앱 시작
  *
@@ -43,14 +45,80 @@
         ? ' <button class="btn gate-btn" id="retryBtn">다시 시도</button>'
         : "")
     );
-    var so = document.getElementById("signOutBtn");
-    if (so) so.onclick = function () { firebase.auth().signOut(); };
+    bindSignOut();
     var rt = document.getElementById("retryBtn");
     if (rt) rt.onclick = function () { location.reload(); };
   }
 
   function gateLoading(msg) {
     show('<div class="gate-spinner"></div><p class="gate-desc">' + msg + "</p>");
+  }
+
+  function bindSignOut() {
+    var so = document.getElementById("signOutBtn");
+    if (so) so.onclick = function () { firebase.auth().signOut(); };
+  }
+
+  /* ---------- 열람 신청 ---------- */
+
+  /** 신청 폼. 참여자 명단은 보여주지 않고 본인이 직접 적게 한다. */
+  function gateClaim(user, prefill, warn) {
+    show(
+      '<h2 class="gate-title">열람 신청</h2>' +
+      '<p class="gate-desc"><b>' + escapeHtml(user.email) + "</b> 으로 로그인했습니다.<br>" +
+      "대화방에서 쓰시는 이름을 적어주세요. 관리자가 확인한 뒤 열어드립니다.</p>" +
+      (warn ? '<p class="gate-warn">' + warn + "</p>" : "") +
+      '<input class="gate-input" id="claimNick" type="text" maxlength="40" ' +
+      'autocomplete="off" placeholder="대화방 표시 이름" value="' +
+      escapeHtml(prefill || "") + '" />' +
+      '<button class="btn gate-btn" id="claimBtn">신청하기</button> ' +
+      '<button class="btn ghost gate-btn" id="signOutBtn">다른 계정으로 로그인</button>' +
+      '<p class="gate-foot">적어주신 이름은 관리자에게만 보입니다.</p>'
+    );
+    var input = document.getElementById("claimNick");
+    document.getElementById("claimBtn").onclick = function () { submitClaim(user, input.value); };
+    input.onkeydown = function (e) { if (e.key === "Enter") submitClaim(user, input.value); };
+    input.focus();
+    bindSignOut();
+  }
+
+  function submitClaim(user, raw) {
+    var nickname = (raw || "").trim();
+    if (nickname.length < 2) {
+      gateClaim(user, nickname, "이름을 2자 이상 적어주세요.");
+      return;
+    }
+    gateLoading("신청을 보내는 중…");
+
+    var data = {
+      nickname: nickname,
+      // 규칙이 서버 시각만 허용한다 (위조 방지)
+      requestedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    };
+    // 관리자가 명단과 대조할 때의 힌트
+    if (user.displayName) data.displayName = user.displayName.slice(0, 60);
+
+    firebase.firestore().collection("claims").doc(user.email.toLowerCase()).set(data).then(
+      function () { gatePending(user, nickname); },
+      function (e) {
+        gateClaim(user, nickname,
+          "신청을 보내지 못했습니다: " + escapeHtml(e.message || String(e)));
+      }
+    );
+  }
+
+  function gatePending(user, nickname) {
+    show(
+      '<h2 class="gate-title">승인 대기 중</h2>' +
+      '<p class="gate-desc"><b>' + escapeHtml(nickname) + "</b> 님으로 신청이 접수되었습니다.<br>" +
+      "관리자가 확인하면 바로 열람할 수 있습니다.</p>" +
+      '<button class="btn gate-btn" id="retryBtn">다시 확인</button> ' +
+      '<button class="btn ghost gate-btn" id="editBtn">이름 수정</button> ' +
+      '<button class="btn ghost gate-btn" id="signOutBtn">다른 계정으로 로그인</button>'
+    );
+    document.getElementById("retryBtn").onclick = function () { location.reload(); };
+    document.getElementById("editBtn").onclick = function () { gateClaim(user, nickname, ""); };
+    bindSignOut();
   }
 
   function signIn() {
@@ -140,7 +208,13 @@
     el.gate.classList.add("hidden");
     el.app.classList.remove("hidden");
     window.ArchiveApp.start({
-      user: { email: user.email, name: user.displayName || member.name || user.email },
+      user: {
+        email: user.email,
+        // 아카이브에서는 대화방 표시명이 가장 알아보기 쉽다
+        name: member.nickname || member.name || user.displayName || user.email,
+        // 아카이브 참여자 닉네임 — "내 글" 같은 개인화의 열쇠
+        nickname: member.nickname || "",
+      },
       role: member.role || "user",
       signOut: function () { firebase.auth().signOut(); },
     });
@@ -158,10 +232,16 @@
     db.collection("members").doc(email).get().then(
       function (snap) {
         if (!snap.exists) {
-          gateError(
-            "접근 권한이 없습니다",
-            "<b>" + email + "</b> 은 구성원 명부에 없습니다.<br>" +
-            "이 아카이브는 대화 참여자만 열람할 수 있습니다. 관리자에게 요청해 주세요."
+          // 아직 멤버가 아니다 — 신청했는지 보고 폼 또는 대기 화면으로
+          db.collection("claims").doc(email).get().then(
+            function (claim) {
+              if (claim.exists) gatePending(user, (claim.data() || {}).nickname || "");
+              else gateClaim(user, "", "");
+            },
+            function (e) {
+              gateClaim(user, "",
+                "신청 상태를 확인하지 못했습니다: " + escapeHtml(e.message || String(e)));
+            }
           );
           return;
         }
@@ -184,8 +264,11 @@
     );
   }
 
+  // 속성값(value="...")에도 그대로 쓰므로 따옴표까지 막는다
   function escapeHtml(s) {
-    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return String(s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
   function init() {

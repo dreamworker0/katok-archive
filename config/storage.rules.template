@@ -6,7 +6,11 @@ rules_version = '2';
 // 그래서 P1에서는 멤버 이메일 목록을 config/members.json 으로부터 생성해 박아 넣는다.
 // 이 파일은 템플릿이며, 실제 storage.rules 는
 //   python scripts/build_firestore_payload.py
-// 가 __MEMBER_EMAILS__ 를 치환해 생성한다. (멤버 변경 시 재생성 + 재배포 필요)
+// 가 아래 자리표시자 줄을 이메일 목록으로 바꿔 생성한다.
+// (멤버 변경 시 재생성 + 재배포 필요)
+//
+// 자리표시자 토큰을 이 주석에 적지 말 것 — 치환이 주석까지 건드려
+// 멤버가 2명 이상일 때 목록 둘째 줄이 주석 밖으로 나가 컴파일이 깨진다.
 //
 // P2에서 Cloud Functions로 Custom Claims를 부여하면
 //   request.auth.token.member == true

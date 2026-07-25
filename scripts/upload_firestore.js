@@ -167,6 +167,7 @@ async function main() {
     id: m.email,
     email: m.email,
     name: m.name,
+    nickname: m.nickname || "",
     role: m.role,
   }));
 

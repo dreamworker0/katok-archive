@@ -53,11 +53,13 @@ firebase login
 `config/members.json`에 열람을 허용할 사람을 넣는다. **여기 없는 사람은 로그인해도 못 본다.**
 ```json
 { "members": [
-  { "email": "you@sasw.or.kr", "name": "이름", "role": "admin" },
-  { "email": "member@example.org", "name": "멤버", "role": "user" }
+  { "email": "you@sasw.or.kr", "name": "이름", "nickname": "김종원", "role": "admin" },
+  { "email": "member@example.org", "name": "멤버", "nickname": "한도윤", "role": "user" }
 ]}
 ```
 - `role: admin` — 원본 메시지 열람, (P2) 관리자 페이지 권한
+- `nickname` — 카톡 대화방 표시명. 발행할 때 `output/participants.json` 과 대조해
+  오타·미기입을 경고한다. 첫 관리자만 손으로 넣고, 나머지는 아래 승인 절차가 채운다.
 - 이 파일은 개인정보이므로 `.gitignore` 처리됨
 
 ---
@@ -95,9 +97,49 @@ firebase deploy --only storage     # Storage 규칙만 (멤버 변경 시 필수
 
 ---
 
+## 열람 신청 · 승인
+
+명부에 없는 사람이 로그인하면 **신청 화면**이 뜬다. 대화방 표시 이름을 적으면
+`claims/{이메일}` 문서 한 장이 생기고, 관리자가 승인할 때까지 "승인 대기 중"이 보인다.
+
+> 참여자 36명 명단을 화면에 뿌리지 않는 이유: 구글 계정만 있으면 누구나 로그인은
+> 되므로, 목록을 보여주면 실명·소속이 그대로 노출된다. 그래서 본인이 직접 적게 하고
+> 대조는 관리자가 로컬에서 한다. 규칙상 신청서는 **본인과 관리자만** 볼 수 있다.
+
+```bash
+node scripts/approve_claims.js
+```
+신청 목록을 `output/participants.json` 과 대조해 보여준다.
+`○` 는 명단에 있는 이름, `×` 는 없는 이름(비슷한 후보를 함께 제시).
+
+```bash
+node scripts/approve_claims.js --approve someone@gmail.com
+```
+`config/members.json` 추가 → 페이로드 재생성 → Firestore 적재 → `firebase deploy --only storage`
+까지 한 번에 하고 신청서를 지운다. 신청자는 새로고침하면 들어온다.
+
+| 옵션 | 쓰임 |
+|---|---|
+| `--nickname "홍길동"` | 적어낸 이름이 틀렸을 때 바로잡아 승인 |
+| `--role admin` | 관리자로 승인 |
+| `--reject a@x.com` | 신청 삭제 |
+| `--dry-run` | 파일·발행 없이 결과만 확인 |
+| `--no-publish` | `members.json` 만 고치고 발행은 직접 |
+
+**중요:** 승인은 Firestore 쓰기만으로 끝나지 않는다. `storage.rules` 에 멤버 이메일이
+하드코딩돼 있어 재배포하지 않으면 **대화는 열리는데 이미지만 403** 이 된다.
+위 명령은 그 재배포까지 포함한다.
+
+신청 기능 자체는 Firestore 규칙에 의존하므로, 규칙을 먼저 배포해야 동작한다:
+```bash
+firebase deploy --only firestore
+```
+
+---
+
 ## 자주 하는 작업
 
-**멤버 추가/제거**
+**멤버 추가/제거** (손으로 할 때 — 보통은 위의 `approve_claims.js` 를 쓴다)
 ```bash
 # config/members.json 수정 후
 python -m scripts.build_firestore_payload
@@ -132,9 +174,11 @@ python scripts/build_site.py     # site/index.html 을 브라우저로 열기
 배포 후 직접 확인:
 1. 로그인 전 `https://katok-crawling-project.web.app` — 로그인 화면만 보이고 대화가 없다
 2. 브라우저 devtools → Network → 배포된 JS에 대화 문자열이 없다
-3. 명부에 **없는** 계정으로 로그인 → "접근 권한이 없습니다"
-4. 명부에 **있는** 계정으로 로그인 → 5개 뷰 정상, 이미지 표시
-5. 로그아웃 후 이미지 URL 직접 접근 → 403
+3. 명부에 **없는** 계정으로 로그인 → 열람 신청 화면 (참여자 명단이 보이지 않아야 한다)
+4. 신청 후 새로고침 → "승인 대기 중"
+5. `node scripts/approve_claims.js` 로 신청이 보이고, 명단 대조 표시가 맞다
+6. 승인 후 신청자가 새로고침 → 5개 뷰 정상, **이미지까지** 표시
+7. 로그아웃 후 이미지 URL 직접 접근 → 403
 
 ---
 
@@ -161,6 +205,13 @@ P1 기준 무료 티어 내:
 
 **"접근 권한이 없습니다"**
 → 로그인한 이메일이 `config/members.json` 에 없다. 추가 후 재발행·재배포.
+
+**승인했는데 이미지만 안 보인다**
+→ `storage.rules` 재배포 누락. `firebase deploy --only storage`.
+   `approve_claims.js` 를 `--no-publish` 로 돌렸을 때 잘 생긴다.
+
+**신청 화면에서 "신청을 보내지 못했습니다"**
+→ `claims/` 규칙이 아직 배포되지 않았다. `firebase deploy --only firestore`.
 
 **진단 도구** (브라우저 콘솔)
 ```javascript

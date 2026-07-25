@@ -104,6 +104,51 @@ class PayloadShapeTest(unittest.TestCase):
         self.assertIn("__no_member_configured__", rules)
         self.assertNotIn("__MEMBER_EMAILS__", rules)
 
+    def test_members_carry_nickname_field(self):
+        for m in self.payload["members"]:
+            self.assertIn("nickname", m)
+
+    def test_storage_rules_survive_multiple_members(self):
+        """멤버 2명 이상에서 목록이 주석 밖으로 새어 나가면 규칙이 컴파일되지 않는다.
+
+        치환을 통짜 문자열로 하면 설명 주석의 같은 토큰까지 바뀌어, 멤버가 1명일 때는
+        멀쩡하다가 2명째부터 깨진다. 실제로 배포에서 터진 회귀라 고정해 둔다.
+        """
+        members = [{"email": "a@x.com"}, {"email": "b@x.com"}, {"email": "c@x.com"}]
+        rules = bfp.render_storage_rules(members)
+        for line in rules.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("//"):
+                self.assertNotIn("@x.com", stripped, "이메일이 주석 줄에 들어갔다: " + line)
+            elif "@x.com" in stripped:
+                # 목록 항목은 반드시 따옴표로 감싼 한 줄이어야 한다
+                self.assertRegex(stripped, r'^"[^"]+@x\.com",?$')
+        for m in members:
+            self.assertIn('"%s"' % m["email"], rules)
+
+
+class MemberNicknameTest(unittest.TestCase):
+    """로그인 계정 ↔ 대화방 참여자 연결은 손으로 넣는 값이라 대조가 필요하다."""
+
+    PARTICIPANTS = {"participants": [{"nickname": "김종원"}, {"nickname": "한도윤"}]}
+
+    def test_matching_nickname_has_no_warning(self):
+        members = [{"email": "a@x.com", "nickname": "김종원"}]
+        self.assertEqual(bfp.check_member_nicknames(members, self.PARTICIPANTS), [])
+
+    def test_typo_is_reported(self):
+        members = [{"email": "b@x.com", "nickname": "김종언"}]
+        warnings = bfp.check_member_nicknames(members, self.PARTICIPANTS)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("b@x.com", warnings[0])
+        self.assertIn("김종언", warnings[0])
+
+    def test_missing_nickname_is_reported(self):
+        members = [{"email": "c@x.com", "nickname": ""}]
+        warnings = bfp.check_member_nicknames(members, self.PARTICIPANTS)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("미기입", warnings[0])
+
 
 class ExclusionTest(unittest.TestCase):
     """제외 규칙이 발행본 전체에서 소거되는지 확인."""

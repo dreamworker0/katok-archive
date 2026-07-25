@@ -226,7 +226,14 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .gate-title { margin: 0 0 10px; font-size: 20px; font-weight: 800; letter-spacing: -0.01em; }
 .gate-desc { margin: 0 0 18px; font-size: 14px; color: var(--ink-soft); line-height: 1.7; }
 .gate-btn { padding: 10px 18px; font-size: 14px; font-weight: 600; }
-.gate-foot { font-size: 12px; color: var(--ink-faint); margin: 0; text-align: center; }
+.gate-foot { font-size: 12px; color: var(--ink-faint); margin: 14px 0 0; text-align: center; }
+.gate-input { width: 100%; box-sizing: border-box; padding: 11px 13px; margin: 0 0 14px;
+  font: inherit; font-size: 15px; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 10px; text-align: center; }
+.gate-input:focus { outline: none; border-color: var(--accent); }
+.gate-warn { margin: 0 0 14px; padding: 9px 12px; font-size: 13px; line-height: 1.6;
+  color: var(--ink); background: var(--warn-bg, rgba(220, 120, 40, .1));
+  border-radius: 10px; text-align: left; }
 .gate-spinner { width: 30px; height: 30px; margin: 4px auto 16px; border-radius: 50%;
   border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
