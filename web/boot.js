@@ -81,9 +81,9 @@
 
       return Promise.all([
         db.collection("chunks").orderBy("seq").get(),
-        db.collection("threads").get(),
+        db.collection("threads").get(),   // threads/all 1문서
         db.collection("digests").get(),
-        db.collection("graph").get(),
+        db.collection("graph").get(),     // graph/nodes, graph/edges
       ]).then(function (res) {
         var chunkSnap = res[0], threadSnap = res[1],
             digestSnap = res[2], graphSnap = res[3];
@@ -94,9 +94,12 @@
           for (var i = 0; i < m.length; i++) messages.push(m[i]);
         });
 
+        // 스레드는 threads/all 한 문서에 묶여 있다(읽기 절약)
         var threads = [];
-        threadSnap.forEach(function (d) { threads.push(d.data()); });
-        // 스레드는 문서 순서를 보장하지 않으므로 id 로 정렬
+        threadSnap.forEach(function (d) {
+          var items = d.data().items;
+          if (items) threads = threads.concat(items);
+        });
         threads.sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });
 
         var digests = {};

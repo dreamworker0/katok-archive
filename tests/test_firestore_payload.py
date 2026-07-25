@@ -59,6 +59,32 @@ class PayloadShapeTest(unittest.TestCase):
         self.assertTrue(self.payload["graph"]["nodes"])
         self.assertTrue(self.payload["graph"]["edges"])
 
+    def test_bulk_docs_fit_in_one_document(self):
+        """스레드·그래프는 한 문서로 묶어 발행한다(읽기 절약). 1MiB 한도 확인."""
+        for name, obj in (
+            ("threads/all", {"items": self.payload["threads"]}),
+            ("graph/nodes", {"items": self.payload["graph"]["nodes"]}),
+            ("graph/edges", {"items": self.payload["graph"]["edges"]}),
+        ):
+            size = len(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+            self.assertLess(size, 700_000, "%s 가 너무 큼: %d bytes" % (name, size))
+
+    def test_full_load_read_count_stays_small(self):
+        """멤버 1명의 전체 로드 읽기 횟수 상한을 고정한다.
+
+        메시지·스레드를 문서당 1건으로 두면 1,600회를 넘어 무료 한도를 위협한다.
+        묶음 발행이 깨지면 이 테스트가 잡아낸다.
+        """
+        reads = (
+            1                                   # meta/archive
+            + len(self.payload["chunks"])       # 메시지 청크
+            + 1                                 # threads/all
+            + len(self.payload["digests"])      # 요지(주제별 편집 단위라 개별 유지)
+            + 2                                 # graph/nodes, graph/edges
+            + 1                                 # 본인 members 문서
+        )
+        self.assertLessEqual(reads, 60, "전체 로드 읽기가 너무 많음: %d회" % reads)
+
     def test_member_emails_are_lowercased_and_unique(self):
         emails = [m["email"] for m in self.payload["members"]]
         self.assertEqual(emails, [e.lower() for e in emails])

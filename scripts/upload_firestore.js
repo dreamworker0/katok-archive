@@ -125,11 +125,14 @@ async function main() {
     role: m.role,
   }));
 
-  console.log("적재 계획");
-  console.log(`  meta 1 / chunks ${chunks.length} / threads ${threads.length}`);
-  console.log(`  digests ${digestDocs.length} / graph 2 / messagesSource ${sourceDocs.length}`);
-  console.log(`  members ${memberDocs.length} / images ${images.length}`);
-  console.log(`  총 쓰기 약 ${1 + chunks.length + threads.length + digestDocs.length + 2 + sourceDocs.length + memberDocs.length}건`);
+  const docCount = 1 + chunks.length + 1 + digestDocs.length + 2 + memberDocs.length;
+  console.log("적재 계획 (문서 수)");
+  console.log(`  meta 1 / chunks ${chunks.length} / threads 1 (${threads.length}건 묶음)`);
+  console.log(`  digests ${digestDocs.length} / graph 2 / members ${memberDocs.length}`);
+  console.log(`  messagesSource ${sourceDocs.length} (관리자 전용 원본)`);
+  console.log(`  총 쓰기 ${docCount + sourceDocs.length}건`);
+  console.log(`  → 멤버가 전체를 읽을 때: ${docCount - memberDocs.length + 1}회 읽기`);
+  console.log(`  이미지 ${images.length}장 (Storage, 지연 로딩)`);
 
   if (!memberDocs.length) {
     console.warn("\n[주의] 멤버가 0명입니다. config/members.json 을 채우세요 — 아무도 로그인할 수 없습니다.");
@@ -145,7 +148,9 @@ async function main() {
   console.log("\nFirestore 적재");
   await syncCollection(db, "meta", [{ id: "archive", ...meta, updatedAt: new Date().toISOString() }]);
   await syncCollection(db, "chunks", chunks);
-  await syncCollection(db, "threads", threads);
+  // 스레드는 165건이지만 전부 합쳐 58KB뿐이라 한 문서로 발행한다.
+  // 개별 문서로 두면 전체 로드에 165회 읽기가 추가된다.
+  await syncCollection(db, "threads", [{ id: "all", items: threads }]);
   await syncCollection(db, "digests", digestDocs);
   await syncCollection(db, "graph", [
     { id: "nodes", items: graph.nodes },
