@@ -38,3 +38,6 @@ Thumbs.db
 
 # Firebase CLI 캐시
 /.firebase/
+
+# Codex 격리 작업공간
+/.worktrees/
