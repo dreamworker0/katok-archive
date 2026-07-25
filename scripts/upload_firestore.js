@@ -23,6 +23,7 @@ const admin = require("firebase-admin");
 const ROOT = path.resolve(__dirname, "..");
 const PAYLOAD = path.join(ROOT, "firestore-payload");
 const KEY = path.join(ROOT, "serviceAccountKey.json");
+const PROJECT_ID = "katok-crawling-project";
 const BUCKET = "katok-crawling-project.firebasestorage.app";
 
 const args = process.argv.slice(2);
@@ -38,19 +39,63 @@ function readPayload(name) {
   return JSON.parse(fs.readFileSync(p, "utf8"));
 }
 
-function init() {
-  if (!fs.existsSync(KEY)) {
-    console.error(
-      "serviceAccountKey.json 이 없습니다.\n" +
-      "Firebase 콘솔 > 프로젝트 설정 > 서비스 계정 > 새 비공개 키 생성 후\n" +
-      `${KEY} 로 저장하세요.`
-    );
+function credentialHelp() {
+  return (
+    "인증 정보를 찾지 못했습니다. 아래 중 하나를 준비하세요.\n\n" +
+    "  (A) 서비스 계정 키 — 권장\n" +
+    "      Firebase 콘솔 > 프로젝트 설정 > 서비스 계정 > 새 비공개 키 생성\n" +
+    `      → ${KEY} 로 저장 (git 제외됨)\n\n` +
+    "  (B) gcloud 애플리케이션 기본 자격증명\n" +
+    "      gcloud auth application-default login\n"
+  );
+}
+
+/** 자격증명이 실제로 쓸 수 있는지 미리 확인한다.
+ *  ADC 는 initializeApp 시점에 실패하지 않고 첫 사용에서 터지므로,
+ *  토큰을 한 번 받아보고 적재를 시작한다. */
+async function verifyCredential() {
+  try {
+    await admin.app().options.credential.getAccessToken();
+  } catch (e) {
+    console.error("\n" + credentialHelp());
     process.exit(1);
   }
-  admin.initializeApp({
-    credential: admin.credential.cert(require(KEY)),
-    storageBucket: BUCKET,
-  });
+}
+
+function init() {
+  // 1순위: 서비스 계정 키 파일
+  if (fs.existsSync(KEY)) {
+    const sa = require(KEY);
+    if (sa.project_id && sa.project_id !== PROJECT_ID) {
+      console.error(
+        `키의 프로젝트(${sa.project_id})가 대상(${PROJECT_ID})과 다릅니다. 확인하세요.`
+      );
+      process.exit(1);
+    }
+    admin.initializeApp({
+      credential: admin.credential.cert(sa),
+      storageBucket: BUCKET,
+      projectId: PROJECT_ID,
+    });
+    console.log("인증: serviceAccountKey.json");
+    return;
+  }
+
+  // 2순위: 애플리케이션 기본 자격증명
+  //   GOOGLE_APPLICATION_CREDENTIALS 환경변수 또는
+  //   gcloud auth application-default login 을 이미 해둔 경우
+  try {
+    admin.initializeApp({
+      credential: admin.credential.applicationDefault(),
+      storageBucket: BUCKET,
+      projectId: PROJECT_ID,
+    });
+    console.log("인증: 애플리케이션 기본 자격증명(ADC)");
+    return;
+  } catch (e) {
+    console.error("\n" + credentialHelp());
+    process.exit(1);
+  }
 }
 
 /** 컬렉션을 페이로드 상태로 동기화한다: 전부 set + 페이로드에 없는 문서 삭제. */
@@ -143,6 +188,7 @@ async function main() {
   }
 
   init();
+  await verifyCredential();
   const db = admin.firestore();
 
   console.log("\nFirestore 적재");
