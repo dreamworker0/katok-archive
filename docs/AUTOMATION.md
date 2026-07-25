@@ -66,7 +66,7 @@ LLM 장애가 파이프라인을 멈추지 않는다. LLM 이 필요한 곳은 �
 3. 저장 대화상자가 떴는지 — 안 뜨면 아무것도 하지 않고 중단
 4. 저장 대화상자는 접근성 API·Win32 메시지로 다룬다 (좌표 클릭 없음)
 5. 파일이 실제로 생기고 크기가 안정될 때까지 확인
-6. 중단 시 화면을 `logsbort-*.png` 로 남긴다
+6. 중단 시 화면을 `logs/abort-*.png` 로 남긴다
 
 > **Esc 를 보내지 않는다.** 카톡에서 Esc 는 대화방 창을 닫아버려, 다음 실행에서
 > 창을 못 찾게 된다.
@@ -113,34 +113,90 @@ powershell -File scripts\kakao_export.ps1 -Discover
 ```
 창을 찾고 포커스까지만 확보한 뒤 종료한다.
 
-## 작업 스케줄러 등록 (선택)
+## 작업 스케줄러 등록 (완료)
 
+작업 이름 **`카톡아카이브-일일갱신`** 으로 등록되어 있다 (2026-07-25 등록).
+
+| 항목 | 값 | 이유 |
+|---|---|---|
+| 시각 | **매일 23:40** | 그날 대화가 끝난 뒤이고 날짜가 넘어가지 않는다 |
+| 실행 | `powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File scripts\run_daily.ps1` | 콘솔 창이 카톡의 최상단을 빼앗지 않게 숨긴다 |
+| 로그온 유형 | **Interactive (로그온한 경우에만)** | UI 자동화라 대화형 세션이 반드시 필요하다 |
+| 권한 | Limited (관리자 아님) | 카톡과 같은 권한이어야 메시지를 보낼 수 있다 |
+| 놓친 실행 | `-StartWhenAvailable` | PC 가 꺼져 있었으면 켠 뒤에 한 번 만회한다 |
+| 동시 실행 | `IgnoreNew` | 겹쳐 돌아 발행이 꼬이지 않게 |
+| 시간 제한 | 1시간 | 멈춘 실행을 방치하지 않는다 |
+
+확인·해제:
 ```powershell
-$act = New-ScheduledTaskAction -Execute 'powershell.exe' `
-  -Argument '-ExecutionPolicy Bypass -File "D:\apps\카톡데이터크롤링\scripts\run_daily.ps1"' `
-  -WorkingDirectory 'D:\apps\카톡데이터크롤링'
-$trg = New-ScheduledTaskTrigger -Daily -At 23:30
-Register-ScheduledTask -TaskName '카톡아카이브-일일갱신' -Action $act -Trigger $trg
+Get-ScheduledTaskInfo -TaskName '카톡아카이브-일일갱신'
+```
+```powershell
+Unregister-ScheduledTask -TaskName '카톡아카이브-일일갱신' -Confirm:$false
 ```
 
-> ⚠️ 무인 실행 주의: 화면이 잠겨 있거나 카톡 창 상태가 다르면 안전장치가 작동해
-> **중단**된다(클릭하지 않음). 실패는 `logs\` 에 남으니 주기적으로 확인할 것.
-> 무인 자동화가 불안하면 `-SkipExport` 로 두고 내보내기만 손으로 하는 편이 안전하다.
+### 왜 "로그온한 경우에만"인가 (선택 불가)
+"사용자가 로그온했는지 여부에 관계없이 실행"을 고르면 작업이 **세션 0**(비대화형)
+에서 돌아 데스크톱이 없다. Ctrl+S 를 받을 창도, 최상단이라는 개념도 없으므로
+**항상 실패**한다. 화면이 잠겨 있을 때도 마찬가지로 최상단 확보에 실패해
+안전장치가 중단시킨다 — 데이터는 안전하지만 그날 갱신은 없다.
+
+> 새벽 시간대(예: 04:00)는 두 가지로 불리하다. ①그 시각엔 화면이 잠겨 있을
+> 확률이 높다. ②이미 날짜가 넘어가서, 내보내기가 카톡에 로드된 범위만 주는 특성상
+> 전날 대화를 놓칠 수 있다(실측: 16:20 내보내기 = 0.2 KB, 그날 것만).
+
+### 무인 실행 전제
+- 카카오톡이 실행 중이고 해당 방 창이 열려 있어야 한다
+- 화면이 잠겨 있지 않아야 한다 (절전은 `-StartWhenAvailable` 이 만회)
+- `serviceAccountKey.json` 이 있어야 Firestore 적재가 로그인 없이 된다
+- 실패는 `logs\daily-*.log` 와 `logs\abort-*.png` 에 남는다 — 주기적으로 볼 것
 
 ## 로그
 
 - `logs\daily-YYYYMMDD.log` — 전체 실행
 - `logs\kakao-export-YYYYMMDD.log` — 내보내기 단계(OCR 결과 포함)
 
-## 갱신 후 할 일
+## 무엇이 자동으로 갱신되고, 무엇이 안 되는가
 
-새 메시지는 **'미분류' 스레드**에 들어간다. 주제별 지식 뷰의 품질을 유지하려면
-정리가 필요하다.
+자동 실행은 **절반만** 갱신한다. `ingest_incremental.py` 가 실제로 쓰는 파일이
+경계선이다.
+
+### 자동 (결정론적 코드 — 매일 밤 반영)
+
+| 쓰는 파일 | 사이트에서 보이는 것 |
+|---|---|
+| `output/messages.jsonl` | **타임라인** — 새 대화가 그대로 붙는다 |
+| `output/participants.json` | **참여자·통계** — 인원·메시지 수 재계산 |
+| `output/images.jsonl` | **갤러리** — 새 사진이 `pending` 플레이스홀더로 |
+| `output/topics.json` | 스레드 소속 — 단 `t-unsorted-YYYY-MM-DD` (카테고리 `chat`) 로만 |
+
+### 자동 아님 (LLM 판단·큐레이션 산출물)
+
+| 건드리지 않는 파일 | 결과 |
+|---|---|
+| `output/topics.json` 의 실제 카테고리 배정 | 새 메시지는 **'미분류'** 에 머문다 |
+| `output/knowledge.json` | **관계 그래프**에 새 사람·앱·도구 노드가 안 생긴다 |
+| `output/topic-digests.json` | **요지 산문**이 어제 상태로 남는다 |
+| 사진 파일 자체 | 내보내기 txt 에 없다 → `pending` 유지 |
+
+즉 매일 아침 상태는 **"타임라인·통계는 최신, 주제별 지식 뷰는 마지막 정리 시점"** 이다.
+
+## 갱신 후 할 일 — 주 1회 재분류
+
+'미분류' 스레드가 쌓이면 주제별 지식 뷰가 뒤처진다. **주 1회** 정리한다
+(LLM 판단이 필요하므로 Claude 에게 요청 — 재분류·요지 산문은 Fable 권장).
 
 1. `output/topics.json` 에서 `t-unsorted-YYYY-MM-DD` 스레드 확인
 2. 적절한 카테고리의 스레드로 옮기거나 새 스레드로 분리
-3. 필요하면 `output/topic-digests.json` 의 요지 산문 갱신
-4. 재발행: `python -m scripts.build_firestore_payload && node scripts/upload_firestore.js`
+3. 새로 등장한 사람·앱·도구를 `output/knowledge.json` 에 노드·엣지로 추가
+4. 필요하면 `output/topic-digests.json` 의 요지 산문 갱신
+5. 테스트: `python -m unittest discover -s tests` (참조 무결성·커버리지 검증)
+6. 재발행: `python -m scripts.build_firestore_payload && node scripts/upload_firestore.js`
+
+미분류가 얼마나 쌓였는지 세기:
+```bash
+python -m scripts.count_unsorted
+```
 
 ## 남은 한계
 
