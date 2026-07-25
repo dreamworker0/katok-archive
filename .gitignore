@@ -7,8 +7,14 @@
 /assets/staging/
 
 # 비밀 — 절대 커밋 금지
+# 서비스 계정 키는 다운로드 시 파일명이 제각각이라 넓게 잡는다
 serviceAccountKey.json
-*-serviceaccount.json
+*serviceaccount*.json
+*service-account*.json
+*adminsdk*.json
+*-firebase-adminsdk-*
+*.pem
+*.p12
 .env
 .env.*
 
