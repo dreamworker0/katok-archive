@@ -22,7 +22,7 @@ ASSETS_IMAGES = ROOT / "assets" / "images"
 WEB = ROOT / "web"
 SITE = ROOT / "site"
 
-STATIC_FILES = ("index.html", "app.js", "styles.css", "graph.js", "images.js")
+STATIC_FILES = ("index.html", "app.js", "styles.css", "graph.js", "images.js", "favicon.svg")
 
 
 def _read_jsonl(path: Path) -> list[dict]:

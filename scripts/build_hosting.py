@@ -24,6 +24,7 @@ FILES = [
     ("images.js", "images.js"),
     ("boot.js", "boot.js"),
     ("firebase-config.js", "firebase-config.js"),
+    ("favicon.svg", "favicon.svg"),
 ]
 
 FORBIDDEN = ("data.js", "assets")
