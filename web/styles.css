@@ -235,11 +235,19 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .session { display: inline-flex; align-items: center; gap: 6px; }
 .session .chip { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* 이미지 로드 실패 표시 */
-img.img-error { background: var(--surface-2); border-style: dashed; }
-/* 보호모드에서 아직 안 받아온 이미지 자리 */
+/* 아직 src 가 없는 이미지에도 크기를 줘야 한다.
+   src 없는 img 는 0x0 으로 접혀서 IntersectionObserver 가 영원히 발화하지 않는다
+   (특히 width:auto 인 단일 이미지). 자리표시 배경도 함께. */
 .imgs img:not([src]), .gallery img:not([src]) {
-  background: var(--surface-2) linear-gradient(90deg, transparent, rgba(128,128,128,.08), transparent);
+  min-width: 120px; min-height: 120px;
+  background: var(--surface-2);
+}
+.imgs.single img:not([src]) { width: 200px; height: 200px; }
+
+/* 이미지 로드 실패 표시 */
+img.img-error {
+  background: var(--surface-2); border-style: dashed; border-color: var(--line-strong);
+  min-width: 120px; min-height: 60px;
 }
 
 @media (max-width: 560px) {

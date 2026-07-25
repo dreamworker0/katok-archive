@@ -143,15 +143,31 @@
     }, { passive: false });
 
     // 배경 드래그 = 팬, 노드 드래그 = 이동
+    //
+    // click 이벤트는 쓰지 않는다: 노드에서 포인터를 캡처하면 이어지는 click 이
+    // 캡처 대상(SVG)으로 재타겟팅되어 노드 핸들러가 실행되지 않고, 배경 클릭으로
+    // 오인돼 선택이 즉시 해제된다. 그래서 pointerup 에서 이동 거리로
+    // '클릭 대 드래그'를 직접 판정한다.
     var drag = null;
+    var CLICK_SLOP = 5; // px — 이 이하로 움직였으면 클릭으로 본다
+    // 포인터 캡처는 합성 이벤트나 이미 끝난 포인터에서 예외를 던질 수 있다.
+    // 캡처 실패가 드래그 자체를 막아서는 안 되므로 삼켜준다.
+    function capture(ev) {
+      try { s.setPointerCapture(ev.pointerId); } catch (e) { /* 무시 */ }
+    }
+
     s.addEventListener("pointerdown", function (ev) {
       if (ev.target === s || ev.target === vp || ev.target.tagName === "line") {
-        drag = { pan: true, x: ev.clientX, y: ev.clientY };
-        s.classList.add("grabbing"); s.setPointerCapture(ev.pointerId);
+        drag = { pan: true, x: ev.clientX, y: ev.clientY, moved: false };
+        s.classList.add("grabbing"); capture(ev);
       }
     });
     s.addEventListener("pointermove", function (ev) {
       if (!drag) return;
+      if (Math.abs(ev.clientX - drag.x) > CLICK_SLOP ||
+          Math.abs(ev.clientY - drag.y) > CLICK_SLOP) {
+        drag.moved = true;
+      }
       if (drag.pan) {
         view.x += ev.clientX - drag.x; view.y += ev.clientY - drag.y;
         drag.x = ev.clientX; drag.y = ev.clientY; applyView();
@@ -160,7 +176,17 @@
         drag.node.fx = pt.x; drag.node.fy = pt.y; alpha = Math.max(alpha, 0.3);
       }
     });
-    s.addEventListener("pointerup", function (ev) {
+    s.addEventListener("pointerup", function () {
+      if (!drag) return;
+      if (drag.node) {
+        drag.node.fx = null; drag.node.fy = null;
+        if (!drag.moved) toggleSelect(drag.node);   // 제자리 클릭 → 선택
+      } else if (drag.pan && !drag.moved) {
+        clearSelect();                              // 빈 배경 클릭 → 해제
+      }
+      drag = null; s.classList.remove("grabbing");
+    });
+    s.addEventListener("pointercancel", function () {
       if (drag && drag.node) { drag.node.fx = null; drag.node.fy = null; }
       drag = null; s.classList.remove("grabbing");
     });
@@ -173,25 +199,27 @@
     }
 
     var selectedId = null;
+
+    function toggleSelect(n) {
+      selectedId = (selectedId === n.id) ? null : n.id;
+      highlight(selectedId);
+      if (opts.onSelect) opts.onSelect(selectedId ? n : null, selectedId ? adj[n.id] : null);
+    }
+    function clearSelect() {
+      if (!selectedId) return;
+      selectedId = null; highlight(null);
+      if (opts.onSelect) opts.onSelect(null, null);
+    }
+
     function bindNode(n) {
       n._g.addEventListener("pointerdown", function (ev) {
         ev.stopPropagation();
-        drag = { node: n }; s.setPointerCapture(ev.pointerId);
+        drag = { node: n, x: ev.clientX, y: ev.clientY, moved: false };
+        capture(ev);
       });
       n._g.addEventListener("pointerenter", function () { if (!selectedId) highlight(n.id); });
       n._g.addEventListener("pointerleave", function () { if (!selectedId) highlight(null); });
-      n._g.addEventListener("click", function (ev) {
-        ev.stopPropagation();
-        selectedId = (selectedId === n.id) ? null : n.id;
-        highlight(selectedId);
-        if (opts.onSelect) opts.onSelect(selectedId ? n : null, selectedId ? adj[n.id] : null);
-      });
     }
-    s.addEventListener("click", function (ev) {
-      if (ev.target === s || ev.target === vp) {
-        selectedId = null; highlight(null); if (opts.onSelect) opts.onSelect(null, null);
-      }
-    });
 
     function highlight(id) {
       if (!id) {

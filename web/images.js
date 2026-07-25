@@ -18,6 +18,7 @@
   var bucket = null;
   var getToken = null;
   var pending = Object.create(null);  // path -> Promise<objectURL>
+  var lastError = null;               // 진단용: 가장 최근 실패 원인
 
   /** boot.js 가 로그인 후 호출한다. opts: {bucket, getToken} */
   function useStorage(opts) {
@@ -44,7 +45,11 @@
         return fetch(url, { headers: { Authorization: "Firebase " + token } });
       })
       .then(function (res) {
-        if (!res.ok) throw new Error("HTTP " + res.status);
+        if (!res.ok) {
+          // 실패 원인을 화면에서도 알 수 있게 상태코드를 그대로 노출한다
+          //  403 = 규칙 거부(멤버 아님) / 404 = 객체 없음 / 401 = 토큰 문제
+          throw new Error("HTTP " + res.status);
+        }
         return res.blob();
       })
       .then(function (blob) {
@@ -85,10 +90,13 @@
     resolve(p).then(
       function (url) { img.src = url; },
       function (e) {
+        var why = (e && e.message) || "알 수 없는 오류";
         img.dataset.loaded = "";
         img.classList.add("img-error");
-        img.alt = "이미지를 불러올 수 없음";
-        if (window.console) console.warn("이미지 로드 실패:", p, e && e.message);
+        img.alt = "사진 " + why;
+        img.title = p + " — " + why;
+        lastError = why;
+        if (window.console) console.warn("이미지 로드 실패:", p, why);
       }
     );
   }
@@ -104,10 +112,26 @@
     });
   }
 
+  /** 진단: 콘솔에서 ArchiveImages.diagnose() 로 현재 상태를 확인한다. */
+  function diagnose() {
+    var imgs = document.querySelectorAll("img[data-img]");
+    var loaded = 0, failed = 0, waiting = 0;
+    Array.prototype.forEach.call(imgs, function (i) {
+      if (i.classList.contains("img-error")) failed++;
+      else if (i.src) loaded++;
+      else waiting++;
+    });
+    return {
+      mode: mode, bucket: bucket, total: imgs.length,
+      loaded: loaded, failed: failed, waiting: waiting, lastError: lastError,
+    };
+  }
+
   window.ArchiveImages = {
     useStorage: useStorage,
     observe: observe,
     urlFor: resolve,
+    diagnose: diagnose,
     get mode() { return mode; },
   };
 })();
