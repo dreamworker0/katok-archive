@@ -1,35 +1,38 @@
 ﻿<#
-카카오톡 '대화 내용 저장'을 자동 실행한다.
+카카오톡 '대화 내보내기'를 자동 실행한다.
 
-설계 원칙 — 추정 좌표로는 절대 클릭하지 않는다
-  카카오톡 UI 는 접근성 API 에 아무것도 노출하지 않아(Button·MenuItem 0개)
-  좌표 클릭이 불가피하다. 그런데 메뉴에서 '대화 내용' 바로 아래 약 50px 에
-  '채팅방 나가기' 가 있어, 좌표가 조금만 밀려도 40명 방을 나가버린다.
-  게다가 창은 실행 중에도 이동·리사이즈된다(실측: 960x1020 -> 570x960).
+설계 — 메뉴를 클릭하지 않고 단축키(Ctrl+S)를 쓴다
+  실측으로 확인한 사실:
+    · 카톡 UI 는 접근성 API 에 아무것도 노출하지 않는다(Button·MenuItem 0개)
+    · 메뉴에서 '대화 내용' 아래 약 50px 에 '채팅방 나가기' 가 있고,
+      하위 메뉴에는 '대화 내용 모두 삭제' 가 있다
+    · 창은 실행 중에도 이동·리사이즈된다(960x1020 -> 570x960)
+    · 그리고 '대화 내보내기' 에는 단축키 **Ctrl+S** 가 있다
 
-  그래서 모든 클릭은 다음을 통과해야만 실행한다.
-    1) 창 제목이 정확히 일치하는지
-    2) 창을 최상단으로 올렸는지 (다른 창 위로 클릭 방지)
-    3) 클릭 지점의 글자를 OCR 로 읽어 기대한 항목인지
-    4) 금지 단어('나가', '삭제', '신고')가 포함되면 즉시 중단
-  하나라도 실패하면 클릭하지 않고 Esc 로 원상복구한다.
+  그래서 좌표 클릭을 전부 버리고 Ctrl+S 한 번만 보낸다. 위험한 메뉴 항목을
+  아예 지나가지 않으므로 오클릭으로 방을 나가거나 대화를 삭제할 경로가 없다.
+
+  남은 안전장치
+    1) 창 제목이 정확히 일치하는지 확인
+    2) 그 창이 실제로 최상단인지 확인 (다른 앱에 Ctrl+S 를 보내지 않도록)
+    3) 저장 대화상자(표준 #32770)가 떴는지 확인 — 안 뜨면 아무 것도 하지 않고 중단
+    4) 저장 대화상자는 접근성 API 로 다룬다(좌표 클릭 없음)
+    5) 파일이 실제로 생기고 크기가 안정될 때까지 확인
 
 사용
-  powershell -File scripts\kakao_export.ps1 -Discover   # 클릭 없이 메뉴만 관찰
-  powershell -File scripts\kakao_export.ps1             # 실제 내보내기
+  powershell -File scripts\kakao_export.ps1            # 내보내기 실행
+  powershell -File scripts\kakao_export.ps1 -Discover  # 창·단축키 확인만 (전송 안 함)
 #>
 param(
-    [switch]$Discover,                       # 관찰 전용: 메뉴를 열어 OCR 결과만 출력
+    [switch]$Discover,
     [string]$Room = '바이브코딩,업무자동화 화상회의모임',
     [string]$LogDir = 'logs',
-    [string]$InboxDir = 'inbox'              # 내보낸 txt 를 받을 폴더
+    [string]$InboxDir = 'inbox'
 )
 
 $ErrorActionPreference = 'Stop'
-$here = Split-Path -Parent $MyInvocation.MyCommand.Path
-. (Join-Path $here 'kakao_ocr.ps1')
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms, System.Drawing
 
-Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 if (-not ('Win32' -as [type])) {
     Add-Type -TypeDefinition @"
 using System;using System.Runtime.InteropServices;
@@ -37,14 +40,70 @@ public class Win32 {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h,int c);
-  [DllImport("user32.dll")] public static extern void mouse_event(uint f,uint x,uint y,uint d,int e);
-  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int k);
+  [DllImport("user32.dll")] static extern void mouse_event(uint f,uint x,uint y,uint d,int e);
+  public static void MouseClick(){ mouse_event(0x0002,0,0,0,0); mouse_event(0x0004,0,0,0,0); }
+  [DllImport("user32.dll")] static extern void keybd_event(byte k,byte s,uint f,IntPtr e);
+  // Windows 는 포그라운드가 아닌 프로세스의 SetForegroundWindow 를 거부한다.
+  // Alt 를 한 번 눌러주면 포그라운드 전환이 허용되는 것이 표준 우회법이다.
+  public static void NudgeAlt(){ keybd_event(0x12,0,0,IntPtr.Zero); keybd_event(0x12,0,2,IntPtr.Zero); }
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr pid);
+  [DllImport("user32.dll")] static extern bool AttachThreadInput(uint from, uint to, bool attach);
+  [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+
+  // Windows 는 포그라운드가 아닌 프로세스의 SetForegroundWindow 를 거부한다.
+  // 대상 창의 입력 스레드에 우리 스레드를 붙이면(AttachThreadInput) 허용된다.
+  // Ctrl+S 를 실제 키 이벤트로 보낸다.
+  // SendKeys 는 Alt 선행 입력 뒤에 삼켜지는 경우가 있었다(실측).
+  public static void CtrlS(){
+    keybd_event(0x11,0,0,IntPtr.Zero);        // Ctrl down
+    System.Threading.Thread.Sleep(60);
+    keybd_event(0x53,0,0,IntPtr.Zero);        // S down
+    System.Threading.Thread.Sleep(60);
+    keybd_event(0x53,0,2,IntPtr.Zero);        // S up
+    System.Threading.Thread.Sleep(40);
+    keybd_event(0x11,0,2,IntPtr.Zero);        // Ctrl up
+  }
+  public static bool ForceForeground(IntPtr h){
+    uint target = GetWindowThreadProcessId(h, IntPtr.Zero);
+    uint me = GetCurrentThreadId();
+    bool attached = (target != me) && AttachThreadInput(me, target, true);
+    try {
+      ShowWindow(h, 9);
+      BringWindowToTop(h);
+      NudgeAlt();
+      SetForegroundWindow(h);
+    } finally {
+      if (attached) AttachThreadInput(me, target, false);
+    }
+    return GetForegroundWindow() == h;
+  }
 }
 "@
 }
+if (-not ('U32' -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;using System.Runtime.InteropServices;
+public class U32 {
+  [DllImport("user32.dll")] public static extern int SendMessage(IntPtr h,uint m,IntPtr w,IntPtr l);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);
+  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h,uint c);
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc p, IntPtr l);
 
-# 클릭을 절대 허용하지 않는 단어 — OCR 결과에 하나라도 있으면 중단
-$FORBIDDEN = @('나가', '나기', '삭제', '신고', '차단', '초대')
+  // 특정 창이 '소유한' 팝업 목록. 카톡의 내보내기 알림이 여기에 해당한다.
+  public static System.Collections.Generic.List<IntPtr> OwnedPopups(IntPtr owner){
+    var list = new System.Collections.Generic.List<IntPtr>();
+    EnumWindows(delegate(IntPtr h, IntPtr l){
+      if (h != owner && GetWindow(h, 4) == owner) list.Add(h);   // 4 = GW_OWNER
+      return true;
+    }, IntPtr.Zero);
+    return list;
+  }
+}
+"@
+}
 
 function Write-Log { param([string]$m, [string]$level = 'INFO')
     $line = "[{0}] {1} {2}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $level, $m
@@ -52,9 +111,24 @@ function Write-Log { param([string]$m, [string]$level = 'INFO')
     if ($script:LogFile) { Add-Content -Path $script:LogFile -Value $line -Encoding utf8 }
 }
 
+function Save-Screenshot { param([string]$tag)
+    try {
+        $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
+        $bmp = New-Object System.Drawing.Bitmap $vs.Width, $vs.Height
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.CopyFromScreen($vs.X, $vs.Y, 0, 0, (New-Object System.Drawing.Size $vs.Width, $vs.Height))
+        $g.Dispose()
+        $p = Join-Path $script:LogDirResolved ("{0}-{1}.png" -f $tag, (Get-Date -Format 'yyyyMMdd-HHmmss'))
+        $bmp.Save($p, [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
+        Write-Log "화면 저장: $p"
+    } catch { Write-Log "화면 저장 실패: $($_.Exception.Message)" 'WARN' }
+}
+
 function Stop-Safely { param([string]$why)
     Write-Log "중단: $why" 'ABORT'
-    try { [System.Windows.Forms.SendKeys]::SendWait('{ESC}') } catch {}
+    Save-Screenshot -tag 'abort'
+    # Esc 를 보내지 않는다 — 카카오톡에서 Esc 는 대화방 창을 닫아버린다.
+    # 매일 자동 실행하려면 방 창이 열린 채로 남아 있어야 한다.
     exit 1
 }
 
@@ -65,90 +139,46 @@ function Get-RoomWindow {
     $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $cond)
 }
 
-function Set-RoomForeground {
-    param($win)
-    $h = [IntPtr]$win.Current.NativeWindowHandle
-    [void][Win32]::ShowWindow($h, 9)          # SW_RESTORE
-    [void][Win32]::SetForegroundWindow($h)
-    Start-Sleep -Milliseconds 500
-    if ([Win32]::GetForegroundWindow() -ne $h) {
-        Stop-Safely "창을 최상단으로 올리지 못했습니다(다른 창 위로 클릭할 위험)."
-    }
-}
-
-function Invoke-ClickAt {
-    param([int]$X, [int]$Y, [string]$label)
-    Write-Log "클릭: $label ($X, $Y)"
-    [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($X, $Y)
-    Start-Sleep -Milliseconds 200
-    [Win32]::mouse_event(0x0002, 0, 0, 0, 0)   # LEFTDOWN
-    [Win32]::mouse_event(0x0004, 0, 0, 0, 0)   # LEFTUP
-}
-
-function Assert-DarkPixels {
-    <# 지정 지점이 아이콘(어두운 픽셀)처럼 보이는지 확인 — 빈 배경 클릭 방지 #>
-    param([int]$X, [int]$Y, [int]$Min = 25, [int]$Max = 220)
-    $bmp = New-Object System.Drawing.Bitmap 26, 20
-    $g = [System.Drawing.Graphics]::FromImage($bmp)
-    $g.CopyFromScreen(($X - 13), ($Y - 10), 0, 0, (New-Object System.Drawing.Size 26, 20))
-    $dark = 0
-    for ($i = 0; $i -lt 26; $i++) { for ($j = 0; $j -lt 20; $j++) {
-        $c = $bmp.GetPixel($i, $j); if ((($c.R + $c.G + $c.B) / 3) -lt 150) { $dark++ } } }
-    $g.Dispose(); $bmp.Dispose()
-    Write-Log "픽셀 검증: 어두운 픽셀 $dark/520"
-    if ($dark -lt $Min -or $dark -gt $Max) {
-        Stop-Safely "지정 지점이 예상 아이콘과 다릅니다(어두운 픽셀 $dark). 레이아웃이 바뀐 듯합니다."
-    }
-}
-
-function Find-MenuLine {
-    <#
-      OCR 결과에서 원하는 항목을 찾는다.
-      - 필수 단어를 모두 포함해야 한다
-      - 금지 단어가 있으면 그 줄은 후보에서 제외
-      - 후보가 정확히 1개가 아니면 중단(모호하면 클릭하지 않는다)
-    #>
-    param($lines, [string[]]$Must, [string]$what)
-    $cands = @()
-    foreach ($l in $lines) {
-        $t = $l.text
-        $bad = $false
-        foreach ($f in $FORBIDDEN) { if ($t -like "*$f*") { $bad = $true } }
-        if ($bad) { continue }
-        $ok = $true
-        foreach ($m in $Must) { if ($t -notlike "*$m*") { $ok = $false } }
-        if ($ok) { $cands += $l }
-    }
-    if ($cands.Count -eq 0) { Stop-Safely "'$what' 항목을 화면에서 찾지 못했습니다." }
-    if ($cands.Count -gt 1) {
-        Write-Log ("후보 여러 개: " + (($cands | ForEach-Object { "'$($_.text)'@y=$($_.y)" }) -join ', ')) 'WARN'
-        Stop-Safely "'$what' 후보가 $($cands.Count)개로 모호합니다."
-    }
-    Write-Log "확인: '$what' -> '$($cands[0].text)' at ($($cands[0].x), $($cands[0].y))"
-    $cands[0]
+function Find-ByClassAndId {
+    <# 하위 트리에서 (win32 클래스, AutomationId) 로 컨트롤을 찾는다. #>
+    param($parent, [string]$Class, [string]$Id)
+    $a = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ClassNameProperty, $Class)
+    $b = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::AutomationIdProperty, $Id)
+    $parent.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+        (New-Object System.Windows.Automation.AndCondition($a, $b)))
 }
 
 function Wait-SaveDialog {
     <#
-      표준 저장 대화상자를 기다린다. 커스텀 UI 와 달리 이건 접근성 API 로
-      안전하게 다룰 수 있어(Edit·Button 노출) 좌표 클릭이 필요 없다.
+      '다른 이름으로 저장' 대화상자를 찾는다.
+
+      실측으로 확인한 구조 (Windows 10 / 카카오톡):
+        · 대화상자는 데스크톱의 직접 자식이 아니라 **하위(Descendants)** 에 있다
+          -> Children 으로 찾으면 못 찾는다
+        · 클래스는 '#32770', 소유 프로세스는 카카오톡
+        · 내부 컨트롤이 Edit/Button 타입이 아니라 **Pane** 으로 노출된다
+          -> ControlType 으로 찾으면 파일목록 컬럼만 잡힌다.
+             win32 클래스 + AutomationId 로 찾아야 한다:
+               파일 이름 칸 = class 'Edit',   id '1001'
+               저장 버튼    = class 'Button', id '1'
     #>
-    param([int]$TimeoutSec = 20)
+    param([int]$TimeoutSec = 20, [int]$OwnerPid)
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     $root = [System.Windows.Automation.AutomationElement]::RootElement
+    $cond = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ClassNameProperty, '#32770')
     while ((Get-Date) -lt $deadline) {
-        $cond = New-Object System.Windows.Automation.PropertyCondition(
-            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-            [System.Windows.Automation.ControlType]::Window)
-        $wins = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $cond)
-        for ($i = 0; $i -lt $wins.Count; $i++) {
-            $w = $wins.Item($i)
-            $cls = $w.Current.ClassName
-            $nm = $w.Current.Name
-            # 윈도우 공용 파일 대화상자: #32770 (Dialog)
-            if ($cls -eq '#32770') {
-                Write-Log "저장 대화상자 발견: '$nm' (class=$cls)"
-                return $w
+        $dlgs = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)
+        for ($i = 0; $i -lt $dlgs.Count; $i++) {
+            $d = $dlgs.Item($i)
+            if ($d.Current.ProcessId -ne $OwnerPid) { continue }   # 카톡 소유만
+            $edit = Find-ByClassAndId $d 'Edit' '1001'
+            $btn = Find-ByClassAndId $d 'Button' '1'
+            if ($edit -and $btn) {
+                Write-Log "저장 대화상자 발견: '$($d.Current.Name)' (기본 파일명='$($edit.Current.Name)')"
+                return @{ dialog = $d; edit = $edit; button = $btn }
             }
         }
         Start-Sleep -Milliseconds 400
@@ -156,124 +186,153 @@ function Wait-SaveDialog {
     $null
 }
 
-function Save-Dialog-To {
-    <# 저장 대화상자의 파일명 칸에 전체 경로를 넣고 저장한다. #>
-    param($dlg, [string]$Directory)
+function Invoke-SaveDialog {
+    <#
+      기본 파일명·기본 폴더로 저장한 뒤, 새로 생긴 파일을 inbox 로 옮긴다.
 
-    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $file = Join-Path $Directory "KakaoTalkExport-$stamp.txt"
+      파일명을 읽거나 쓰지 않는다:
+        · 파일명 칸의 UIA Name 은 비어 있을 때 라벨('파일 이름:')을 돌려준다(실측)
+        · Vista 스타일 대화상자의 자동완성 Edit 에는 WM_SETTEXT 가 먹지 않는다(실측)
+      그래서 저장 전 폴더 상태를 기록해 두고, 저장 후 **새로 생긴 txt** 를 찾는다.
+      카톡이 붙이는 기본 이름(KakaoTalk_날짜_시각_group.txt)이 그대로 쓰이므로
+      파일명 충돌도 사실상 없다.
+    #>
+    param($found, [string]$Directory)
 
-    # 파일 이름 입력 칸(Edit) 찾기
-    $econd = New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-        [System.Windows.Automation.ControlType]::Edit)
-    $edit = $dlg.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $econd)
-    if ($null -eq $edit) { Stop-Safely "저장 대화상자에서 파일명 입력 칸을 찾지 못했습니다." }
+    $docs = [Environment]::GetFolderPath('MyDocuments')
+    $before = @{}
+    Get-ChildItem $docs -Filter *.txt -ErrorAction SilentlyContinue |
+        ForEach-Object { $before[$_.Name] = $true }
+    Write-Log "저장 전 문서 폴더 txt: $($before.Count)개"
 
-    $vp = $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-    $vp.SetValue($file)
-    Write-Log "파일명 설정: $file"
-    Start-Sleep -Milliseconds 300
+    $bh = [IntPtr]$found.button.Current.NativeWindowHandle
+    Write-Log "저장 버튼 클릭 (BM_CLICK)"
+    [void][U32]::SendMessage($bh, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)
 
-    # 저장 버튼 찾기 (이름이 '저장' 또는 'Save')
-    $bcond = New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-        [System.Windows.Automation.ControlType]::Button)
-    $btns = $dlg.FindAll([System.Windows.Automation.TreeScope]::Descendants, $bcond)
-    $saveBtn = $null
-    for ($i = 0; $i -lt $btns.Count; $i++) {
-        $n = $btns.Item($i).Current.Name
-        if ($n -like '*저장*' -or $n -like '*Save*') { $saveBtn = $btns.Item($i); break }
+    # 새로 생긴 파일을 찾고, 크기가 안정될 때까지 기다린다
+    $deadline = (Get-Date).AddSeconds(120)
+    $newFile = $null
+    while ((Get-Date) -lt $deadline) {
+        $cand = Get-ChildItem $docs -Filter *.txt -ErrorAction SilentlyContinue |
+            Where-Object { -not $before.ContainsKey($_.Name) } |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($cand) {
+            $a = $cand.Length
+            Start-Sleep -Milliseconds 900
+            $cand.Refresh()
+            if ($cand.Length -eq $a) { $newFile = $cand; break }
+        }
+        Start-Sleep -Milliseconds 500
     }
-    if ($null -eq $saveBtn) { Stop-Safely "저장 대화상자에서 저장 버튼을 찾지 못했습니다." }
+    if (-not $newFile) { Stop-Safely "저장된 파일을 찾지 못했습니다(문서 폴더에 새 txt 없음)." }
+    Write-Log "저장 확인: $($newFile.Name) ($([Math]::Round($newFile.Length/1KB,1)) KB)"
 
-    Write-Log "저장 버튼 클릭: '$($saveBtn.Current.Name)'"
-    $ip = $saveBtn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-    $ip.Invoke()
-    $file
+    $dest = Join-Path $Directory $newFile.Name
+    if (Test-Path $dest) {
+        $dest = Join-Path $Directory ("{0}-{1}.txt" -f
+            [IO.Path]::GetFileNameWithoutExtension($newFile.Name), (Get-Date -Format 'HHmmss'))
+    }
+    Move-Item -LiteralPath $newFile.FullName -Destination $dest -Force
+    Write-Log "inbox 로 이동: $dest"
+    $dest
+}
+
+function Close-OwnedPopups {
+    <#
+      방 창이 소유한 팝업을 닫는다.
+
+      카톡의 '대화 내보내기 / 완료되었습니다' 알림은 방 창이 소유한 WS_POPUP 이고,
+      접근성 API 에 전혀 노출되지 않으며(자식 컨트롤 0개) 화면에도 잔상만 남는
+      경우가 있다. 그런데 이 팝업이 살아 있으면 방 창이 포커스를 받지 못해
+      다음 실행에서 Ctrl+S 가 동작하지 않는다(실측: 성공/실패가 번갈아 발생).
+
+      소유자가 방 창인 팝업만 WM_CLOSE 로 닫으므로, 카톡 메인 창이나 다른 앱은
+      건드리지 않는다.
+    #>
+    param([IntPtr]$RoomHandle, [string]$When)
+    $popups = [U32]::OwnedPopups($RoomHandle)
+    if ($popups.Count -eq 0) { return 0 }
+    Write-Log "$When 방 창 소유 팝업 $($popups.Count)개 발견 - 닫습니다"
+    $closed = 0
+    foreach ($ph in $popups) {
+        [void][U32]::PostMessage($ph, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)   # WM_CLOSE
+        $closed++
+    }
+    Start-Sleep -Milliseconds 1200
+    $left = [U32]::OwnedPopups($RoomHandle)
+    Write-Log ("  닫음 {0}개, 남은 팝업 {1}개" -f $closed, $left.Count)
+    $closed
 }
 
 # ───────────────────────── 실행 ─────────────────────────
+Set-Location (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path))
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Force $LogDir | Out-Null }
 if (-not (Test-Path $InboxDir)) { New-Item -ItemType Directory -Force $InboxDir | Out-Null }
-$script:LogFile = Join-Path $LogDir ("kakao-export-{0}.log" -f (Get-Date -Format 'yyyyMMdd'))
+$script:LogDirResolved = (Resolve-Path $LogDir).Path
+$script:LogFile = Join-Path $script:LogDirResolved ("kakao-export-{0}.log" -f (Get-Date -Format 'yyyyMMdd'))
 
-Write-Log "=== 카카오톡 대화 내보내기 시작 (Discover=$Discover) ==="
+Write-Log "=== 대화 내보내기 시작 (Discover=$Discover) ==="
 
+# 1) 방 창 확인
 $win = Get-RoomWindow
 if ($null -eq $win) { Stop-Safely "'$Room' 창을 찾을 수 없습니다. 카카오톡에서 해당 방을 열어두세요." }
-Set-RoomForeground $win
-
+$h = [IntPtr]$win.Current.NativeWindowHandle
 $r = $win.Current.BoundingRectangle
-Write-Log "창 위치: x=$([int]$r.X) y=$([int]$r.Y) w=$([int]$r.Width) h=$([int]$r.Height)"
+Write-Log "창 확인: '$($win.Current.Name)' (x=$([int]$r.X) y=$([int]$r.Y) w=$([int]$r.Width) h=$([int]$r.Height))"
 
-# 1) 햄버거 메뉴 — 창 우측 끝에서 31px, 상단에서 85px (상대 좌표라 창 이동에 안전)
-$hx = [int]($r.X + $r.Width - 31)
-$hy = [int]($r.Y + 85)
-Assert-DarkPixels -X $hx -Y $hy
-Invoke-ClickAt -X $hx -Y $hy -label '햄버거 메뉴'
-Start-Sleep -Milliseconds 800
+# 2) 잔여 팝업 정리 — 남아 있으면 방 창이 포커스를 받지 못한다
+[void](Close-OwnedPopups -RoomHandle $h -When '시작 시')
 
-# 2) 메뉴 OCR — 메뉴는 햄버거 아래로 펼쳐진다
-$mx = [int]($r.X + $r.Width - 380)
-$my = $hy
-$lines = Get-ScreenOcr -X $mx -Y $my -Width 380 -Height 520 -Scale 2
-Write-Log "메뉴 OCR: $($lines.Count)줄"
-foreach ($l in $lines) { Write-Log ("   y={0}  '{1}'" -f $l.y, $l.text) }
+# 3) 최상단 확보 — 다른 앱에 Ctrl+S 를 보내면 안 된다.
+#    SetForegroundWindow 는 호출자가 포그라운드가 아니면 윈도우가 거부하므로(실측)
+#    Alt 를 눌러 전환을 허용시키고 여러 번 시도한다.
+$ok = $false
+for ($try = 1; $try -le 5; $try++) {
+    if ([Win32]::ForceForeground($h)) { $ok = $true; break }
+    Start-Sleep -Milliseconds 400
+    if ([Win32]::GetForegroundWindow() -eq $h) { $ok = $true; break }
+    Write-Log "최상단 전환 재시도 $try/5" 'WARN'
+}
+if (-not $ok) {
+    Stop-Safely "방 창을 최상단으로 올리지 못했습니다. 다른 앱에 단축키가 갈 위험이 있어 중단합니다."
+}
+$kakaoPid = $win.Current.ProcessId
+Write-Log "최상단 확보 확인 (카톡 PID=$kakaoPid)"
 
 if ($Discover) {
-    Write-Log "관찰 모드 — 클릭하지 않고 종료합니다."
-    [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+    Write-Log "관찰 모드 — Ctrl+S 를 보내지 않고 종료합니다."
     exit 0
 }
 
-# 3) '대화 내용' 항목 클릭 (금지 단어 필터가 '채팅방 나가기'를 원천 배제)
-$target = Find-MenuLine -lines $lines -Must @('대화', '내용') -what '대화 내용'
-Invoke-ClickAt -X $target.x -Y $target.y -label "메뉴 항목 '$($target.text)'"
-Start-Sleep -Milliseconds 900
+# 3) Ctrl+S — '대화 내보내기' 단축키. 메뉴를 지나가지 않으므로 위험 항목에 닿지 않는다.
+# 창을 앞으로 올리는 것만으로는 Ctrl+S 가 먹지 않았다(실측).
+# 창 내부 포커스가 필요하므로 메시지 입력칸을 한 번 클릭한다.
+# 입력칸 클릭은 커서만 놓는 동작이라 안전하다 — Enter 는 절대 보내지 않는다.
+$ix = [int]($r.X + 60)
+$iy = [int]($r.Y + $r.Height - 145)
+Write-Log "메시지 입력칸 클릭으로 내부 포커스 확보 ($ix, $iy)"
+[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($ix, $iy)
+Start-Sleep -Milliseconds 250
+[Win32]::MouseClick()
+Start-Sleep -Milliseconds 500
 
-# 4) 하위 메뉴에서 '대화 내보내기' 클릭
-#    하위 메뉴는 클릭 지점 주변에 열리므로 넉넉한 범위를 OCR 한다.
-$sx = [int]([Math]::Max(0, $target.x - 420))
-$sy = [int]([Math]::Max(0, $target.y - 160))
-$sub = Get-ScreenOcr -X $sx -Y $sy -Width 620 -Height 340 -Scale 2
-Write-Log "하위 메뉴 OCR: $($sub.Count)줄"
-foreach ($l in $sub) { Write-Log ("   y={0}  '{1}'" -f $l.y, $l.text) }
+Write-Log "Ctrl+S 전송 (대화 내보내기 단축키)"
+[Win32]::CtrlS()
 
-# '내보내기' 를 필수 단어로 삼는다. 금지 단어 필터가 여전히 위험 항목을 배제한다.
-$exp = Find-MenuLine -lines $sub -Must @('내보내기') -what '대화 내보내기'
-Invoke-ClickAt -X $exp.x -Y $exp.y -label "하위 항목 '$($exp.text)'"
-Start-Sleep -Milliseconds 1200
-
-# 5) 저장 대화상자 처리 — 표준 윈도우 대화상자이므로 접근성 API 로 안전하게 다룬다
-$dlg = Wait-SaveDialog -TimeoutSec 20
+# 4) 저장 대화상자 대기 — 안 뜨면 아무 것도 하지 않고 중단
+$dlg = Wait-SaveDialog -TimeoutSec 20 -OwnerPid $kakaoPid
 if ($null -eq $dlg) {
-    # 대화상자가 아니라 형식 선택 창일 수 있으니 화면을 기록해 둔다
-    $now = Get-ScreenOcr -X 0 -Y 0 -Width ([int][System.Windows.Forms.SystemInformation]::VirtualScreen.Width) `
-                         -Height ([int][System.Windows.Forms.SystemInformation]::VirtualScreen.Height) -Scale 1
-    Write-Log "저장 대화상자를 찾지 못했습니다. 현재 화면:" 'WARN'
-    foreach ($l in $now) { Write-Log ("   y={0}  '{1}'" -f $l.y, $l.text) }
-    Stop-Safely "저장 대화상자를 찾지 못했습니다(형식 선택 단계가 있을 수 있음). 로그를 확인하세요."
+    Stop-Safely "저장 대화상자가 뜨지 않았습니다(단축키가 동작하지 않았을 수 있음)."
 }
 
-$savePath = Save-Dialog-To -dlg $dlg -Directory (Resolve-Path $InboxDir).Path
-Write-Log "저장 요청 경로: $savePath"
+$savePath = Invoke-SaveDialog -found $dlg -Directory (Resolve-Path $InboxDir).Path
 
-# 6) 파일이 실제로 생겼는지 확인
-$deadline = (Get-Date).AddSeconds(60)
-$saved = $null
-while ((Get-Date) -lt $deadline) {
-    if (Test-Path $savePath) {
-        $len1 = (Get-Item $savePath).Length
-        Start-Sleep -Milliseconds 800
-        $len2 = (Get-Item $savePath).Length
-        if ($len1 -eq $len2 -and $len2 -gt 0) { $saved = $savePath; break }
-    }
-    Start-Sleep -Milliseconds 500
-}
-if (-not $saved) { Stop-Safely "저장이 완료되지 않았습니다: $savePath" }
+# 완료 알림 닫기 — 남겨두면 다음 실행에서 포커스를 막는다
+[void](Close-OwnedPopups -RoomHandle $h -When '저장 후')
 
-$size = (Get-Item $saved).Length
-Write-Log "내보내기 완료: $saved ($([Math]::Round($size/1KB,1)) KB)"
-Write-Log "=== 카카오톡 대화 내보내기 정상 종료 ==="
+$kb = [Math]::Round((Get-Item $savePath).Length / 1KB, 1)
+$lines = (Get-Content -LiteralPath $savePath -Encoding utf8 | Measure-Object -Line).Lines
+Write-Log "내보내기 완료: $savePath ($kb KB, $lines 줄)"
+Write-Log "다음: python -m scripts.ingest_incremental"
+Write-Log "=== 정상 종료 ==="
 exit 0
