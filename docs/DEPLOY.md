@@ -30,14 +30,26 @@ Firestore에서 전송된다. `getDownloadURL`(공개 URL)을 쓰지 않고 ID �
 프로젝트 루트에 `serviceAccountKey.json`으로 저장.
 (`.gitignore`에 있어 커밋되지 않음. 절대 공유하지 말 것)
 
-### 3. 도구 설치
+### 3. Storage CORS 설정 (1회, 필수)
+```bash
+node scripts/setup_storage_cors.js
+```
+Firebase Storage 는 오류 응답에는 CORS 헤더를 붙이지만 **객체 다운로드(200)에는
+버킷 CORS 설정이 없으면 붙이지 않는다.** 이 설정 없이는 브라우저가 성공 응답을
+차단해 이미지가 뜨지 않는다(`Failed to fetch`). 확인은 `--show`.
+
+접근 권한과는 무관하다 — CORS 는 "어느 웹페이지가 응답을 읽을 수 있는가"만 정하고,
+누가 읽을 수 있는지는 `storage.rules` 가 결정한다. 커스텀 도메인을 붙이면
+`scripts/setup_storage_cors.js` 의 `ORIGINS` 에 추가하고 다시 실행한다.
+
+### 4. 도구 설치
 ```bash
 npm install
 npm install -g firebase-tools
 firebase login
 ```
 
-### 4. 멤버 명부 작성
+### 5. 멤버 명부 작성
 `config/members.json`에 열람을 허용할 사람을 넣는다. **여기 없는 사람은 로그인해도 못 본다.**
 ```json
 { "members": [
@@ -137,6 +149,23 @@ P1 기준 무료 티어 내:
 - 적재 쓰기: 1,542건(1회성). 무료 한도 일 2만 회
 - Storage: 이미지 41MB, 지연 로딩(화면에 들어올 때만) — 무료 한도 일 1GB 전송
 - Hosting: 61KB
+
+## 문제 해결
+
+**이미지가 안 보이고 콘솔에 `Failed to fetch`**
+→ 버킷 CORS 설정 누락. `node scripts/setup_storage_cors.js` 실행.
+   원인: 성공 응답(200)에 `Access-Control-Allow-Origin` 이 없어 브라우저가 차단.
+
+**로그인 시 `auth/configuration-not-found`**
+→ 콘솔에서 Authentication 을 활성화하고 Google 공급자를 켠다.
+
+**"접근 권한이 없습니다"**
+→ 로그인한 이메일이 `config/members.json` 에 없다. 추가 후 재발행·재배포.
+
+**진단 도구** (브라우저 콘솔)
+```javascript
+ArchiveImages.diagnose()   // {mode, total, loaded, failed, waiting, lastError}
+```
 
 ## 남은 것 (다음 단계)
 
