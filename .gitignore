@@ -52,6 +52,9 @@ Thumbs.db
 # Codex 격리 작업공간
 /.worktrees/
 
+# Superpowers 시각 브레인스토밍 임시 화면
+/.superpowers/
+
 # 카톡 내보내기 작업 폴더 (원본 대화 txt — 커밋하지 않음)
 /inbox/*
 !/inbox/README.md
