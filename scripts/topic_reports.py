@@ -57,6 +57,7 @@ Firestore 가 결과적으로 원격 사본이 된다 — 디스크를 잃으면
 
 from __future__ import annotations
 
+from difflib import SequenceMatcher
 import re
 from pathlib import Path
 
@@ -73,6 +74,13 @@ MIN_BODY_BY_COUNT = (
 )
 
 _FM = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\Z", re.S)
+_URL = re.compile(r"https?://\S+", re.I)
+_ANY_ANCHOR = re.compile(r"^!\[\[(?:link:)?([A-Za-z0-9_-]+)\]\]\s*$", re.M)
+_MEDIA_ANCHOR = re.compile(r"^!\[\[([A-Za-z0-9_-]+)\]\]\s*$", re.M)
+_LINK_ANCHOR = re.compile(r"^!\[\[link:([A-Za-z0-9_-]+)\]\]\s*$", re.M)
+_CONTEXT_MIN_CHARS = 18
+_CONTEXT_MATCH = 0.72
+_CONTEXT_AMBIGUITY = 0.04
 
 
 def parse_report(text: str, where: str = "") -> dict:
@@ -120,6 +128,158 @@ def load_reports(path: Path | None = None) -> dict[str, dict]:
     for p in sorted(d.glob("*.md")):
         out[p.stem] = parse_report(p.read_text(encoding="utf-8"), p.name)
     return out
+
+
+def _context_text(value: str) -> str:
+    """링크·마크다운·문장부호를 뺀 문맥 비교 문자열."""
+    value = _URL.sub(" ", value or "")
+    value = re.sub(r"^#{1,6}\s+|^>\s?|^\s*[-*]\s+", " ", value, flags=re.M)
+    return re.sub(r"[^0-9a-z가-힣]+", "", value.lower())
+
+
+def _context_blocks(report: str) -> list[dict]:
+    """보고서의 사람이 읽는 블록과 원본 줄 위치를 돌려준다."""
+    lines = report.replace("\r\n", "\n").split("\n")
+    blocks = []
+    start = None
+    for i in range(len(lines) + 1):
+        line = lines[i] if i < len(lines) else ""
+        if line.strip():
+            if start is None:
+                start = i
+            continue
+        if start is None:
+            continue
+        raw = "\n".join(lines[start:i])
+        stripped = raw.strip()
+        if (
+            not _ANY_ANCHOR.fullmatch(stripped)
+            and not re.fullmatch(r"#{1,6}\s+.*", stripped)
+        ):
+            normalized = _context_text(raw)
+            if normalized:
+                blocks.append({
+                    "start": start,
+                    "end": i - 1,
+                    "text": normalized,
+                })
+        start = None
+    return blocks
+
+
+def _context_score(source: str, block: str) -> float:
+    if min(len(source), len(block)) < _CONTEXT_MIN_CHARS:
+        return 0.0
+    if source in block or block in source:
+        return 0.99
+    return SequenceMatcher(None, source, block, autojunk=False).ratio()
+
+
+def _best_context_block(text: str, blocks: list[dict]) -> tuple[int, float] | None:
+    source = _context_text(text)
+    if len(source) < _CONTEXT_MIN_CHARS:
+        return None
+    ranked = sorted(
+        (
+            (_context_score(source, block["text"]), block["end"])
+            for block in blocks
+        ),
+        reverse=True,
+    )
+    if not ranked or ranked[0][0] < _CONTEXT_MATCH:
+        return None
+    if (
+        len(ranked) > 1
+        and ranked[1][0] >= _CONTEXT_MATCH
+        and ranked[0][0] - ranked[1][0] <= _CONTEXT_AMBIGUITY
+    ):
+        return None
+    return ranked[0][1], ranked[0][0]
+
+
+def _is_media_message(message: dict) -> bool:
+    return bool(
+        message.get("images")
+        or message.get("file")
+        or message.get("is_file_share")
+        or message.get("kind") in {"image", "file"}
+    )
+
+
+def _insert_context_markers(report: str, markers: dict[int, list[str]]) -> str:
+    if not markers:
+        return report
+    lines = report.replace("\r\n", "\n").split("\n")
+    for end, values in sorted(markers.items(), reverse=True):
+        pos = end + 1
+        if pos < len(lines) and not lines[pos].strip():
+            pos += 1
+            payload = values + [""]
+        elif pos == len(lines):
+            payload = [""] + values
+        else:
+            payload = [""] + values + [""]
+        lines[pos:pos] = payload
+    return "\n".join(lines)
+
+
+def place_context_anchors(report: str, messages: list[dict]) -> str:
+    """확실한 링크·미디어만 관련 보고서 블록 뒤에 자리표로 붙인다.
+
+    결과에는 메시지 본문이 들어가지 않는다. 화면이 이미 발행하는 링크·미디어
+    목록에서 같은 message id 를 찾아 자리표를 채우므로 개인정보 발행 범위도
+    넓어지지 않는다.
+    """
+    if not report or not messages:
+        return report
+    blocks = _context_blocks(report)
+    if not blocks:
+        return report
+
+    manual_media = set(_MEDIA_ANCHOR.findall(report))
+    manual_links = set(_LINK_ANCHOR.findall(report))
+    markers: dict[int, list[str]] = {}
+
+    for message in messages:
+        mid = str(message.get("id") or "")
+        if not mid or not message.get("urls") or mid in manual_links:
+            continue
+        match = _best_context_block(message.get("text") or "", blocks)
+        if match:
+            markers.setdefault(match[0], []).append(f"![[link:{mid}]]")
+
+    for index, message in enumerate(messages):
+        mid = str(message.get("id") or "")
+        if not mid or mid in manual_media or not _is_media_message(message):
+            continue
+
+        candidates = []
+        own = _best_context_block(message.get("text") or "", blocks)
+        if own:
+            candidates.append((own[1], own[0], 0))
+
+        for distance in (1, 2):
+            for neighbor_index in (index - distance, index + distance):
+                if neighbor_index < 0 or neighbor_index >= len(messages):
+                    continue
+                neighbor = messages[neighbor_index]
+                if neighbor.get("nickname") != message.get("nickname"):
+                    continue
+                match = _best_context_block(neighbor.get("text") or "", blocks)
+                if match:
+                    candidates.append((match[1] - (distance * 0.01), match[0], distance))
+
+        candidates.sort(reverse=True)
+        if not candidates or candidates[0][0] < _CONTEXT_MATCH:
+            continue
+        if (
+            len(candidates) > 1
+            and candidates[0][0] - candidates[1][0] <= _CONTEXT_AMBIGUITY
+        ):
+            continue
+        markers.setdefault(candidates[0][1], []).append(f"![[{mid}]]")
+
+    return _insert_context_markers(report, markers)
 
 
 def min_body_for(message_count: int) -> int:
