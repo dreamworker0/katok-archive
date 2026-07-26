@@ -34,6 +34,10 @@
     lightbox: document.getElementById("lightbox"),
     lightboxImg: document.getElementById("lightboxImg"),
     lightboxClose: document.getElementById("lightboxClose"),
+    confirmDialog: document.getElementById("confirmDialog"),
+    confirmTitle: document.getElementById("confirmTitle"),
+    confirmDesc: document.getElementById("confirmDesc"),
+    confirmSubmit: document.getElementById("confirmSubmit"),
   };
   var state = { view: "summary", q: "", nick: "", graph: null, session: null,
                 mine: null, admin: null, gview: "grid", tsort: "desc", pick: null };
@@ -85,6 +89,24 @@
       '<p>' + esc(body) + "</p>" +
       (actionHtml ? '<div class="empty-state__actions">' + actionHtml + "</div>" : "") +
       "</div></section>";
+  }
+
+  function confirmAction(options, onConfirm) {
+    var dialog = el.confirmDialog;
+    if (!dialog) return;
+    var opener = document.activeElement;
+    el.confirmTitle.textContent = options.title || "계속할까요?";
+    el.confirmDesc.textContent = options.description || "";
+    el.confirmSubmit.textContent = options.confirmLabel || "계속하기";
+    el.confirmSubmit.classList.toggle("danger", options.tone !== "neutral");
+    dialog.returnValue = "";
+    dialog.onclose = function () {
+      dialog.onclose = null;
+      if (dialog.returnValue === "confirm") onConfirm();
+      else if (opener && opener.focus) opener.focus();
+    };
+    dialog.showModal();
+    el.confirmSubmit.focus();
   }
 
   // ---------- 주제별 지식(요약) ----------
@@ -714,21 +736,23 @@
     Array.prototype.forEach.call(scope.querySelectorAll(".tc-hide"), function (b) {
       b.onclick = function () {
         var tid = b.getAttribute("data-tid"), title = b.getAttribute("data-title");
-        if (!window.confirm(
-              "'" + title + "' 을 발행에서 뺍니다.\n\n" +
-              "오늘 밤 갱신부터 아무에게도 보이지 않습니다.\n" +
-              "원본은 남아 있고, 관리 탭에서 되돌릴 수 있습니다.\n\n" +
-              "계속할까요?")) return;
-        b.disabled = true;
-        b.textContent = "처리 중…";
-        state.session.admin.setThreadHidden(tid, title, true).then(
-          function () { b.textContent = "제외됨 (오늘 밤 반영)"; },
-          function (e) {
-            b.disabled = false;
-            b.textContent = "발행 제외";
-            window.alert("실패: " + (e.message || String(e)));
-          }
-        );
+        confirmAction({
+          title: "이 주제를 발행하지 않을까요?",
+          description: "'" + title + "'은 오늘 밤 갱신부터 멤버 화면에서 사라집니다.\n" +
+            "관리자에게는 운영 원본이 남습니다. 관리 탭에서 다시 발행할 수 있어요.",
+          confirmLabel: "발행하지 않기",
+        }, function () {
+          b.disabled = true;
+          b.textContent = "처리 중…";
+          state.session.admin.setThreadHidden(tid, title, true).then(
+            function () { b.textContent = "제외됨 (오늘 밤 반영)"; },
+            function (e) {
+              b.disabled = false;
+              b.textContent = "발행 제외";
+              window.alert("실패: " + (e.message || String(e)));
+            }
+          );
+        });
       };
     });
   }
@@ -1408,12 +1432,12 @@
    * 화면에서도 그렇게 안내한다 — 눌렀는데 그대로면 고장으로 보이기 때문이다.
    */
   var COLLECTION_MODES = [
-    { id: "public", label: "공개",
-      desc: "기본값입니다. 앞으로의 글도 아카이브에 담깁니다." },
-    { id: "unpublished", label: "발행 제외",
-      desc: "수집은 되지만 아카이브에 보이지 않습니다. 설정을 되돌리면 다시 보입니다." },
-    { id: "none", label: "수집 거부",
-      desc: "앞으로의 글을 아예 저장하지 않습니다. 되돌려도 그동안의 글은 복구할 수 없습니다." },
+    { id: "public", label: "함께 공개",
+      desc: "앞으로의 글을 멤버 아카이브에 함께 담습니다." },
+    { id: "unpublished", label: "발행하지 않기",
+      desc: "멤버 화면에서는 숨기지만 관리자에게는 운영 원본이 남습니다. 언제든 되돌릴 수 있어요." },
+    { id: "none", label: "수집 중단",
+      desc: "앞으로의 글을 저장하지 않습니다. 되돌려도 중단 기간의 글은 복구할 수 없습니다." },
   ];
 
   /** 내 표시명 전부. 카톡에서 이름을 바꾼 사람은 여러 개다 —
@@ -1621,15 +1645,23 @@
       var picked = el.view.querySelector('input[name="collectionMode"]:checked');
       if (!picked) return;
       var mode = picked.value;
-      // 되돌릴 수 없는 선택이므로 한 번 더 묻는다
-      if (mode === "none" && !window.confirm(
-        "수집 거부로 바꾸면 앞으로의 글이 저장되지 않습니다.\n" +
-        "나중에 되돌려도 그동안의 글은 복구할 수 없습니다. 계속할까요?")) return;
-      setMsg("modeMsg", "저장 중…");
-      api.saveCollection(mode).then(
-        function () { state.mine.collection = mode; setMsg("modeMsg", "저장했습니다."); },
-        function (e) { setMsg("modeMsg", "저장 실패: " + (e.message || e)); }
-      );
+      var save = function () {
+        setMsg("modeMsg", "저장 중…");
+        api.saveCollection(mode).then(
+          function () { state.mine.collection = mode; setMsg("modeMsg", "저장했습니다."); },
+          function (e) { setMsg("modeMsg", "저장 실패: " + (e.message || e)); }
+        );
+      };
+      if (mode === "none") {
+        confirmAction({
+          title: "앞으로의 글 수집을 중단할까요?",
+          description: "설정한 뒤부터 새 글이 저장되지 않습니다.\n" +
+            "나중에 되돌려도 중단 기간의 글은 복구할 수 없습니다.",
+          confirmLabel: "수집 중단",
+        }, save);
+      } else {
+        save();
+      }
     };
 
     document.getElementById("selAll").onclick = function () {
@@ -1663,20 +1695,21 @@
         setMsg("delMsg", "한 번에 1000개까지만 됩니다. 나눠서 요청해 주세요.");
         return;
       }
-      if (!window.confirm(
-            ids.length + "개를 내려달라고 요청합니다." +
-            (kept.length ? " (다른 탭에서 이미 고른 " + kept.length + "개 포함)" : "") +
-            "\n사진·첨부는 저장소에서도 지워집니다.\n" +
-            "오늘 밤 반영되며, 그 전까지는 철회할 수 있습니다. 계속할까요?")) return;
-
-      setMsg("delMsg", "요청하는 중…");
-      api.saveDeletion(all ? [] : ids, all).then(
-        function () {
-          state.mine.deletion = { messageIds: all ? [] : ids, allMessages: all };
-          renderMine();
-        },
-        function (e) { setMsg("delMsg", "요청 실패: " + (e.message || e)); }
-      );
+      confirmAction({
+        title: ids.length + "개의 기록을 내려달라고 요청할까요?",
+        description: (kept.length ? "다른 탭에서 이미 고른 " + kept.length + "개도 포함됩니다.\n" : "") +
+          "사진과 첨부는 저장소에서도 지워집니다.\n오늘 밤 반영 전까지는 철회할 수 있어요.",
+        confirmLabel: "삭제 요청하기",
+      }, function () {
+        setMsg("delMsg", "요청하는 중…");
+        api.saveDeletion(all ? [] : ids, all).then(
+          function () {
+            state.mine.deletion = { messageIds: all ? [] : ids, allMessages: all };
+            renderMine();
+          },
+          function (e) { setMsg("delMsg", "요청 실패: " + (e.message || e)); }
+        );
+      });
     };
 
     var cancel = document.getElementById("cancelDel");
@@ -1778,7 +1811,7 @@
 
     var d = state.admin;
     var parts = participantIndex();
-    var MODE_LABEL = { public: "공개", unpublished: "발행 제외", none: "수집 거부" };
+    var MODE_LABEL = { public: "함께 공개", unpublished: "발행하지 않기", none: "수집 중단" };
 
     var pending = d.preferences.filter(function (p) {
       return p.collection && p.collection !== "public";
@@ -1810,7 +1843,7 @@
             return '<div class="adm-line"><b>' + esc(p.id) + "</b> — " +
               esc(MODE_LABEL[p.collection] || p.collection) + "</div>";
           }).join("")
-        : '<p class="mine-note">모두 공개 설정입니다.</p>') +
+        : '<p class="mine-note">모두 함께 공개 설정입니다.</p>') +
       "</div>" +
 
       '<div class="mine-card"><h3>발행에서 뺀 주제 ' +
@@ -1915,43 +1948,49 @@
         // 수집 중단은 되돌려도 그 기간이 영영 비므로, 어떤 이름이 멈추는지
         // 분명히 보여준 뒤에만 부른다.
         var names = row.getAttribute("data-names") || "";
-        if (!window.confirm(
-              email + " 을 탈퇴 처리합니다.\n\n" +
-              "· 대화·이미지·첨부를 더 이상 볼 수 없게 됩니다.\n" +
-              (names
-                ? "· 앞으로의 글도 수집하지 않습니다: " + names + "\n" +
-                  "  (되돌려도 그동안의 글은 복구할 수 없습니다)\n"
-                : "") +
-              "· 이미 올라간 과거 글은 그대로 남습니다.\n" +
-              "· 걸어둔 삭제 요청은 계속 반영됩니다.\n\n" +
-              "계속할까요?")) return;
-        if (m) m.textContent = "처리 중…";
-        state.session.admin.removeMember(email).then(
-          function (r) {
-            state.admin = null;
-            renderAdmin();
-            var note = document.getElementById("roleMsg");
-            if (note) {
-              note.textContent = email + " 탈퇴 처리 완료." +
-                (r && r.stoppedCollecting ? " 앞으로의 글은 수집하지 않습니다." : "") +
-                " 수집 중단은 오늘 밤 갱신부터 적용됩니다.";
-            }
-          },
-          function (e) { if (m) m.textContent = "실패: " + (e.message || String(e)); }
-        );
+        confirmAction({
+          title: email + " 님을 탈퇴 처리할까요?",
+          description: "대화·이미지·첨부 열람 권한이 사라집니다.\n" +
+            (names ? "앞으로 수집하지 않을 표시명: " + names + "\n" : "") +
+            "이미 올라간 과거 글은 남고, 기존 삭제 요청은 계속 반영됩니다.",
+          confirmLabel: "탈퇴 처리",
+        }, function () {
+          if (m) m.textContent = "처리 중…";
+          state.session.admin.removeMember(email).then(
+            function (r) {
+              state.admin = null;
+              renderAdmin();
+              var note = document.getElementById("roleMsg");
+              if (note) {
+                note.textContent = email + " 탈퇴 처리 완료." +
+                  (r && r.stoppedCollecting ? " 앞으로의 글은 수집하지 않습니다." : "") +
+                  " 수집 중단은 오늘 밤 갱신부터 적용됩니다.";
+              }
+            },
+            function (e) { if (m) m.textContent = "실패: " + (e.message || String(e)); }
+          );
+        });
       };
 
       var btn = row.querySelector(".adm-role");
       btn.onclick = function () {
         var role = btn.getAttribute("data-role");
         var verb = role === "admin" ? "관리자로 지정" : "관리자에서 해제";
-        if (!window.confirm(email + " 을 " + verb + "합니다. 계속할까요?")) return;
-        var m = document.getElementById("roleMsg");
-        if (m) m.textContent = "바꾸는 중…";
-        state.session.admin.setRole(email, role).then(
-          function () { state.admin = null; renderAdmin(); },
-          function (e) { if (m) m.textContent = "실패: " + (e.message || String(e)); }
-        );
+        confirmAction({
+          title: email + " 님을 " + verb + "할까요?",
+          description: role === "admin"
+            ? "멤버 승인과 운영 설정을 바꿀 수 있는 권한이 생깁니다."
+            : "관리 기능 접근 권한이 사라집니다.",
+          confirmLabel: verb,
+          tone: "neutral",
+        }, function () {
+          var m = document.getElementById("roleMsg");
+          if (m) m.textContent = "바꾸는 중…";
+          state.session.admin.setRole(email, role).then(
+            function () { state.admin = null; renderAdmin(); },
+            function (e) { if (m) m.textContent = "실패: " + (e.message || String(e)); }
+          );
+        });
       };
     });
 
@@ -1971,17 +2010,32 @@
       row.querySelector('[data-act="approve"]').onclick = function () {
         var nickname = pick();
         if (nickname.length < 2) { say("연결할 참여자를 고르거나 표시명을 적어주세요."); return; }
-        if (!participantIndex()[nickname] &&
-            !window.confirm("'" + nickname + "' 은 참여자 명단에 없습니다.\n" +
-                            "아직 발언이 없는 분이면 정상입니다. 계속할까요?")) return;
-        say("승인 중…");
-        // 표시명은 목록으로 보낸다. 나중에 이름이 바뀌면 여기에 덧붙인다.
-        state.session.admin.approve(email, [nickname], "user").then(finish("승인"), fail);
+        var approve = function () {
+          say("승인 중…");
+          // 표시명은 목록으로 보낸다. 나중에 이름이 바뀌면 여기에 덧붙인다.
+          state.session.admin.approve(email, [nickname], "user").then(finish("승인"), fail);
+        };
+        if (!participantIndex()[nickname]) {
+          confirmAction({
+            title: "명단에 없는 표시명으로 승인할까요?",
+            description: "'" + nickname + "'은 현재 참여자 명단에 없습니다.\n" +
+              "아직 발언이 없는 멤버라면 그대로 승인해도 됩니다.",
+            confirmLabel: "이대로 승인",
+            tone: "neutral",
+          }, approve);
+        } else {
+          approve();
+        }
       };
       row.querySelector('[data-act="reject"]').onclick = function () {
-        if (!window.confirm(email + " 의 신청을 반려합니다. 계속할까요?")) return;
-        say("반려 중…");
-        state.session.admin.reject(email).then(finish("반려"), fail);
+        confirmAction({
+          title: email + " 님의 신청을 반려할까요?",
+          description: "이 신청은 대기 목록에서 사라집니다. 필요하면 다시 신청할 수 있어요.",
+          confirmLabel: "신청 반려",
+        }, function () {
+          say("반려 중…");
+          state.session.admin.reject(email).then(finish("반려"), fail);
+        });
       };
     });
   }

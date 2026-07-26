@@ -274,8 +274,26 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .node-panel .np-close { position: absolute; top: 8px; right: 10px; cursor: pointer; color: var(--ink-faint);
   font-size: 18px; line-height: 1; background: none; border: 0; }
 .btn { border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink);
-  border-radius: 8px; padding: 6px 11px; font-size: 12.5px; cursor: pointer; }
+  border-radius: 10px; padding: 8px 13px; font-size: 12.5px; cursor: pointer; }
 .btn.ghost { background: var(--surface); color: var(--accent); }
+.btn.danger { border-color: var(--danger); background: var(--danger); color: #fff; }
+
+.confirm-dialog {
+  width: min(520px, calc(100vw - 32px)); margin: auto; padding: 0;
+  color: var(--ink); border: 1px solid var(--line); border-radius: 22px;
+  background: var(--surface); box-shadow: var(--shadow);
+}
+.confirm-dialog::backdrop { background: rgba(45, 37, 31, .48); backdrop-filter: blur(4px); }
+.confirm-dialog form { padding: 32px; }
+.confirm-dialog h2 {
+  margin: 0 0 12px; font-family: "Nanum Myeongjo", "Batang", serif;
+  font-size: 25px; line-height: 1.35; letter-spacing: -.04em;
+}
+.confirm-dialog #confirmDesc {
+  margin: 0; color: var(--ink-soft); font-size: 14px; line-height: 1.75;
+  white-space: pre-line;
+}
+.confirm-dialog__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 28px; }
 
 /* ---------- 타임라인 (원본 기록, 정돈형) ---------- */
 .date-sep { display: flex; align-items: center; gap: 12px; margin: 22px 0 12px; color: var(--ink-faint); font-size: 12px; }
@@ -540,17 +558,20 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .file-size { color: var(--ink-faint); font-size: 12px; margin-left: 4px; }
 
 /* ---------- 내 글 관리 ---------- */
-.mine { max-width: 760px; margin: 0 auto; }
-.mine-title { margin: 0 0 4px; font-size: 19px; font-weight: 800; }
-.mine-sub { margin: 0 0 18px; font-size: 14px; color: var(--ink-soft); }
+.mine { max-width: 860px; margin: 0 auto; }
+.mine-title {
+  margin: 0 0 8px; font-family: "Nanum Myeongjo", "Batang", serif;
+  font-size: 30px; font-weight: 800; letter-spacing: -.045em;
+}
+.mine-sub { max-width: 58ch; margin: 0 0 28px; font-size: 14px; color: var(--ink-soft); }
 .mine-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: 18px 20px; margin-bottom: 16px; box-shadow: var(--shadow-sm); }
-.mine-card h3 { margin: 0 0 12px; font-size: 15px; font-weight: 700; }
+  padding: 26px 28px; margin-bottom: 22px; box-shadow: var(--shadow-sm); }
+.mine-card h3 { margin: 0 0 14px; font-size: 16px; font-weight: 750; }
 .mine-note { margin: 0 0 12px; font-size: 13px; color: var(--ink-soft); line-height: 1.7; }
 
 .mine-modes { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
-.mine-mode { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: start;
-  padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.mine-mode { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; align-items: start;
+  padding: 15px 16px; border: 1px solid var(--line); border-radius: 13px; cursor: pointer; }
 .mine-mode.on { border-color: var(--accent); background: var(--accent-soft); }
 .mine-mode input { grid-row: span 2; margin-top: 3px; }
 .mine-mode-label { font-size: 14px; font-weight: 600; }
@@ -599,7 +620,7 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .mine-foot { font-size: 12.5px; color: var(--ink-faint); text-align: center; margin: 0; }
 
 /* ---------- 관리 ---------- */
-.adm { max-width: 760px; margin: 0 auto; }
+.adm { max-width: 920px; margin: 0 auto; }
 .adm-row { display: grid; gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .adm-row:last-of-type { border-bottom: none; }
 .adm-main { font-size: 14.5px; }
@@ -679,6 +700,12 @@ img.img-error {
   .empty-state { grid-template-columns: 1fr; min-height: 0; }
   .empty-state__art { min-height: 160px; }
   .empty-state__copy { padding: 30px 24px; }
+  .confirm-dialog form { padding: 26px 22px; }
+  .confirm-dialog__actions { flex-direction: column-reverse; }
+  .confirm-dialog__actions .btn { width: 100%; padding-block: 11px; }
+  .mine-card { padding: 22px 18px; }
+  .adm-member { grid-template-columns: 1fr; }
+  .adm-act { justify-content: flex-start; }
   .app { display: block; }
   .sidebar { display: none; }
   .utility-bar { padding: 12px 16px; }

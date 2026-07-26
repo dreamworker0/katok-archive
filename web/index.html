@@ -57,6 +57,18 @@
     <div class="mobile-more" id="mobileMore" hidden></div>
   </div>
 
+  <dialog class="confirm-dialog" id="confirmDialog" aria-labelledby="confirmTitle" aria-describedby="confirmDesc">
+    <form method="dialog">
+      <p class="eyebrow">한 번 더 확인해 주세요</p>
+      <h2 id="confirmTitle"></h2>
+      <p id="confirmDesc"></p>
+      <div class="confirm-dialog__actions">
+        <button class="btn ghost" type="submit" value="cancel">취소</button>
+        <button class="btn danger" id="confirmSubmit" type="submit" value="confirm">계속하기</button>
+      </div>
+    </form>
+  </dialog>
+
   <div class="lightbox" id="lightbox">
     <span class="close" id="lightboxClose">×</span>
     <img id="lightboxImg" alt="" />

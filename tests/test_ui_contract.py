@@ -126,5 +126,20 @@ class UiViewContractTests(unittest.TestCase):
         self.assertGreaterEqual(self.app.count("emptyState("), 5)
 
 
+class UiSafetyContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+
+    def test_risky_actions_use_the_shared_dialog(self):
+        self.assertNotIn("window.confirm", self.app)
+        self.assertIn("function confirmAction(", self.app)
+
+    def test_collection_choices_use_plain_honest_labels(self):
+        for label in ("함께 공개", "발행하지 않기", "수집 중단"):
+            self.assertIn(label, self.app)
+        self.assertIn("관리자에게는 운영 원본이 남습니다", self.app)
+
+
 if __name__ == "__main__":
     unittest.main()
