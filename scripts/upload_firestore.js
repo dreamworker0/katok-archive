@@ -230,8 +230,10 @@ async function main() {
   console.log(`  이미지 ${images.length}장 (Storage, 지연 로딩)`);
   console.log(`  첨부 파일 ${files.length}개 (Storage, 내려받기)`);
 
-  if (!memberDocs.length) {
-    console.warn("\n[주의] 멤버가 0명입니다. config/members.json 을 채우세요 — 아무도 로그인할 수 없습니다.");
+  if (!members.length) {
+    // 거울이 비었을 뿐 Firestore 명부는 멀쩡할 수 있다. 닉네임 대조만 못 하게 된다.
+    console.warn("\n[주의] 로컬 거울(config/members.json)이 비어 있습니다. " +
+      "node scripts/sync_members.js 로 Firestore 에서 끌어오세요.");
   }
   if (DRY) {
     console.log("\n--dry-run: 실제 쓰기 없음");
