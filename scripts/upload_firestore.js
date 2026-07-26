@@ -15,6 +15,7 @@
  *   node scripts/upload_firestore.js              # 전체 적재
  *   node scripts/upload_firestore.js --dry-run    # 계획만 출력
  *   node scripts/upload_firestore.js --skip-images
+ *   node scripts/upload_firestore.js --keep-orphans   # 발행에서 빠진 사진·첨부를 지우지 않음
  */
 const fs = require("fs");
 const path = require("path");
@@ -29,6 +30,7 @@ const BUCKET = "katok-crawling-project.firebasestorage.app";
 const args = process.argv.slice(2);
 const DRY = args.includes("--dry-run");
 const SKIP_IMAGES = args.includes("--skip-images");
+const KEEP_ORPHANS = args.includes("--keep-orphans");
 const BATCH_LIMIT = 450; // Firestore 배치 상한 500 아래로 여유
 
 function readPayload(name) {
@@ -182,6 +184,35 @@ async function uploadFiles(bucket, files) {
   console.log(`  files: ${done}건 업로드, ${skipped}건 이미 있음`);
 }
 
+/** 발행본에서 빠진 사진·첨부를 Storage 에서도 지운다.
+ *
+ *  "내 사진 내려주세요"를 처리했는데 파일이 저장소에 그대로 있으면 반쪽이다.
+ *  발행본에 없으면 앱에서 경로를 알 수 없지만, 남아 있다는 사실 자체가 약속을
+ *  지키지 않은 것이다.
+ *
+ *  되돌릴 수 없는 삭제이므로 안전장치를 둔다. 발행 목록이 비어 있으면(빌드 실패나
+ *  매니페스트 누락일 수 있다) 아무것도 지우지 않는다 — 그 상태로 정리하면 전부
+ *  날아간다.
+ */
+async function pruneOrphans(bucket, prefix, keepPaths, label) {
+  const keep = new Set(keepPaths.map((p) => p.replace(/^assets\//, "")));
+  if (!keep.size) {
+    console.warn(`  [건너뜀] ${label} 발행 목록이 비어 있어 정리하지 않습니다.`);
+    return;
+  }
+  const [objects] = await bucket.getFiles({ prefix });
+  const orphans = objects.filter((o) => !keep.has(o.name));
+  if (!orphans.length) {
+    console.log(`  ${label}: 정리할 것 없음 (보관 ${keep.size}건)`);
+    return;
+  }
+  for (const o of orphans) {
+    await o.delete();
+    console.log(`  ${label} 삭제: ${o.name}`);
+  }
+  console.log(`  ${label}: ${orphans.length}건 삭제, ${keep.size}건 보관`);
+}
+
 async function uploadImages(bucket, images) {
   let done = 0;
   for (const rel of images) {
@@ -277,6 +308,14 @@ async function main() {
     const bucket = admin.storage().bucket();
     await uploadImages(bucket, images);
     if (files.length) await uploadFiles(bucket, files);
+
+    // 발행본에서 빠진 것은 저장소에서도 지운다 (삭제 요청·수집 거부 반영)
+    if (KEEP_ORPHANS) {
+      console.log("  --keep-orphans: 저장소 정리를 건너뜁니다.");
+    } else {
+      await pruneOrphans(bucket, "images/", images, "images");
+      await pruneOrphans(bucket, "files/", files, "files");
+    }
   }
 
   console.log("\n완료. 다음: firebase deploy");

@@ -500,13 +500,34 @@
     return !!(state.session && state.session.requests && myNicknames().length);
   }
 
-  function mineRow(m, pending) {
-    var body;
-    if (m.kind === "image") body = "🖼 사진" + (m.image_count > 1 ? " " + m.image_count + "장" : "");
-    else if (m.is_file_share) body = "📎 " + esc((m.text || "").replace(/^파일:\s*/, ""));
-    else body = esc(m.text || "");
+  /** 항목 종류 — 사진·첨부를 글과 섞어 두면 찾기 어렵다. */
+  function mineKind(m) {
+    if (m.kind === "image") return "image";
+    if (m.is_file_share) return "file";
+    return "text";
+  }
 
-    return '<label class="mine-row' + (pending ? " pending" : "") + '">' +
+  function mineRow(m, pending) {
+    var kind = mineKind(m), body;
+
+    if (kind === "image") {
+      // 썸네일 없이 '사진'이라고만 쓰면 무엇을 지울지 고를 수가 없다.
+      body = m.images && m.images.length
+        ? '<span class="mine-thumbs">' +
+          m.images.map(function (src) {
+            return '<img data-img="' + esc(src) + '" alt="" />';
+          }).join("") + "</span>"
+        : '<span class="mine-muted">🖼 사진' +
+          (m.image_count > 1 ? " " + m.image_count + "장" : "") + " (수집 대기)</span>";
+    } else if (kind === "file") {
+      var fname = m.file ? m.file.name : (m.text || "").replace(/^파일:\s*/, "");
+      body = "📎 " + esc(fname) +
+        (m.file ? ' <span class="file-size">' + fmtSize(m.file.size) + "</span>" : "");
+    } else {
+      body = esc(m.text || "");
+    }
+
+    return '<label class="mine-row mine-' + kind + (pending ? " pending" : "") + '">' +
       '<input type="checkbox" data-mid="' + esc(m.id) + '"' + (pending ? " checked" : "") + " />" +
       '<span class="mine-when">' + esc(m.date) + " " + esc(m.time) + "</span>" +
       '<span class="mine-text">' + body + "</span>" +
@@ -539,7 +560,13 @@
     }
 
     var names = myNicknames();
-    var rows = myMessages();
+    var all = myMessages();
+    var counts = { text: 0, image: 0, file: 0 };
+    all.forEach(function (m) { counts[mineKind(m)]++; });
+    var filter = state.mineKind || "all";
+    var rows = filter === "all"
+      ? all
+      : all.filter(function (m) { return mineKind(m) === filter; });
     var del = state.mine.deletion;
     var pendingAll = !!(del && del.allMessages);
     var pendingIds = {};
@@ -557,8 +584,8 @@
     el.view.innerHTML =
       '<section class="mine">' +
       '<h2 class="mine-title">내 글 관리</h2>' +
-      '<p class="mine-sub">대화방 표시명 <b>' + esc(names.join(", ")) + "</b> 으로 남긴 글 " +
-      rows.length + "개입니다." +
+      '<p class="mine-sub">대화방 표시명 <b>' + esc(names.join(", ")) + "</b> 으로 남긴 " +
+      "글 " + counts.text + " · 사진 " + counts.image + " · 첨부 " + counts.file + "개입니다." +
       (names.length > 1 ? " (이름을 바꾸신 이력이 있어 여러 개가 묶여 있습니다.)" : "") +
       "</p>" +
 
@@ -576,8 +603,17 @@
           "아직 반영 전이라 철회할 수 있습니다.</p>"
         : '<p class="mine-note">내릴 글을 고르세요. 발행본에서 빠지며, ' +
           "되돌리려면 관리자에게 요청해야 합니다.</p>") +
+      '<div class="mine-tabs">' +
+      [["all", "전체", all.length], ["text", "글", counts.text],
+       ["image", "사진", counts.image], ["file", "첨부", counts.file]]
+        .map(function (k) {
+          return '<button class="mine-tab' + (filter === k[0] ? " on" : "") +
+            '" data-kind="' + k[0] + '">' + k[1] + " " + k[2] + "</button>";
+        }).join("") +
+      "</div>" +
       '<div class="mine-actions">' +
-      '<button class="btn ghost" id="selAll">전체 선택</button> ' +
+      '<button class="btn ghost" id="selAll">' +
+      (filter === "all" ? "전체 선택" : "이 목록 전체 선택") + "</button> " +
       '<button class="btn ghost" id="selNone">선택 해제</button> ' +
       '<button class="btn" id="submitDel">선택한 글 내리기</button> ' +
       (pendingCount ? '<button class="btn ghost" id="cancelDel">요청 철회</button>' : "") +
@@ -592,7 +628,7 @@
       "</div></div>" +
 
       '<p class="mine-foot">요청은 매일 밤 23:40 자동 갱신 때 반영됩니다. ' +
-      "급하시면 관리자에게 말씀해 주세요.</p>" +
+      "사진·첨부는 저장소에서도 실제로 지워집니다. 급하시면 관리자에게 말씀해 주세요.</p>" +
       "</section>";
 
     bindMineActions();
@@ -600,6 +636,15 @@
 
   function bindMineActions() {
     var api = state.session.requests;
+
+    Array.prototype.forEach.call(el.view.querySelectorAll(".mine-tab"), function (b) {
+      b.onclick = function () {
+        state.mineKind = b.getAttribute("data-kind");
+        renderMine();
+      };
+    });
+    // 썸네일도 Storage 에서 인증 요청으로 받아온다
+    bindImages(el.view);
     var boxes = function () {
       return Array.prototype.slice.call(el.view.querySelectorAll("input[data-mid]"));
     };
@@ -630,8 +675,20 @@
     };
 
     document.getElementById("submitDel").onclick = function () {
-      var picked = boxes().filter(function (b) { return b.checked; });
-      var ids = picked.map(function (b) { return b.getAttribute("data-mid"); });
+      var ids = boxes().filter(function (b) { return b.checked; })
+        .map(function (b) { return b.getAttribute("data-mid"); });
+
+      // 종류 탭을 켜면 화면에 일부만 뜬다. 그대로 보내면 화면 밖에 있던 기존
+      // 요청이 사라진다 — 사진을 고르는 사이 아까 고른 글이 취소되는 셈이다.
+      var visible = {};
+      boxes().forEach(function (b) { visible[b.getAttribute("data-mid")] = true; });
+      var prev = state.mine.deletion;
+      var kept = [];
+      if (prev && !prev.allMessages) {
+        kept = (prev.messageIds || []).filter(function (id) { return !visible[id]; });
+      }
+      ids = ids.concat(kept);
+
       if (!ids.length) { setMsg("delMsg", "고른 글이 없습니다."); return; }
 
       var total = myMessages().length;
@@ -641,8 +698,11 @@
         setMsg("delMsg", "한 번에 1000개까지만 됩니다. 나눠서 요청해 주세요.");
         return;
       }
-      if (!window.confirm(ids.length + "개의 글을 내려달라고 요청합니다.\n" +
-                          "오늘 밤 반영되며, 그 전까지는 철회할 수 있습니다. 계속할까요?")) return;
+      if (!window.confirm(
+            ids.length + "개를 내려달라고 요청합니다." +
+            (kept.length ? " (다른 탭에서 이미 고른 " + kept.length + "개 포함)" : "") +
+            "\n사진·첨부는 저장소에서도 지워집니다.\n" +
+            "오늘 밤 반영되며, 그 전까지는 철회할 수 있습니다. 계속할까요?")) return;
 
       setMsg("delMsg", "요청하는 중…");
       api.saveDeletion(all ? [] : ids, all).then(
