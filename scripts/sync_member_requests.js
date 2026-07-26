@@ -82,6 +82,8 @@ async function main() {
     if (!rows.has(email)) {
       rows.set(email, {
         email,
+        // 탈퇴한 사람은 명부에 없다. 그때는 요청 문서에 박아둔 표시명을 쓴다 —
+        // 권한을 거둔 것과 "내 글 내려달라"는 의사는 별개이므로 계속 반영해야 한다.
         nicknames: nicknames.get(email) || [],
         collection: "public",
         delete_all: false,
@@ -92,11 +94,21 @@ async function main() {
     return rows.get(email);
   };
 
+  /** 탈퇴자는 명부에 없으므로 문서에 남겨둔 표시명으로 채운다. */
+  const fillNames = (row, data) => {
+    if (row.nicknames.length) return;
+    if (Array.isArray(data.nicknames) && data.nicknames.length) {
+      row.nicknames = data.nicknames.filter(Boolean);
+      row.retired = true;
+    }
+  };
+
   prefSnap.forEach((d) => {
     const data = d.data() || {};
     const row = ensure(d.id);
     row.collection = data.collection || "public";
     row.updated_at = isoOf(data.updatedAt);
+    fillNames(row, data);
   });
 
   delSnap.forEach((d) => {
@@ -105,6 +117,7 @@ async function main() {
     row.delete_all = data.allMessages === true;
     row.delete_message_ids = (data.messageIds || []).map(String);
     row.requested_at = isoOf(data.requestedAt);
+    fillNames(row, data);
   });
 
   const requests = [...rows.values()];
@@ -121,7 +134,10 @@ async function main() {
     if (r.collection !== "public") bits.push(`동의=${r.collection}`);
     if (r.delete_all) bits.push("전체삭제");
     if (r.delete_message_ids.length) bits.push(`개별삭제 ${r.delete_message_ids.length}건`);
-    if (bits.length) console.log(`  ${r.nicknames.join("/") || r.email}: ${bits.join(", ")}`);
+    if (bits.length) {
+      console.log(`  ${r.nicknames.join("/") || r.email}: ${bits.join(", ")}` +
+        (r.retired ? " (탈퇴자 — 의사표시는 계속 반영)" : ""));
+    }
   }
   if (unmapped.length) {
     // 닉네임이 없으면 어느 메시지가 이 사람 것인지 알 수 없어 요청을 반영할 수 없다

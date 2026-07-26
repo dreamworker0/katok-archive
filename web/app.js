@@ -775,7 +775,8 @@
           ? m.nicknames : (m.nickname ? [m.nickname] : []);
         var unlinked = names.filter(function (n) { return !parts[n]; });
         var isAdm = m.role === "admin";
-        return '<div class="adm-member" data-email="' + esc(m.id) + '">' +
+        return '<div class="adm-member" data-email="' + esc(m.id) + '"' +
+          ' data-names="' + esc(names.join(", ")) + '">' +
           '<div class="adm-main"><b>' +
           (names.length ? esc(names.join(", ")) : "(표시명 없음)") + "</b> " +
           '<span class="adm-mail">' + esc(m.id) + "</span>" +
@@ -787,7 +788,8 @@
           '<div class="adm-act">' +
           '<button class="btn ghost adm-link">연결 편집</button> ' +
           '<button class="btn ghost adm-role" data-role="' + (isAdm ? "user" : "admin") +
-          '">' + (isAdm ? "관리자 해제" : "관리자 지정") + "</button></div>" +
+          '">' + (isAdm ? "관리자 해제" : "관리자 지정") + "</button> " +
+          '<button class="btn ghost adm-remove">탈퇴</button></div>' +
           '<div class="adm-link-panel" hidden>' +
           '<p class="mine-note">이 사람이 대화방에서 쓴 표시명을 모두 고릅니다. ' +
           "카톡에서 이름을 바꿨다면 옛 이름과 새 이름을 함께 묶어야 글이 온전히 보입니다.</p>" +
@@ -830,6 +832,37 @@
         if (m) m.textContent = "연결하는 중…";
         state.session.admin.setNicknames(email, picked).then(
           function () { state.admin = null; renderAdmin(); },
+          function (e) { if (m) m.textContent = "실패: " + (e.message || String(e)); }
+        );
+      };
+
+      row.querySelector(".adm-remove").onclick = function () {
+        var m = document.getElementById("roleMsg");
+        // 수집 중단은 되돌려도 그 기간이 영영 비므로, 어떤 이름이 멈추는지
+        // 분명히 보여준 뒤에만 부른다.
+        var names = row.getAttribute("data-names") || "";
+        if (!window.confirm(
+              email + " 을 탈퇴 처리합니다.\n\n" +
+              "· 대화·이미지·첨부를 더 이상 볼 수 없게 됩니다.\n" +
+              (names
+                ? "· 앞으로의 글도 수집하지 않습니다: " + names + "\n" +
+                  "  (되돌려도 그동안의 글은 복구할 수 없습니다)\n"
+                : "") +
+              "· 이미 올라간 과거 글은 그대로 남습니다.\n" +
+              "· 걸어둔 삭제 요청은 계속 반영됩니다.\n\n" +
+              "계속할까요?")) return;
+        if (m) m.textContent = "처리 중…";
+        state.session.admin.removeMember(email).then(
+          function (r) {
+            state.admin = null;
+            renderAdmin();
+            var note = document.getElementById("roleMsg");
+            if (note) {
+              note.textContent = email + " 탈퇴 처리 완료." +
+                (r && r.stoppedCollecting ? " 앞으로의 글은 수집하지 않습니다." : "") +
+                " 수집 중단은 오늘 밤 갱신부터 적용됩니다.";
+            }
+          },
           function (e) { if (m) m.textContent = "실패: " + (e.message || String(e)); }
         );
       };

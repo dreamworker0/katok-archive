@@ -15,7 +15,8 @@
  *   node scripts/approve_claims.js --approve a@x.com --nickname "홍길동"
  *   node scripts/approve_claims.js --approve a@x.com --role admin
  *   node scripts/approve_claims.js --reject a@x.com         신청 삭제
- *   node scripts/approve_claims.js --remove a@x.com         멤버 자격 회수
+ *   node scripts/approve_claims.js --remove a@x.com         탈퇴 (권한 회수 + 수집 중단)
+ *   node scripts/approve_claims.js --remove a@x.com --keep-collecting
  *   node scripts/approve_claims.js --approve a@x.com --nickname "홍길동" --role admin
  *                                                           기존 멤버를 관리자로
  *   node scripts/approve_claims.js --approve a@x.com --no-publish
@@ -36,7 +37,7 @@ const PROJECT_ID = "katok-crawling-project";
 
 function parseArgs(argv) {
   const out = { approve: [], reject: [], remove: [], nickname: null, role: "user",
-                publish: true, dry: false };
+                publish: true, dry: false, keepCollecting: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const list = (v) => String(v || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
@@ -46,6 +47,7 @@ function parseArgs(argv) {
     else if (a === "--nickname") out.nickname = argv[++i];
     else if (a === "--role") out.role = argv[++i] === "admin" ? "admin" : "user";
     else if (a === "--no-publish") out.publish = false;
+    else if (a === "--keep-collecting") out.keepCollecting = true;
     else if (a === "--dry-run") out.dry = true;
     else if (a === "--help" || a === "-h") out.help = true;
     else {
@@ -203,8 +205,17 @@ function publish() {
 /** Firestore 멤버 문서를 직접 쓴다.
  *  발행 단계에 기대면 웹에서 승인한 사람과 어긋나 사고가 난다. */
 async function writeMember(db, email, nickname, role) {
-  await db.collection("members").doc(email).set(
-    { email, name: nickname, nickname, role, approvedAt: new Date().toISOString() },
+  // 표시명은 목록으로 둔다 — 카톡에서 이름을 바꾼 사람은 여러 개를 갖는다.
+  // 기존 연결이 있으면 덮어쓰지 않고 합친다 (CLI 로 역할만 바꿀 때 연결이 날아가면 안 된다).
+  const ref = db.collection("members").doc(email);
+  const prev = await ref.get();
+  const had = prev.exists ? (prev.data().nicknames || []) : [];
+  const nicknames = [nickname, ...had].filter(
+    (n, i, arr) => n && arr.indexOf(n) === i
+  );
+  await ref.set(
+    { email, name: nicknames[0], nickname: nicknames[0], nicknames, role,
+      approvedAt: new Date().toISOString() },
     { merge: true }
   );
 }
@@ -285,10 +296,47 @@ function approve(args, claims, byNick) {
  *  대화가 계속 열린다. */
 async function removeMembers(db, args) {
   for (const email of args.remove) {
+    const snap = await db.collection("members").doc(email).get();
+    const data = snap.exists ? snap.data() : {};
+    const nicknames = Array.isArray(data.nicknames) && data.nicknames.length
+      ? data.nicknames
+      : (data.nickname ? [data.nickname] : []);
+
     if (args.dry) {
-      console.log(`(dry-run) ${email}: 멤버 자격 회수 예정`);
+      console.log(`(dry-run) ${email}: 탈퇴 처리 예정 (표시명 ${nicknames.join(", ") || "없음"})` +
+        (args.keepCollecting ? " — 수집 유지" : " — 수집 중단"));
       continue;
     }
+
+    // 탈퇴하면 앞으로의 글도 수집하지 않는다. 나간 사람의 말을 계속 모으는 건
+    // 열람 권한을 거둔 것과 앞뒤가 맞지 않는다. (--keep-collecting 으로 끌 수 있다.
+    // 계정을 잘못 연결했다가 되돌리는 경우처럼, 사람은 그대로 방에 있는 상황용.)
+    if (args.keepCollecting) {
+      console.log(`  ${email}: 수집은 계속합니다 (--keep-collecting)`);
+    } else if (nicknames.length) {
+      await db.collection("preferences").doc(email).set(
+        { collection: "none", nicknames, updatedAt: new Date() },
+        { merge: true }
+      );
+      console.log(`  ${email}: 수집 거부로 전환 (${nicknames.join(", ")})`);
+    }
+
+    // 걸어둔 의사표시에 표시명을 박아둔다. 멤버 문서가 사라지면 이메일→표시명
+    // 고리가 끊겨, 권한만 거뒀을 뿐인데 "내 글 내려달라"가 조용히 취소된다.
+    for (const name of ["preferences", "deletionRequests"]) {
+      const ref = db.collection(name).doc(email);
+      const s = await ref.get();
+      if (!s.exists) continue;
+      const d = s.data() || {};
+      const meaningful = name === "preferences"
+        ? (d.collection && d.collection !== "public")
+        : true;
+      if (meaningful && nicknames.length) {
+        await ref.set({ nicknames }, { merge: true });
+        console.log(`  ${email}: ${name} 유지 (표시명 ${nicknames.join(", ")})`);
+      }
+    }
+
     await db.collection("members").doc(email).delete();
     try {
       const user = await admin.auth().getUserByEmail(email);

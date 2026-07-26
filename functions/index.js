@@ -196,6 +196,95 @@ exports.setMemberRole = onCall(async (request) => {
   return { ok: true, email, role, changed: true, claim };
 });
 
+/** 멤버 자격 회수(탈퇴 처리).
+ *
+ *  열람 권한만 거둔다. 그 사람이 걸어둔 **수집 거부·삭제 요청은 살려둔다** —
+ *  권한을 회수한 것과 "내 글 내려달라"는 의사는 별개다.
+ *
+ *  살리려면 표시명을 남겨야 한다. 반영 파이프라인은 이메일→표시명을 멤버 명부에서
+ *  찾는데, 멤버 문서가 사라지면 그 고리가 끊겨 요청이 조용히 무시된다. 그래서
+ *  지우기 전에 표시명을 요청 문서에 박아둔다.
+ */
+exports.removeMember = onCall(async (request) => {
+  const caller = await requireAdmin(request);
+  const email = normalizeEmail(request.data && request.data.email);
+
+  if (email === caller) {
+    throw new HttpsError("failed-precondition",
+      "본인은 탈퇴 처리할 수 없습니다. 다른 관리자에게 부탁하세요.");
+  }
+
+  const ref = db().collection("members").doc(email);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpsError("not-found", "멤버가 아닙니다: " + email);
+
+  const data = snap.data() || {};
+  if (data.role === "admin") {
+    const admins = await db().collection("members").where("role", "==", "admin").get();
+    if (admins.size <= 1) {
+      throw new HttpsError("failed-precondition",
+        "마지막 관리자는 탈퇴 처리할 수 없습니다.");
+    }
+  }
+
+  const nicknames = Array.isArray(data.nicknames) && data.nicknames.length
+    ? data.nicknames
+    : (data.nickname ? [data.nickname] : []);
+
+  // 탈퇴하면 앞으로의 글도 수집하지 않는다. 나간 사람의 말을 계속 모으는 건
+  // 열람 권한을 거둔 것과 앞뒤가 맞지 않는다.
+  //
+  // 과거 글은 건드리지 않는다 — 그건 '삭제 요청'이라는 별개의 의사표시다.
+  // 수집 거부는 되돌려도 그 기간이 비므로, 화면에서 미리 알린 뒤에만 부른다.
+  const stopCollecting = request.data && request.data.stopCollecting === false
+    ? false
+    : true;
+  if (stopCollecting && nicknames.length) {
+    await db().collection("preferences").doc(email).set(
+      {
+        collection: "none",
+        nicknames,
+        updatedAt: new Date(),
+        stoppedBy: caller,
+      },
+      { merge: true }
+    );
+  }
+
+  // 남은 의사표시에 표시명을 박아둔다 (Admin SDK 라 규칙 제한을 받지 않는다).
+  // 멤버 문서가 사라지면 이메일→표시명 고리가 끊겨 요청이 조용히 무시된다.
+  const kept = [];
+  for (const name of ["preferences", "deletionRequests"]) {
+    const doc = db().collection(name).doc(email);
+    const s = await doc.get();
+    if (!s.exists) continue;
+    const d = s.data() || {};
+    const meaningful = name === "preferences"
+      ? (d.collection && d.collection !== "public")
+      : true;
+    if (!meaningful) continue;
+    if (nicknames.length) await doc.set({ nicknames }, { merge: true });
+    kept.push(name);
+  }
+
+  await ref.delete();
+
+  let claimCleared = false;
+  try {
+    const user = await admin.auth().getUserByEmail(email);
+    await admin.auth().setCustomUserClaims(user.uid, { member: false, admin: false });
+    claimCleared = true;
+  } catch (e) {
+    if (e.code !== "auth/user-not-found") throw e;
+  }
+
+  return {
+    ok: true, email, nicknames, claimCleared,
+    stoppedCollecting: stopCollecting && nicknames.length > 0,
+    keptRequests: kept, removedBy: caller,
+  };
+});
+
 exports.ensureClaim = onCall(async (request) => {
   const email = callerEmail(request);
   const snap = await db().collection("members").doc(email).get();

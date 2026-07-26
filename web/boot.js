@@ -265,6 +265,7 @@
       setNicknames: function (email, nicknames) {
         return call("setMemberNicknames", { email: email, nicknames: nicknames });
       },
+      removeMember: function (email) { return call("removeMember", { email: email }); },
       reject: function (email) { return call("rejectClaim", { email: email }); },
       setRole: function (email, role) {
         return call("setMemberRole", { email: email, role: role });
