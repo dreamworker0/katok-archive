@@ -127,6 +127,61 @@ async function syncCollection(db, name, docs) {
   );
 }
 
+const FILE_TYPES = {
+  ".pdf": "application/pdf",
+  ".html": "text/html; charset=utf-8",
+  ".md": "text/markdown; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+  ".zip": "application/zip",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ".hwp": "application/x-hwp",
+  ".hwpx": "application/haansofthwpx",
+};
+
+/** 대화방에서 공유된 첨부 파일.
+ *
+ *  이미지와 달리 이미 올라간 것은 건너뛴다. 80MB 짜리 PDF 가 섞여 있어 매번 전부
+ *  다시 올리면 일일 자동화가 느려지고 송신 비용도 든다. 크기가 같으면 같은 파일로
+ *  본다 — 매니페스트가 sha256 을 들고 있지만 매번 원격 해시를 받아오는 편이 더 비싸다.
+ */
+async function uploadFiles(bucket, files) {
+  let done = 0, skipped = 0;
+  for (const rel of files) {
+    const local = path.join(ROOT, rel);
+    if (!fs.existsSync(local)) {
+      console.warn(`  [건너뜀] 파일 없음: ${rel}`);
+      continue;
+    }
+    const dest = rel.replace(/^assets\//, "");
+    const size = fs.statSync(local).size;
+
+    const [exists] = await bucket.file(dest).exists();
+    if (exists) {
+      const [meta] = await bucket.file(dest).getMetadata();
+      if (Number(meta.size) === size) {
+        skipped++;
+        continue;
+      }
+    }
+
+    await bucket.upload(local, {
+      destination: dest,
+      resumable: size > 5 * 1024 * 1024,
+      metadata: {
+        contentType: FILE_TYPES[path.extname(rel).toLowerCase()] || "application/octet-stream",
+        cacheControl: "private, max-age=86400",
+        // 브라우저가 열지 않고 내려받게 한다 (html 첨부가 실행되면 곤란하다)
+        contentDisposition: "attachment",
+      },
+    });
+    done++;
+    process.stdout.write(`  files: ${done} 올림 (${path.basename(rel)})\n`);
+  }
+  console.log(`  files: ${done}건 업로드, ${skipped}건 이미 있음`);
+}
+
 async function uploadImages(bucket, images) {
   let done = 0;
   for (const rel of images) {
@@ -160,6 +215,7 @@ async function main() {
   const source = readPayload("messages-source.json");
   const members = readPayload("members.json");
   const images = readPayload("images.json");
+  const files = readPayload("files.json");
 
   const digestDocs = Object.keys(digests).map((k) => ({ id: k, ...digests[k] }));
   const sourceDocs = source.map((m) => ({ id: m.id, ...m }));
@@ -179,6 +235,7 @@ async function main() {
   console.log(`  총 쓰기 ${docCount + sourceDocs.length}건`);
   console.log(`  → 멤버가 전체를 읽을 때: ${docCount - memberDocs.length + 1}회 읽기`);
   console.log(`  이미지 ${images.length}장 (Storage, 지연 로딩)`);
+  console.log(`  첨부 파일 ${files.length}개 (Storage, 내려받기)`);
 
   if (!memberDocs.length) {
     console.warn("\n[주의] 멤버가 0명입니다. config/members.json 을 채우세요 — 아무도 로그인할 수 없습니다.");
@@ -208,7 +265,9 @@ async function main() {
 
   if (!SKIP_IMAGES) {
     console.log("Storage 업로드");
-    await uploadImages(admin.storage().bucket(), images);
+    const bucket = admin.storage().bucket();
+    await uploadImages(bucket, images);
+    if (files.length) await uploadFiles(bucket, files);
   }
 
   console.log("\n완료. 다음: firebase deploy");

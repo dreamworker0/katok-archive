@@ -112,10 +112,13 @@ def build_data(
     topics: dict,
     knowledge: dict | None = None,
     digest_prose: dict | None = None,
+    files: list[dict] | None = None,
 ) -> dict:
     """수집 데이터를 화면 렌더링용 단일 딕셔너리로 조립한다."""
     # 이미지 메시지 → 다운로드된 로컬 경로 매핑
     image_by_id = {img["image_id"]: img for img in images}
+    # 파일 공유 메시지 → 나중에 사람이 모아 넣은 원본 (있을 때만)
+    file_by_msg = {f["message_id"]: f for f in (files or [])}
 
     # 메시지 → 스레드/카테고리 매핑
     msg_thread: dict[str, dict] = {}
@@ -158,6 +161,15 @@ def build_data(
                 or 1
             )
             downloaded_assets += len(paths)
+
+        # 원본을 못 구한 첨부는 예전처럼 이름만 남는다 — 링크는 붙은 것에만 준다
+        f = file_by_msg.get(m["id"])
+        if f:
+            item["file"] = {
+                "name": f["filename"],
+                "path": f["local_path"],
+                "size": f["byte_size"],
+            }
 
         out_messages.append(item)
 
@@ -314,8 +326,11 @@ def main() -> None:
     topics = _read_json(OUTPUT / "topics.json")
     knowledge = _read_json(OUTPUT / "knowledge.json")
     digest_prose = _read_json(OUTPUT / "topic-digests.json")
+    # 첨부 원본은 나중에 사람이 모아 넣는다. 없으면 이름만 남는다.
+    files_path = OUTPUT / "files.jsonl"
+    files = _read_jsonl(files_path) if files_path.exists() else []
 
-    data = build_data(messages, images, participants, topics, knowledge, digest_prose)
+    data = build_data(messages, images, participants, topics, knowledge, digest_prose, files)
     write_site(data)
 
     t = data["stats"]["totals"]

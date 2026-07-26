@@ -127,8 +127,31 @@
     };
   }
 
+  /** 첨부 파일 내려받기.
+   *
+   *  이미지처럼 objectURL 을 캐시하지 않는다 — 문서·zip 은 수십 MB 라(80MB PDF 한 장
+   *  포함) 들고 있으면 메모리를 계속 먹는다. 받아서 저장시키고 바로 놓아준다.
+   */
+  function download(assetPath, filename) {
+    var save = function (href, revoke) {
+      var a = document.createElement("a");
+      a.href = href;
+      a.download = filename || assetPath.split("/").pop();
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      if (revoke) setTimeout(function () { URL.revokeObjectURL(href); }, 60000);
+    };
+
+    if (mode === "local") { save(assetPath, false); return Promise.resolve(); }
+    return fetchProtected(assetPath).then(function (objectUrl) {
+      save(objectUrl, true);
+    });
+  }
+
   window.ArchiveImages = {
     useStorage: useStorage,
+    download: download,
     observe: observe,
     urlFor: resolve,
     diagnose: diagnose,

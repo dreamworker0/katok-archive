@@ -56,6 +56,11 @@
   function hashHue(s) { var h = 0; for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360; return h; }
   function avatarStyle(n) { return "background:hsl(" + hashHue(n) + ",42%,50%)"; }
   function initial(n) { var x = (n || "?").replace(/\s*\(.*\)\s*$/, "").trim(); return x ? x.charAt(0) : "?"; }
+  function fmtSize(bytes) {
+    if (!bytes) return "";
+    if (bytes < 1024 * 1024) return Math.max(1, Math.round(bytes / 1024)) + " KB";
+    return (bytes / 1024 / 1024).toFixed(1) + " MB";
+  }
   var WD = ["일", "월", "화", "수", "목", "금", "토"];
   function fmtDate(d) {
     var p = d.split("-"), dt = new Date(+p[0], +p[1] - 1, +p[2]);
@@ -226,6 +231,7 @@
     }
     el.view.innerHTML = html.join("");
     bindImages(el.view);
+    bindFiles(el.view);
   }
   function renderEntry(m, cont) {
     var inner;
@@ -238,7 +244,16 @@
           m.images.map(function (s) { return '<img data-img="' + esc(s) + '" alt="" />'; }).join("") + "</div>";
       }
     } else if (m.is_file_share) {
-      inner = '<div class="file-badge">📎 ' + linkify(esc(m.text.replace(/^파일:\s*/, ""))) + "</div>";
+      // 원본을 구한 첨부만 내려받기 버튼이 된다. 나머지는 예전처럼 이름만 남는다 —
+      // 눌러도 아무 일이 없는 링크보다 눌리지 않는 배지가 정직하다.
+      var fname = (m.text || "").replace(/^파일:\s*/, "");
+      if (m.file) {
+        inner = '<button class="file-badge has-file" data-file="' + esc(m.file.path) +
+          '" data-name="' + esc(m.file.name) + '">📎 ' + esc(m.file.name) +
+          ' <span class="file-size">' + fmtSize(m.file.size) + '</span></button>';
+      } else {
+        inner = '<div class="file-badge">📎 ' + linkify(esc(fname)) + "</div>";
+      }
     } else {
       inner = '<div class="entry-text">' + highlightText(linkify(esc(m.text)), state.q) + "</div>";
     }
@@ -288,6 +303,7 @@
       fig.querySelector("figcaption").onclick = function () { jumpToTimeline(fig.getAttribute("data-jump")); };
     });
     bindImages(el.view);
+    bindFiles(el.view);
   }
 
   // ---------- 통계 ----------
@@ -324,6 +340,26 @@
   }
 
   // ---------- 라이트박스 ----------
+  function bindFiles(scope) {
+    Array.prototype.forEach.call(scope.querySelectorAll("[data-file]"), function (b) {
+      b.onclick = function () {
+        var fpath = b.getAttribute("data-file"), name = b.getAttribute("data-name");
+        var label = b.innerHTML;
+        // 80MB 짜리도 있어 몇 초씩 걸린다. 아무 반응이 없으면 고장으로 보인다.
+        b.disabled = true;
+        b.innerHTML = "📎 내려받는 중…";
+        window.ArchiveImages.download(fpath, name).then(
+          function () { b.disabled = false; b.innerHTML = label; },
+          function (e) {
+            b.disabled = false;
+            b.innerHTML = label;
+            window.alert("내려받지 못했습니다: " + (e && e.message ? e.message : e));
+          }
+        );
+      };
+    });
+  }
+
   function bindImages(scope) {
     Array.prototype.forEach.call(scope.querySelectorAll(".imgs img"), function (img) {
       img.onclick = function () { openLightbox(img); };

@@ -238,6 +238,13 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
   border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* 원본을 구한 첨부는 눌러서 내려받는다 */
+.file-badge.has-file { font: inherit; cursor: pointer; text-align: left;
+  border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--ink); }
+.file-badge.has-file:hover { border-color: var(--accent); background: var(--accent-soft); }
+.file-badge.has-file:disabled { cursor: progress; opacity: .7; }
+.file-size { color: var(--ink-faint); font-size: 12px; margin-left: 4px; }
+
 /* ---------- 내 글 관리 ---------- */
 .mine { max-width: 760px; margin: 0 auto; }
 .mine-title { margin: 0 0 4px; font-size: 19px; font-weight: 800; }

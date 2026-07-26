@@ -222,6 +222,9 @@ def build_payload() -> dict:
     topics = build_site._read_json(OUTPUT / "topics.json")
     knowledge = build_site._read_json(OUTPUT / "knowledge.json")
     digest_prose = build_site._read_json(OUTPUT / "topic-digests.json")
+    # 첨부 원본은 나중에 사람이 모아 넣는다. 없으면 없는 대로 발행한다.
+    files_path = OUTPUT / "files.jsonl"
+    files = build_site._read_jsonl(files_path) if files_path.exists() else []
 
     # 멤버가 웹에서 낸 요청을 손으로 쓴 제외 규칙 위에 얹는다. 삭제 요청은 반드시
     # 소유권을 확인한 뒤에 반영한다 — 보안 규칙만으로는 남의 글을 지우려는 요청을
@@ -244,7 +247,7 @@ def build_payload() -> dict:
     participants = rebuild_participants(kept)
 
     data = build_site.build_data(
-        kept, images, participants, topics_pruned, knowledge_pruned, digest_prose
+        kept, images, participants, topics_pruned, knowledge_pruned, digest_prose, files
     )
 
     chunks = chunk_messages(data["messages"])
@@ -259,6 +262,11 @@ def build_payload() -> dict:
                 seen_img.add(p)
                 used_images.append(p)
 
+    # 발행본에 남은 메시지의 첨부만 업로드한다 (제외된 글의 파일까지 올리지 않는다)
+    used_files = [
+        f["local_path"] for f in files if f["message_id"] in {m["id"] for m in data["messages"]}
+    ]
+
     meta = {
         "chat_room": data["chat_room"],
         "categories": data["categories"],
@@ -268,6 +276,7 @@ def build_payload() -> dict:
         "message_count": len(data["messages"]),
         "thread_count": len(data["threads"]),
         "image_count": len(used_images),
+        "file_count": len(used_files),
         "node_types": data["knowledge"].get("node_types", []),
         "edge_types": data["knowledge"].get("edge_types", []),
         "excluded_count": report["dropped_count"],
@@ -287,6 +296,7 @@ def build_payload() -> dict:
         "members": members,
         "member_warnings": check_member_nicknames(members, participants),
         "images": used_images,
+        "files": used_files,
         "exclusion_report": report,
     }
 
@@ -309,6 +319,7 @@ def write_payload(payload: dict) -> None:
     dump("messages-source.json", payload["messages_source"])
     dump("members.json", payload["members"])
     dump("images.json", payload["images"])
+    dump("files.json", payload["files"])
     (PAYLOAD / "exclusion-report.json").write_text(
         json.dumps(payload["exclusion_report"], ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -326,6 +337,8 @@ def main() -> None:
            len(payload["graph"]["nodes"]), len(payload["graph"]["edges"]),
            m["image_count"])
     )
+    if payload["files"]:
+        print("첨부 파일 %d건 연결" % len(payload["files"]))
     print("멤버 %d명" % len(payload["members"]))
     for w in payload["member_warnings"]:
         print("[닉네임 확인] %s" % w)
