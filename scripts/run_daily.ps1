@@ -109,8 +109,9 @@ Invoke-Step '발행본 생성' { python -m scripts.build_firestore_payload } | O
 # 6) Firestore·Storage 적재
 Invoke-Step 'Firestore 적재' { node scripts\upload_firestore.js } | Out-Null
 
-# 7) 정합성 확인
+# 7) 정합성 확인 — 파이썬(발행본 무결성) + 노드(증분 적재 규칙)
 Invoke-Step '테스트' { python -m unittest discover -s tests } | Out-Null
+Invoke-Step '테스트(적재)' { npm test --silent } | Out-Null
 
 Say "===== 일일 갱신 완료: 새 메시지 $added 건 발행 ====="
 if ($added -gt 0) {

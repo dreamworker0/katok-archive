@@ -56,3 +56,7 @@ Thumbs.db
 /inbox/*
 !/inbox/README.md
 /logs/
+
+# 적재 대장 — "무엇을 이미 Firestore·Storage 에 올렸는가"의 로컬 캐시.
+# 원격 상태를 비추는 것이라 커밋할 값이 아니다. 없으면 다음 실행이 전량으로 돈다.
+/output/upload-state.json

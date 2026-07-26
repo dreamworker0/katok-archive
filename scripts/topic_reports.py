@@ -36,6 +36,15 @@ topics.json 을 직접 고치지 않고 별도 파일로 두는 이유:
 
 사진·첨부는 여기에 적지 않는다. media 발행본에 thread_id 가 있어 화면이
 알아서 붙인다 — 사람이 두 군데를 맞춰 적으면 반드시 어긋난다.
+
+다만 '어디쯤에서 오간 사진인가'는 보고서만 아는 정보라, 자리만 가리킬 수
+있게 했다. 본문에 한 줄로
+
+    ![[msg-000123]]
+
+이라 적어 두면 화면이 그 message id 의 사진·첨부를 그 자리에 끼운다.
+내용을 옮겨 적는 것이 아니라 자리만 가리키므로 어긋날 여지가 없고,
+자리표가 없는 사진은 예전처럼 보고서 끝에 모인다.
 """
 
 from __future__ import annotations
@@ -114,7 +123,8 @@ def min_body_for(message_count: int) -> int:
 
 def body_length(report: str) -> int:
     """본문 글자 수. 마크다운 기호는 빼고 실제 내용만 센다."""
-    t = re.sub(r"^#{1,6}\s*", "", report, flags=re.M)
+    t = re.sub(r"^!\[\[[^\]]+\]\]\s*$", "", report, flags=re.M)  # 사진 자리표는 내용이 아니다
+    t = re.sub(r"^#{1,6}\s*", "", t, flags=re.M)
     t = re.sub(r"^[-*]\s+", "", t, flags=re.M)
     t = re.sub(r"^>\s*", "", t, flags=re.M)
     t = re.sub(r"[*=`|]", "", t)

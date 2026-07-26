@@ -110,14 +110,14 @@
         "</button>";
     }).join("");
     var links = (d.links || []);
-    var linkTop = links.slice(0, 10), linkRest = links.slice(10);
+    var linkTop = links.slice(0, 3), linkRest = links.slice(3);
     function lk(l) {
       return '<a href="' + esc(l.url) + '" target="_blank" rel="noopener noreferrer">' + esc(l.url) +
         '</a><span class="lk-meta">' + esc(l.nickname) + " · " + esc(l.date) + "</span>";
     }
     var linkHtml = linkTop.map(function (l) { return "<div>" + lk(l) + "</div>"; }).join("");
     if (linkRest.length) {
-      linkHtml += "<details><summary>공유 링크 " + linkRest.length + "개 더</summary>" +
+      linkHtml += '<details class="more-fold"><summary>공유 링크 ' + linkRest.length + "개 더</summary>" +
         linkRest.map(function (l) { return "<div>" + lk(l) + "</div>"; }).join("") + "</details>";
     }
     var people = (d.participants || []).map(function (p) {
@@ -125,11 +125,22 @@
         " <span style=\"color:var(--ink-faint)\">" + p.count + "</span></button>";
     }).join("");
     var kw = (d.keywords || []).map(function (k) { return '<span class="chip">' + esc(k) + "</span>"; }).join("");
-    var threads = (d.threads || []).map(function (t) {
+    // 최근 대화가 위로 오도록 끝난 날짜 기준 내림차순. 날짜는 YYYY-MM-DD라 문자열 비교로 충분하다.
+    var threadList = (d.threads || []).slice().sort(function (a, b) {
+      return String(b.end_date || "").localeCompare(String(a.end_date || "")) ||
+        String(b.start_date || "").localeCompare(String(a.start_date || ""));
+    });
+    function tl(t) {
       var range = t.start_date === t.end_date ? t.start_date : t.start_date + " ~ " + t.end_date;
       return '<div class="thread-line" data-start="t-' + esc(t.id) + '"><b>' + esc(t.title) +
         '</b><span class="tl-date">' + esc(range) + '</span><span class="tl-n">💬 ' + t.count + "</span></div>";
-    }).join("");
+    }
+    var threadTop = threadList.slice(0, 10), threadRest = threadList.slice(10);
+    var threads = threadTop.map(tl).join("");
+    if (threadRest.length) {
+      threads += '<details class="more-fold"><summary>대화 주제 ' + threadRest.length + "개 더</summary>" +
+        threadRest.map(tl).join("") + "</details>";
+    }
 
     return '<article class="doc" id="doc-' + cid + '" style="--c:' + col + '">' +
       '<div class="doc-head"><span class="doc-bar"></span>' +
@@ -141,8 +152,8 @@
       (apps ? '<div class="doc-section"><h4>🧩 주요 결과물</h4><div class="app-list">' + apps + "</div></div>" : "") +
       (people ? '<div class="doc-section"><h4>👥 활발한 참여자</h4><div class="people-row">' + people + "</div></div>" : "") +
       (linkHtml ? '<div class="doc-section"><h4>🔗 공유 링크</h4><div class="link-list">' + linkHtml + "</div></div>" : "") +
-      (threads ? '<details class="thread-toggle"><summary>소속 대화 주제 ' + (d.threads || []).length +
-        "개</summary>" + threads + "</details>" : "") +
+      (threads ? '<div class="doc-section thread-list"><h4>🧵 소속 대화 주제 ' + threadList.length +
+        "개</h4>" + threads + "</div>" : "") +
       "</article>";
   }
 
@@ -404,6 +415,19 @@
 
       if (!ln.trim()) { flushPara(para); i++; continue; }
 
+      /* 사진·첨부 자리표 — `![[msg-000123]]` 한 줄.
+       *
+       * 보고서 끝에 사진을 몰아 두면 "무슨 얘기 중에 올라온 것"인지가 사라진다.
+       * 본문을 쓸 때 그 대목 뒤에 자리표를 남겨 두면, 화면이 media 발행본에서
+       * 같은 message id 를 찾아 그 자리에 끼운다. 사람이 두 군데를 맞춰 적는
+       * 것이 아니라 자리만 가리키므로 어긋날 여지가 없다. */
+      var an = /^!\[\[\s*([A-Za-z0-9_-]+)\s*\]\]$/.exec(ln.trim());
+      if (an) {
+        flushPara(para);
+        out.push('<div class="md-anchor" data-anchor="' + esc(an[1]) + '"></div>');
+        i++; continue;
+      }
+
       var h = /^(#{1,6})\s+(.*)$/.exec(ln);
       if (h) {
         flushPara(para);
@@ -490,18 +514,8 @@
     return MEDIA.filter(function (m) { return m.thread_id === tid; });
   }
 
-  /* 보고서에 그날 오간 사진·첨부를 붙인다.
-   *
-   * 펼칠 때 채운다. 165개 카드의 이미지를 미리 다 걸어 두면 Storage 인증
-   * 요청이 한꺼번에 나간다. data-filled 로 두 번 채우는 것을 막는다.
-   */
-  function fillMedia(box) {
-    var host = box.querySelector(".tc-media");
-    if (!host || host.getAttribute("data-filled")) return;
-    var rows = mediaOf(host.getAttribute("data-media"));
-    if (!rows.length) return;
-    host.setAttribute("data-filled", "1");
-
+  /** 사진·첨부 한 묶음을 그린다. 본문 사이(inline)든 보고서 끝이든 모양은 같다. */
+  function mediaHtml(rows, inline) {
     var imgs = [], files = [];
     rows.forEach(function (m) {
       if (m.kind === "image" && m.images) {
@@ -520,11 +534,49 @@
             : '<span class="fc-none">원본 없음</span>') + "</div>");
       }
     });
-    host.innerHTML = "<h4>이 주제에서 오간 사진·첨부</h4>" +
-      (imgs.length ? '<div class="imgs">' + imgs.join("") + "</div>" : "") +
+    var cap = "";
+    if (inline && imgs.length) {
+      var m0 = rows[0];
+      cap = '<div class="mi-cap">🖼 ' + esc(m0.nickname) + " · " + esc(m0.date) +
+        " " + esc(m0.time || "") + (imgs.length > 1 ? " · " + imgs.length + "장" : "") + "</div>";
+    }
+    return (imgs.length ? '<div class="imgs' + (inline && imgs.length === 1 ? " single" : "") + '">' +
+        imgs.join("") + "</div>" + cap : "") +
       (files.length ? '<div class="tcf-list">' + files.join("") + "</div>" : "");
-    bindImages(host);
-    bindFiles(host);
+  }
+
+  /* 보고서에 그날 오간 사진·첨부를 붙인다.
+   *
+   * 본문에 자리표(![[msg-…]])가 있으면 그 자리에 끼우고, 자리표가 없는 것만
+   * 보고서 끝으로 모은다. 전부 자리를 찾았으면 끝의 묶음은 비워 둔다.
+   *
+   * 펼칠 때 채운다. 165개 카드의 이미지를 미리 다 걸어 두면 Storage 인증
+   * 요청이 한꺼번에 나간다. data-filled 로 두 번 채우는 것을 막는다.
+   */
+  function fillMedia(box) {
+    var host = box.querySelector(".tc-media");
+    if (!host || host.getAttribute("data-filled")) return;
+    var rows = mediaOf(host.getAttribute("data-media"));
+    if (!rows.length) return;
+    host.setAttribute("data-filled", "1");
+
+    var anchors = {};
+    Array.prototype.forEach.call(box.querySelectorAll(".md-anchor"), function (a) {
+      anchors[a.getAttribute("data-anchor")] = a;
+    });
+
+    var rest = [];
+    rows.forEach(function (m) {
+      var a = anchors[m.id];
+      if (a) a.innerHTML = mediaHtml([m], true);
+      else rest.push(m);
+    });
+
+    host.innerHTML = rest.length
+      ? "<h4>이 주제에서 오간 사진·첨부</h4>" + mediaHtml(rest, false)
+      : "";
+    bindImages(box);
+    bindFiles(box);
   }
 
   /** 보고서를 .md 로 내려받는다. 화면에 보이는 것이 곧 파일이다. */
@@ -537,7 +589,18 @@
       "participants: " + (t.participants || []).join(", "),
       "messages: " + (t.count || 0),
       "---", ""].join("\n");
-    var blob = new Blob([head + t.report + "\n"], { type: "text/markdown;charset=utf-8" });
+    /* 자리표는 화면에서만 사진으로 부풀 뿐, 파일에 그대로 두면 뜻 모를 기호가
+       된다. 무엇이 그 자리에 있었는지 한 줄로 적어 남긴다. */
+    var body = String(t.report || "").replace(/^!\[\[\s*([A-Za-z0-9_-]+)\s*\]\]$/gm,
+      function (all, id) {
+        var m = MEDIA.filter(function (x) { return x.id === id; })[0];
+        if (!m) return "";
+        var what = m.kind === "file"
+          ? "📎 " + (m.name || (m.file && m.file.name) || "첨부")
+          : "🖼 사진" + (m.images && m.images.length > 1 ? " " + m.images.length + "장" : "");
+        return "> " + what + " — " + m.nickname + " · " + m.date + " " + (m.time || "");
+      });
+    var blob = new Blob([head + body + "\n"], { type: "text/markdown;charset=utf-8" });
     var a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = t.id + "-" + String(t.title).replace(/[\\/:*?"<>|]/g, "") + ".md";
@@ -889,11 +952,316 @@
       "<ul class='my-notes'>" +
       myHighlights(f).map(function (s) { return "<li>" + s + "</li>"; }).join("") +
       "</ul>" +
+      /* 성향·관심 이야기는 본인 원문이 있어야 쓸 수 있다. 통계 탭에서 원문을
+         부르지 않는다는 원칙은 그대로 두고, 그 글이 있는 자리로 보낸다. */
+      '<p class="my-more"><button class="btn ghost" id="goMine">' +
+      "기록에서 읽히는 것 — 성향·관심 보고서 보기 →</button></p>" +
       '<p class="hint" style="text-align:left;padding:6px 0 0;font-size:12px">' +
       "이 칸은 <b>본인에게만</b> 보입니다. 다른 사람의 기록은 볼 수 없습니다.</p></div>";
   }
   function numCell(v, k) {
     return '<div class="my-num"><div class="v">' + v + '</div><div class="k">' + esc(k) + "</div></div>";
+  }
+
+  /* ---------- 나의 성향·관심 보고서 ----------
+   *
+   * 숫자만 늘어놓으면 "378건"이 무엇을 뜻하는지 알 수 없다. 방장이 짚었다 —
+   * "너무 산술적이야." 그래서 센 값을 문장으로 옮긴다.
+   *
+   * 다만 세지 않은 것은 쓰지 않는다. 성격을 지어내지 않고, 기록에서 실제로
+   * 읽히는 것만 적는다 — 문장마다 뒤에 센 숫자가 붙어 있다. 근거가 모자라면
+   * 그 문장을 통째로 뺀다(임계값). 남을 평가하지 않는 것과 같은 이유로,
+   * 이 보고서는 본인 원문이 있는 '나의 기록' 탭에서만 그린다.
+   */
+  var MY_SLOTS = [
+    { from: 0, to: 6, label: "새벽(0~6시)" },
+    { from: 6, to: 9, label: "아침(6~9시)" },
+    { from: 9, to: 12, label: "오전(9~12시)" },
+    { from: 12, to: 18, label: "낮(12~18시)" },
+    { from: 18, to: 22, label: "저녁(18~22시)" },
+    { from: 22, to: 24, label: "밤(22~24시)" },
+  ];
+  var MY_PAT = {
+    ask: /[?？]|나요|까요|는지요|은지요|으실지|을지요|궁금|여쭤|물어봐|알려주실/,
+    warm: /감사|고맙|축하|응원|환영|반갑|수고|화이팅|축하|기대/,
+    praise: /멋지|대단|훌륭|좋네|좋습니|최고|굿|잘하[셨시]/,
+    laugh: /ㅎㅎ|ㅋㅋ|\^\^|ㅠㅠ|~~/,
+    guide: /하시면|하세요|해보세요|해보셔|누르|설치|설정|방법은|이렇게 하/,
+    mention: /@\S/,
+  };
+  var MY_DAYS = ["일", "월", "화", "수", "목", "금", "토"];
+
+  /** 메시지 번호 → 주제. 주제는 메시지 번호의 연속 구간이라 범위로 찾는다. */
+  function threadRanges() {
+    if (state.tRanges) return state.tRanges;
+    var num = function (id) { return parseInt(String(id || "").replace(/\D/g, ""), 10) || 0; };
+    state.tRanges = THREADS.map(function (t) {
+      return { from: num(t.start_msg), to: num(t.end_msg), cat: t.category };
+    }).filter(function (r) { return r.from; })
+      .sort(function (a, b) { return a.from - b.from; });
+    return state.tRanges;
+  }
+
+  /** 지식 그래프의 도구·결과물 이름을 찾을 말로 바꾼다. 'A(B)' 는 A 와 B 둘 다. */
+  function myTermList() {
+    if (state.myTerms) return state.myTerms;
+    var out = [];
+    (KNOW.nodes || []).forEach(function (n) {
+      if (n.type !== "tool" && n.type !== "app") return;
+      var words = [];
+      String(n.query || n.label).split(/[·,]/).forEach(function (part) {
+        var m = /^(.*?)\((.+?)\)\s*$/.exec(part.trim());
+        if (m) { words.push(m[1].trim()); words.push(m[2].trim()); }
+        else if (part.trim()) words.push(part.trim());
+      });
+      words = words.filter(function (w) { return w.length >= 2; });
+      if (words.length) out.push({ label: n.label, words: words });
+    });
+    state.myTerms = out;
+    return out;
+  }
+
+  /** 한 글에 그 이름이 나오는가. 영문 낱말은 다른 낱말 안에 박힌 것을 세지 않는다. */
+  function mentions(text, words) {
+    for (var i = 0; i < words.length; i++) {
+      var w = words[i];
+      if (/^[\x20-\x7e]+$/.test(w)) {
+        var re = new RegExp("(^|[^A-Za-z0-9])" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+          "([^A-Za-z0-9]|$)", "i");
+        if (re.test(text)) return true;
+      } else if (text.indexOf(w) !== -1) return true;
+    }
+    return false;
+  }
+
+  function myTraits(items) {
+    var t = {
+      total: items.length, text: 0, image: 0, file: 0, urls: 0, chars: 0, shots: 0,
+      long: 0, ask: 0, warm: 0, praise: 0, laugh: 0, guide: 0, mention: 0,
+      weekend: 0, slots: [], months: {}, days: {}, cats: {}, terms: [],
+      opened: 0, myIds: {},
+    };
+    MY_SLOTS.forEach(function () { t.slots.push(0); });
+    var terms = myTermList().map(function (x) { return { label: x.label, words: x.words, n: 0 }; });
+    var ranges = threadRanges();
+    var num = function (id) { return parseInt(String(id || "").replace(/\D/g, ""), 10) || 0; };
+
+    items.forEach(function (m) {
+      t.myIds[m.id] = 1;
+      var kind = mineKind(m);
+      t[kind]++;
+      t.urls += (m.urls || []).length;
+      // 사진은 글 수가 아니라 장 수로 센다 — 한 번에 여러 장을 올린 글이 많다
+      if (kind === "image") t.shots += (m.image_count || 1);
+
+      var body = String(m.text || "");
+      if (kind === "text") {
+        t.chars += body.length;
+        if (body.length >= 200) t.long++;
+        if (MY_PAT.ask.test(body)) t.ask++;
+        if (MY_PAT.warm.test(body)) t.warm++;
+        if (MY_PAT.praise.test(body)) t.praise++;
+        if (MY_PAT.laugh.test(body)) t.laugh++;
+        if (MY_PAT.guide.test(body)) t.guide++;
+        if (MY_PAT.mention.test(body)) t.mention++;
+        /* 이름 세기에서 주소는 뺀다. github.com 링크를 붙인 것을 'GitHub 를 말했다'로
+           세면 링크 공유가 관심사로 둔갑한다. 링크는 이미 따로 세고 있다. */
+        var plain = body.replace(/https?:\/\/\S+/g, " ");
+        terms.forEach(function (x) { if (mentions(plain, x.words)) x.n++; });
+      }
+
+      var hh = parseInt(String(m.time || "").slice(0, 2), 10);
+      if (!isNaN(hh)) {
+        for (var i = 0; i < MY_SLOTS.length; i++) {
+          if (hh >= MY_SLOTS[i].from && hh < MY_SLOTS[i].to) { t.slots[i]++; break; }
+        }
+      }
+      var d = String(m.date || "");
+      if (d) {
+        t.days[d] = (t.days[d] || 0) + 1;
+        t.months[d.slice(0, 7)] = (t.months[d.slice(0, 7)] || 0) + 1;
+        var wd = new Date(d + "T00:00:00").getDay();
+        if (wd === 0 || wd === 6) t.weekend++;
+      }
+
+      /* 발행본 메시지에는 분야가 붙어 있다. 없으면(옛 문서) 번호 구간으로 찾는다. */
+      var cat = m.category;
+      if (!cat) {
+        var n = num(m.id);
+        for (var j = 0; j < ranges.length; j++) {
+          if (n >= ranges[j].from && n <= ranges[j].to) { cat = ranges[j].cat; break; }
+        }
+      }
+      if (cat) t.cats[cat] = (t.cats[cat] || 0) + 1;
+    });
+
+    THREADS.forEach(function (th) { if (t.myIds[th.start_msg]) t.opened++; });
+
+    // 많이 쓴 사람일수록 한두 번 스친 이름은 관심사가 아니다. 글 수에 맞춰 문턱을 올린다.
+    var need = Math.max(2, Math.round(t.text / 60));
+    t.terms = terms.filter(function (x) { return x.n >= need; })
+      .sort(function (a, b) { return b.n - a.n; });
+    return t;
+  }
+
+  /** 나와 같은 주제에 자주 있었던 사람. 발행본의 참여자 목록만 본다. */
+  function myMates(limit) {
+    var names = myNicknames();
+    var mine = function (n) { return names.indexOf(n) !== -1; };
+    var by = {};
+    THREADS.forEach(function (t) {
+      var ps = t.participants || [];
+      if (!ps.some(mine)) return;
+      ps.forEach(function (p) { if (!mine(p)) by[p] = (by[p] || 0) + 1; });
+    });
+    return Object.keys(by).map(function (k) { return { name: k, n: by[k] }; })
+      .sort(function (a, b) { return b.n - a.n; }).slice(0, limit);
+  }
+
+  function pct(a, b) { return b ? Math.round((a / b) * 100) : 0; }
+  function topKey(obj) {
+    var best = null;
+    Object.keys(obj).forEach(function (k) { if (!best || obj[k] > obj[best]) best = k; });
+    return best;
+  }
+  function ymLabel(ym) {
+    var p = String(ym).split("-");
+    return p[0] + "년 " + parseInt(p[1], 10) + "월";
+  }
+  function dLabel(d) {
+    var p = String(d).split("-");
+    return parseInt(p[1], 10) + "월 " + parseInt(p[2], 10) + "일(" +
+      MY_DAYS[new Date(d + "T00:00:00").getDay()] + ")";
+  }
+
+  /** 문장 목록 → 섹션. 문장이 하나도 없으면 섹션 자체를 그리지 않는다. */
+  function mySection(title, lines) {
+    var ok = lines.filter(Boolean);
+    if (!ok.length) return "";
+    return '<div class="my-story"><h4>' + title + "</h4>" +
+      ok.map(function (s) { return "<p>" + s + "</p>"; }).join("") + "</div>";
+  }
+
+  function myTraitReport(items) {
+    if (!items || items.length < 5) return "";
+    var t = myTraits(items);
+    var n = t.total, txt = t.text || 1;
+
+    /* 언제 — 시간대는 가장 두드러진 하나만. 고르게 흩어져 있으면 그렇게 적는다. */
+    var si = 0;
+    t.slots.forEach(function (v, i) { if (v > t.slots[si]) si = i; });
+    var slotShare = pct(t.slots[si], n);
+    var topMonth = topKey(t.months), topDay = topKey(t.days);
+    var when = mySection("언제 쓰셨나", [
+      slotShare >= 25
+        ? "글은 <b>" + MY_SLOTS[si].label + "</b>에 가장 많았습니다 — " + n + "건 가운데 " +
+          t.slots[si] + "건(" + slotShare + "%)이 이 시간대입니다."
+        : "쓰신 시각이 하루에 고르게 흩어져 있습니다. 가장 많은 때가 " +
+          MY_SLOTS[si].label + "이고 그마저 " + slotShare + "%입니다.",
+      t.weekend >= 5
+        ? "주말에도 <b>" + t.weekend + "건</b>(" + pct(t.weekend, n) + "%)을 남기셨습니다."
+        : "",
+      topMonth
+        ? "가장 말이 많았던 달은 <b>" + ymLabel(topMonth) + "</b>(" + t.months[topMonth] +
+          "건)이고, 하루에 가장 많이 쓴 날은 <b>" + dLabel(topDay) + "</b>(" +
+          t.days[topDay] + "건)입니다."
+        : "",
+    ]);
+
+    /* 무엇 — 도구·결과물 이름과, 방 전체와 견준 분야 쏠림 */
+    // 이름 하나가 두 번 나온 것으로 관심사를 말할 수는 없다
+    var top5 = (t.terms.length >= 2 || (t.terms[0] && t.terms[0].n >= 3))
+      ? t.terms.slice(0, 5).map(function (x) {
+          return "<b>" + esc(x.label) + "</b>(" + x.n + "번)";
+        }).join(", ")
+      : "";
+    var roomTotal = 0, roomBy = {};
+    (STATS.categories || []).forEach(function (c) { roomTotal += c.messages; roomBy[c.id] = c.messages; });
+    var myCatTotal = 0;
+    Object.keys(t.cats).forEach(function (k) { myCatTotal += t.cats[k]; });
+    var over = Object.keys(t.cats).map(function (k) {
+      return { id: k, n: t.cats[k], mine: t.cats[k] / (myCatTotal || 1),
+               room: (roomBy[k] || 0) / (roomTotal || 1) };
+    /* 비율만 보면 5%대 3% 같은 자잘한 차이가 1등으로 올라온다. 눈에 띄는 쏠림만
+       말하려고 비(比)와 차(差)를 함께 걸고, 차이가 큰 것을 고른다. */
+    }).filter(function (x) {
+      return x.n >= 5 && x.room > 0 && x.mine / x.room >= 1.25 && x.mine - x.room >= 0.04;
+    }).sort(function (a, b) { return (b.mine - b.room) - (a.mine - a.room); })[0];
+    var myTop = Object.keys(t.cats).map(function (k) { return { id: k, n: t.cats[k] }; })
+      .sort(function (a, b) { return b.n - a.n; });
+    var what = mySection("무엇에 마음이 갔나", [
+      top5 ? "글에 되풀이해 나온 이름은 " + top5 + "입니다." : "",
+      myTop.length
+        ? "가장 오래 머무신 자리는 <b>" + esc(CAT_LABEL[myTop[0].id] || myTop[0].id) +
+          "</b>(" + myTop[0].n + "건, 내 글의 " + pct(myTop[0].n, myCatTotal) + "%)입니다."
+        : "",
+      over
+        ? "이 방 전체와 견주면 <b>" + esc(CAT_LABEL[over.id] || over.id) +
+          "</b> 쪽으로 더 기울어 있습니다 — 내 글의 " + Math.round(over.mine * 100) +
+          "%, 방 전체는 " + Math.round(over.room * 100) + "%."
+        : "",
+    ]);
+
+    /* 어떻게 — 묻는지 건네는지, 길게 쓰는지, 어떤 말씨인지 */
+    var give = t.urls + t.shots + t.file;
+    var gaveWhat = [[t.urls, "링크 %건"], [t.shots, "사진 %장"], [t.file, "첨부 %개"]]
+      .filter(function (g) { return g[0]; })
+      .map(function (g) { return g[1].replace("%", g[0]); }).join(", ");
+    /* 적게 쓴 사람에게 "답하는 쪽"이라고 단정하면 근거 없는 성격 규정이 된다.
+       판단은 글이 충분히 쌓였을 때만 하고, 아니면 아예 말하지 않는다. */
+    var askLine = "";
+    if (pct(t.ask, txt) >= 15) {
+      askLine = "묻는 말이 <b>" + t.ask + "건</b>(글의 " + pct(t.ask, txt) +
+        "%)입니다. 먼저 물어서 이야기를 끌어내는 편입니다.";
+    } else if (txt >= 30 && pct(t.ask, txt) <= 8) {
+      askLine = "묻기보다 <b>답하고 알려주는</b> 쪽이 많았습니다. 묻는 말은 " + t.ask +
+        "건(" + pct(t.ask, txt) + "%)에 그칩니다.";
+    }
+    var how = mySection("어떻게 말하셨나", [
+      askLine,
+      give >= 10
+        ? gaveWhat + " — <b>무언가를 건네는 글</b>이 " + give + "번입니다."
+        : "",
+      "한 번 쓸 때 평균 <b>" + Math.round(t.chars / txt) + "자</b>였고" +
+        (t.long ? ", 200자가 넘는 긴 글도 <b>" + t.long + "건</b> 있습니다." : "입니다.") +
+        (t.long >= txt * 0.1 ? " 필요할 때는 길게 정리해 두는 편입니다." : ""),
+      t.guide >= txt * 0.15
+        ? "'이렇게 하세요' 식으로 <b>방법을 일러 주는 글</b>이 " + t.guide + "건(" +
+          pct(t.guide, txt) + "%)입니다."
+        : "",
+      (t.warm + t.praise) >= txt * 0.15
+        ? "고맙다·반갑다·멋지다 같은 <b>호응하는 말</b>이 " + (t.warm + t.praise) +
+          "건에서 보입니다."
+        : "",
+      t.laugh >= txt * 0.3
+        ? "ㅎㅎ·^^ 같은 표시가 <b>" + t.laugh + "건</b>(" + pct(t.laugh, txt) +
+          "%)에 붙어 있습니다. 딱딱하지 않게 말하시는 편입니다."
+        : "",
+      t.opened >= 3
+        ? "<b>" + t.opened + "개 주제</b>의 첫 말을 남기셨습니다 — 이야기를 여는 자리에 " +
+          "자주 서 계셨습니다."
+        : "",
+    ]);
+
+    /* 누구와 — 줄 세우지 않되, 자주 겹친 자리는 알려 준다 */
+    var mates = myMates(3);
+    var who = mySection("누구와 있었나", [
+      mates.length
+        ? "같은 주제에 가장 자주 함께 계셨던 분은 " + mates.map(function (m) {
+            return "<b>" + esc(m.name) + "</b>(" + m.n + "개 주제)";
+          }).join(", ") + "입니다."
+        : "",
+      t.mention >= 5
+        ? "이름을 불러(@) 말을 건넨 글이 " + t.mention + "건입니다."
+        : "",
+    ]);
+
+    if (!(when + what + how + who)) return "";
+    return '<div class="mine-card my-profile">' +
+      "<h3>기록에서 읽히는 것</h3>" +
+      '<p class="mine-note">아래는 남기신 글을 세어 본 것입니다. ' +
+      "세어지지 않는 것은 적지 않았습니다. 본인에게만 보입니다.</p>" +
+      when + what + how + who + "</div>";
   }
 
   /** 여러 색이 쌓인 막대. 한 달 안에서 어떤 주제가 오갔는지 색으로 보인다. */
@@ -950,6 +1318,8 @@
 
     html.push(myReport());
     el.view.innerHTML = html.join("");
+    var go = document.getElementById("goMine");
+    if (go) go.onclick = function () { setView("mine"); };
   }
 
   // ---------- 라이트박스 ----------
@@ -1129,6 +1499,8 @@
       "글 " + counts.text + " · 사진 " + counts.image + " · 첨부 " + counts.file + "개입니다." +
       (names.length > 1 ? " (이름을 바꾸신 이력이 있어 여러 개가 묶여 있습니다.)" : "") +
       "</p>" +
+
+      myTraitReport(all) +
 
       '<div class="mine-card">' +
       "<h3>앞으로의 수집</h3>" +

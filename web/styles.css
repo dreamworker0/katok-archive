@@ -119,8 +119,11 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .link-list a { font-size: 13px; padding: 3px 0; }
 .link-list .lk-meta { color: var(--ink-faint); font-size: 11px; margin-left: 6px; }
 .people-row { display: flex; flex-wrap: wrap; gap: 6px; }
-.thread-toggle { margin-top: 12px; }
-.thread-toggle summary { cursor: pointer; font-size: 13px; color: var(--ink-soft); font-weight: 600; }
+.more-fold { margin-top: 6px; }
+.more-fold summary { cursor: pointer; font-size: 12px; color: var(--ink-soft); font-weight: 600;
+  padding: 4px 0; }
+.more-fold summary:hover { color: var(--accent); }
+.thread-list .more-fold { margin-top: 0; border-top: 1px solid var(--line); }
 .thread-line { display: flex; gap: 8px; align-items: baseline; padding: 5px 0; border-top: 1px solid var(--line);
   font-size: 13px; cursor: pointer; }
 .thread-line:hover { color: var(--accent); }
@@ -240,9 +243,13 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow-sm); }
 .panel h3 { margin: 0 0 12px; font-size: 15px; }
 .bar-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
-.bar-row .lab { width: 112px; flex: 0 0 112px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-soft); }
+/* 주제 이름이 잘리면 무슨 항목인지 알 수 없다. 넓히고, 넘치면 줄을 바꾸되
+   낱말은 쪼개지 않는다(keep-all). */
+.bar-row .lab { width: 170px; flex: 0 0 170px; white-space: normal; word-break: keep-all;
+  line-height: 1.35; color: var(--ink-soft); }
 .bar-row .track { flex: 1; background: var(--surface-2); border-radius: 6px; height: 16px; overflow: hidden; }
-.bar-row .fill { height: 100%; border-radius: 6px; background: var(--c, var(--accent)); }
+/* display 를 빼먹으면 inline span 이라 width·height 가 먹지 않아 막대가 안 그려진다 */
+.bar-row .fill { display: block; height: 100%; border-radius: 6px; background: var(--c, var(--accent)); }
 /* 주제 색이 쌓인 막대 */
 .bar-row .fill.stack { display: flex; background: none; overflow: hidden; }
 .bar-row .fill.stack .seg { height: 100%; min-width: 1px; }
@@ -260,6 +267,16 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .my-cats { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 .my-notes { margin: 0; padding-left: 18px; }
 .my-notes li { font-size: 13.5px; line-height: 1.8; color: var(--ink); margin-bottom: 4px; }
+.my-more { margin: 12px 0 0; }
+
+/* 성향·관심 보고서 — 숫자표가 아니라 읽는 글이라 문단으로 짠다 */
+/* .mine-card 가 뒤에서 테두리를 다시 칠하므로 두 클래스를 함께 걸어 이긴다 */
+.mine-card.my-profile { border-color: var(--accent); }
+.my-story { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.my-story:first-of-type { border-top: 0; padding-top: 0; }
+.my-story h4 { margin: 0 0 6px; font-size: 13px; font-weight: 700; color: var(--accent); }
+.my-story p { margin: 0 0 6px; font-size: 14px; line-height: 1.85; color: var(--ink); }
+.my-story p:last-child { margin-bottom: 0; }
 .bar-row .val { width: 46px; text-align: right; flex: 0 0 46px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
 
 /* ---------- 라이트박스 ---------- */
@@ -344,6 +361,12 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 
 /* 보고서 끝에 붙는 그날의 사진·첨부 */
 .tc-media { margin-top: 18px; padding-top: 14px; border-top: 1px dashed var(--line-strong); }
+/* 사진이 전부 본문 자리표로 들어갔으면 아래 묶음은 자취도 남기지 않는다.
+   자리표에 걸린 사진이 아직 수집 전이라 비어 있을 때도 마찬가지다. */
+.tc-media:empty, .md-anchor:empty { display: none; }
+.md-anchor { margin: 12px 0; }
+.md-anchor .mi-cap { font-size: 11.5px; color: var(--ink-faint); margin-top: 3px; }
+.md-anchor .tcf-list { margin-top: 2px; }
 .tc-media h4 { border: 0; margin: 0 0 8px; padding: 0; font-size: 12.5px; color: var(--ink-faint); }
 .tcf-list { display: flex; flex-direction: column; gap: 5px; }
 .tcf { display: flex; align-items: center; gap: 8px; font-size: 13px;
@@ -513,4 +536,5 @@ img.img-error {
   .filter select { max-width: 38vw; }
   .doc { padding: 16px; }
   .session .chip { max-width: 30vw; }
+  .bar-row .lab { width: 104px; flex-basis: 104px; font-size: 12px; }
 }
