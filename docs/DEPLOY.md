@@ -1,6 +1,13 @@
 # 배포 안내 (P1 — 회원 전용 아카이브)
 
 Firebase 프로젝트: `katok-crawling-project`
+주소: **https://sw-ai-archive.web.app** (예전 주소 `katok-crawling-project.web.app` 도 같은 앱을 계속 서비스한다)
+
+> 주소를 새로 붙이면 세 곳을 함께 손봐야 한다. 하나라도 빠지면 조용히 깨진다.
+> 1. `firebase hosting:sites:create <이름>` 후 `firebase.json` 의 `hosting` 배열에 추가
+> 2. Auth 승인 도메인에 추가 — 빠지면 **로그인이 막힌다**
+> 3. `scripts/setup_storage_cors.js` 의 `ORIGINS` 에 추가 후 재실행 — 빠지면
+>    **이미지와 첨부가 안 열린다**(성공 응답에 CORS 헤더가 안 붙어 브라우저가 차단)
 
 ## 구조 한눈에
 
@@ -86,7 +93,7 @@ node scripts/upload_firestore.js
 python -m scripts.build_hosting
 firebase deploy
 ```
-→ 규칙·Hosting 배포. 끝나면 `https://katok-crawling-project.web.app` 접속.
+→ 규칙·Hosting 배포. 끝나면 `https://sw-ai-archive.web.app` 접속.
 
 ### 부분 배포
 ```bash
@@ -251,7 +258,7 @@ python scripts/build_site.py     # site/index.html 을 브라우저로 열기
 ## 검증 체크리스트
 
 배포 후 직접 확인:
-1. 로그인 전 `https://katok-crawling-project.web.app` — 로그인 화면만 보이고 대화가 없다
+1. 로그인 전 `https://sw-ai-archive.web.app` — 로그인 화면만 보이고 대화가 없다
 2. 브라우저 devtools → Network → 배포된 JS에 대화 문자열이 없다
 3. 명부에 **없는** 계정으로 로그인 → 열람 신청 화면 (참여자 명단이 보이지 않아야 한다)
 4. 신청 후 새로고침 → "승인 대기 중"
