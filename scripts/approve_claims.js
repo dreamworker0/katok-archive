@@ -15,6 +15,9 @@
  *   node scripts/approve_claims.js --approve a@x.com --nickname "홍길동"
  *   node scripts/approve_claims.js --approve a@x.com --role admin
  *   node scripts/approve_claims.js --reject a@x.com         신청 삭제
+ *   node scripts/approve_claims.js --remove a@x.com         멤버 자격 회수
+ *   node scripts/approve_claims.js --approve a@x.com --nickname "홍길동" --role admin
+ *                                                           기존 멤버를 관리자로
  *   node scripts/approve_claims.js --approve a@x.com --no-publish
  *   node scripts/approve_claims.js --approve a@x.com --dry-run
  */
@@ -32,13 +35,14 @@ const PROJECT_ID = "katok-crawling-project";
 // ────────────────────────── 인자 ──────────────────────────
 
 function parseArgs(argv) {
-  const out = { approve: [], reject: [], nickname: null, role: "user",
+  const out = { approve: [], reject: [], remove: [], nickname: null, role: "user",
                 publish: true, dry: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const list = (v) => String(v || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
     if (a === "--approve") out.approve.push(...list(argv[++i]));
     else if (a === "--reject") out.reject.push(...list(argv[++i]));
+    else if (a === "--remove") out.remove.push(...list(argv[++i]));
     else if (a === "--nickname") out.nickname = argv[++i];
     else if (a === "--role") out.role = argv[++i] === "admin" ? "admin" : "user";
     else if (a === "--no-publish") out.publish = false;
@@ -185,16 +189,24 @@ function run(cmd, args) {
     console.error("members.json 은 이미 갱신되었습니다. 원인을 고친 뒤 아래를 직접 실행하세요.");
     console.error("  python -m scripts.build_firestore_payload");
     console.error("  node scripts/upload_firestore.js --skip-images");
-    console.error("  firebase deploy --only storage");
     process.exit(1);
   }
 }
 
-/** 발행본에 멤버 문서를 반영한다.
- *  이미지 권한은 Custom Claims 가 담당하므로 규칙 재배포는 필요 없다. */
+/** 발행본을 다시 만든다. 멤버 문서는 여기서 올라가지 않는다 —
+ *  명부의 주인은 Firestore 이고, writeMember 가 이미 직접 썼다. */
 function publish() {
   run("python", ["-m", "scripts.build_firestore_payload"]);
   run("node", ["scripts/upload_firestore.js", "--skip-images"]);
+}
+
+/** Firestore 멤버 문서를 직접 쓴다.
+ *  발행 단계에 기대면 웹에서 승인한 사람과 어긋나 사고가 난다. */
+async function writeMember(db, email, nickname, role) {
+  await db.collection("members").doc(email).set(
+    { email, name: nickname, nickname, role, approvedAt: new Date().toISOString() },
+    { merge: true }
+  );
 }
 
 /** Auth 계정에 클레임을 붙인다 — 이게 있어야 이미지가 열린다.
@@ -268,6 +280,27 @@ function approve(args, claims, byNick) {
   return changed;
 }
 
+/** 멤버 자격 회수 — Firestore 문서 삭제 + 클레임 해제.
+ *  둘 다 해야 한다. 문서만 지우면 이미지가 계속 열리고, 클레임만 지우면
+ *  대화가 계속 열린다. */
+async function removeMembers(db, args) {
+  for (const email of args.remove) {
+    if (args.dry) {
+      console.log(`(dry-run) ${email}: 멤버 자격 회수 예정`);
+      continue;
+    }
+    await db.collection("members").doc(email).delete();
+    try {
+      const user = await admin.auth().getUserByEmail(email);
+      await admin.auth().setCustomUserClaims(user.uid, { member: false, admin: false });
+      console.log(`× ${email}: 멤버 문서 삭제 + 클레임 해제`);
+    } catch (e) {
+      if (e.code !== "auth/user-not-found") throw e;
+      console.log(`× ${email}: 멤버 문서 삭제 (Auth 계정 없음)`);
+    }
+  }
+}
+
 async function reject(db, args) {
   for (const email of args.reject) {
     if (args.dry) {
@@ -280,6 +313,10 @@ async function reject(db, args) {
 }
 
 // ────────────────────────── main ──────────────────────────
+
+function claimByEmailFor(claims, email) {
+  return claims.find((c) => c.email === email) || null;
+}
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -297,7 +334,7 @@ async function main() {
   const db = admin.firestore();
   const claims = await fetchClaims(db);
 
-  if (!args.approve.length && !args.reject.length) {
+  if (!args.approve.length && !args.reject.length && !args.remove.length) {
     const doc = loadMembersFile();
     const memberEmails = new Set(
       doc.members.map((m) => String(m.email || "").toLowerCase())
@@ -307,11 +344,18 @@ async function main() {
   }
 
   if (args.reject.length) await reject(db, args);
+  if (args.remove.length) {
+    await removeMembers(db, args);
+    if (!args.dry) run("node", ["scripts/sync_members.js"]);
+  }
 
   if (args.approve.length) {
     const changed = approve(args, claims, byNick);
     if (changed && !args.dry) {
       for (const email of args.approve) {
+        const claim = claimByEmailFor(claims, email);
+        const nickname = (args.nickname || (claim && claim.nickname) || "").trim();
+        await writeMember(db, email, nickname, args.role);
         await applyClaim(email, args.role === "admin");
       }
       if (args.publish) {

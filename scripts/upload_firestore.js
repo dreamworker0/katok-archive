@@ -219,21 +219,14 @@ async function main() {
 
   const digestDocs = Object.keys(digests).map((k) => ({ id: k, ...digests[k] }));
   const sourceDocs = source.map((m) => ({ id: m.id, ...m }));
-  const memberDocs = members.map((m) => ({
-    id: m.email,
-    email: m.email,
-    name: m.name,
-    nickname: m.nickname || "",
-    role: m.role,
-  }));
-
-  const docCount = 1 + chunks.length + 1 + digestDocs.length + 2 + memberDocs.length;
+  const docCount = 1 + chunks.length + 1 + digestDocs.length + 2;
   console.log("적재 계획 (문서 수)");
   console.log(`  meta 1 / chunks ${chunks.length} / threads 1 (${threads.length}건 묶음)`);
-  console.log(`  digests ${digestDocs.length} / graph 2 / members ${memberDocs.length}`);
+  console.log(`  digests ${digestDocs.length} / graph 2`);
+  console.log(`  members ${members.length}명 — 적재하지 않음 (Firestore 가 주인)`);
   console.log(`  messagesSource ${sourceDocs.length} (관리자 전용 원본)`);
   console.log(`  총 쓰기 ${docCount + sourceDocs.length}건`);
-  console.log(`  → 멤버가 전체를 읽을 때: ${docCount - memberDocs.length + 1}회 읽기`);
+  console.log(`  → 멤버가 전체를 읽을 때: ${docCount + 1}회 읽기`);
   console.log(`  이미지 ${images.length}장 (Storage, 지연 로딩)`);
   console.log(`  첨부 파일 ${files.length}개 (Storage, 내려받기)`);
 
@@ -260,7 +253,15 @@ async function main() {
     { id: "nodes", items: graph.nodes },
     { id: "edges", items: graph.edges },
   ]);
-  await syncCollection(db, "members", memberDocs);
+  // members 는 여기서 동기화하지 않는다.
+  //
+  // 멤버 명부의 주인은 Firestore 다 — 관리자 페이지(approveClaim Function)와
+  // approve_claims.js 가 Admin SDK 로 직접 쓴다. 예전처럼 config/members.json 을
+  // 기준으로 동기화하면, 웹에서 승인한 사람이 그 파일에 없어 '구문서'로 판정되고
+  // 그날 밤 발행에서 조용히 삭제된다. 승인한 다음 날 권한이 사라지는 셈이다.
+  //
+  // config/members.json 은 로컬 거울이다. scripts/sync_members.js 가 Firestore
+  // 에서 끌어와 갱신하고, 파이프라인은 닉네임 대조용으로만 읽는다.
   await syncCollection(db, "messagesSource", sourceDocs);
 
   if (!SKIP_IMAGES) {

@@ -153,13 +153,45 @@ firebase deploy --only firestore
 
 ## 자주 하는 작업
 
-**멤버 추가/제거** (손으로 할 때 — 보통은 관리 탭이나 `approve_claims.js` 를 쓴다)
+### 멤버 명부의 주인은 Firestore 다
+
+관리 탭(Function)과 `approve_claims.js` 가 Firestore `members/` 에 직접 쓴다.
+`config/members.json` 은 그 **거울**이다 — 파이프라인이 오프라인에서 읽어야 하는
+닉네임 대조·이메일→표시명 매핑에만 쓰이고, 손으로 고쳐도 올라가지 않는다.
+
+```bash
+node scripts/sync_members.js            # Firestore → config/members.json
+node scripts/sync_members.js --dry-run
+```
+
+> 예전에는 발행이 `config/members.json` 을 기준으로 members 컬렉션을 통째로
+> 동기화했다. 그러면 관리 탭에서 승인한 사람이 그 파일에 없어 '구문서'로 판정되고
+> **그날 밤 발행에서 삭제된다** — 승인한 다음 날 조용히 권한이 사라진다.
+> 방향을 하나로 정리해 없앴고, 일일 자동화가 매일 거울을 갱신한다.
+
+**관리자 지정·해제**
+관리 탭의 멤버 목록에서 버튼 하나로 바꾼다. 마지막 관리자는 내릴 수 없다 —
+관리자가 0명이 되면 웹으로는 아무도 되돌릴 수 없다. 터미널로도 된다:
+```bash
+node scripts/approve_claims.js --approve a@x.com --nickname "홍길동" --role admin
+```
+
+**멤버 자격 회수**
+```bash
+node scripts/approve_claims.js --remove a@x.com
+```
+Firestore 문서 삭제 + 클레임 해제를 함께 한다. 둘 중 하나만 하면 반쪽이 남는다 —
+문서만 지우면 이미지가 계속 열리고, 클레임만 지우면 대화가 계속 열린다.
+
+**멤버 정보 직접 손보기** (드물게)
 ```bash
 # config/members.json 수정 후
 python -m scripts.build_firestore_payload
 node scripts/upload_firestore.js --skip-images
 node scripts/sync_claims.js         # ← 이미지 권한(Custom Claims) 맞추기
 ```
+> `config/members.json` 을 고쳐도 Firestore 로 올라가지 않는다. 위 방법은 이미
+> Firestore 에 있는 멤버의 클레임을 맞출 때만 쓴다.
 > 규칙 재배포는 더 이상 필요 없다. `storage.rules` 는 `token.member == true` 한 줄이라
 > 멤버가 바뀌어도 그대로다. 대신 클레임을 맞춰야 이미지가 열린다.
 >

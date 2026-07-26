@@ -725,12 +725,19 @@
       '<div class="mine-card"><h3>멤버 ' + d.members.length + "명</h3>" +
       d.members.map(function (m) {
         var linked = m.nickname && parts[m.nickname];
-        return '<div class="adm-line"><b>' + esc(m.nickname || "(표시명 없음)") + "</b> " +
+        var isAdm = m.role === "admin";
+        return '<div class="adm-line adm-member" data-email="' + esc(m.id) + '">' +
+          '<div class="adm-main"><b>' + esc(m.nickname || "(표시명 없음)") + "</b> " +
           '<span class="adm-mail">' + esc(m.id) + "</span>" +
-          (m.role === "admin" ? ' <span class="adm-tag">관리자</span>' : "") +
+          (isAdm ? ' <span class="adm-tag">관리자</span>' : "") +
           (linked ? "" : ' <span class="bad">· 참여자 명단과 연결 안 됨</span>') +
-          "</div>";
-      }).join("") + "</div>" +
+          "</div>" +
+          '<button class="btn ghost adm-role" data-role="' + (isAdm ? "user" : "admin") +
+          '">' + (isAdm ? "관리자 해제" : "관리자 지정") + "</button></div>";
+      }).join("") +
+      '<p class="mine-note">‘참여자 명단과 연결 안 됨’ 은 그 표시명으로 남긴 글이 ' +
+      "아직 없다는 뜻입니다. 대화방에서 한 번 발언하면 그날 밤 자동으로 연결됩니다." +
+      "</p><p class=\"adm-msg\" id=\"roleMsg\"></p></div>" +
       "</section>";
 
     bindAdminActions();
@@ -739,6 +746,22 @@
   function bindAdminActions() {
     var msg = document.getElementById("admMsg");
     var say = function (t) { if (msg) msg.textContent = t || ""; };
+
+    Array.prototype.forEach.call(el.view.querySelectorAll(".adm-member"), function (row) {
+      var email = row.getAttribute("data-email");
+      var btn = row.querySelector(".adm-role");
+      btn.onclick = function () {
+        var role = btn.getAttribute("data-role");
+        var verb = role === "admin" ? "관리자로 지정" : "관리자에서 해제";
+        if (!window.confirm(email + " 을 " + verb + "합니다. 계속할까요?")) return;
+        var m = document.getElementById("roleMsg");
+        if (m) m.textContent = "바꾸는 중…";
+        state.session.admin.setRole(email, role).then(
+          function () { state.admin = null; renderAdmin(); },
+          function (e) { if (m) m.textContent = "실패: " + (e.message || String(e)); }
+        );
+      };
+    });
 
     Array.prototype.forEach.call(el.view.querySelectorAll(".adm-row"), function (row) {
       var email = row.getAttribute("data-email");

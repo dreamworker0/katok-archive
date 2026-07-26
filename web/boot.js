@@ -263,6 +263,9 @@
         return call("approveClaim", { email: email, nickname: nickname, role: role });
       },
       reject: function (email) { return call("rejectClaim", { email: email }); },
+      setRole: function (email, role) {
+        return call("setMemberRole", { email: email, role: role });
+      },
     };
   }
 

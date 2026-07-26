@@ -110,6 +110,38 @@ exports.rejectClaim = onCall(async (request) => {
   return { ok: true, email };
 });
 
+/** 기존 멤버의 역할을 바꾼다 (관리자 지정·해제).
+ *
+ *  마지막 관리자는 내리지 못하게 막는다 — 관리자가 0명이 되면 웹으로는 아무도
+ *  되돌릴 수 없고, 로컬 스크립트를 아는 사람만 복구할 수 있다.
+ */
+exports.setMemberRole = onCall(async (request) => {
+  const caller = await requireAdmin(request);
+  const email = normalizeEmail(request.data && request.data.email);
+  const role = request.data && request.data.role === "admin" ? "admin" : "user";
+
+  const ref = db().collection("members").doc(email);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    throw new HttpsError("not-found", "멤버가 아닙니다: " + email);
+  }
+  const current = (snap.data() || {}).role || "user";
+  if (current === role) return { ok: true, email, role, changed: false };
+
+  if (current === "admin" && role !== "admin") {
+    const admins = await db().collection("members").where("role", "==", "admin").get();
+    if (admins.size <= 1) {
+      throw new HttpsError("failed-precondition",
+        "마지막 관리자는 내릴 수 없습니다. 다른 사람을 먼저 관리자로 지정하세요.");
+    }
+  }
+
+  await ref.set({ role, roleChangedBy: caller, roleChangedAt: new Date().toISOString() },
+    { merge: true });
+  const claim = await applyClaim(email, role === "admin");
+  return { ok: true, email, role, changed: true, claim };
+});
+
 exports.ensureClaim = onCall(async (request) => {
   const email = callerEmail(request);
   const snap = await db().collection("members").doc(email).get();
