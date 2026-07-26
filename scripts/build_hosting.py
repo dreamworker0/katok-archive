@@ -25,8 +25,13 @@ FILES = [
     ("boot.js", "boot.js"),
     ("firebase-config.js", "firebase-config.js"),
     ("favicon.svg", "favicon.svg"),
+    # 설치형(PWA). 배포본에만 넣는다 — site/(로컬 미리보기)는 대화 전문을 임베드하므로
+    # 캐시에 얹으면 개인정보가 디스크에 남는다. build_site.py 의 목록에는 없다.
+    ("manifest.webmanifest", "manifest.webmanifest"),
+    ("sw.js", "sw.js"),
+    ("pwa.js", "pwa.js"),
 ]
-STATIC_DIRS = ("art",)
+STATIC_DIRS = ("art", "icons")
 
 FORBIDDEN = ("data.js", "assets")
 

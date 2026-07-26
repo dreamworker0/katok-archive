@@ -6,6 +6,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8899", "--directory", "site"],
       "port": 8899
+    },
+    {
+      "name": "hosting-preview",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "scripts.serve_hosting", "8900"],
+      "port": 8900
     }
   ]
 }

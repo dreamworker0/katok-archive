@@ -752,6 +752,27 @@ img.img-error {
   .mobile-more button.active { color: var(--accent); background: var(--accent-soft); font-weight: 800; }
 }
 
+/* ── PWA 알림 (새 버전 · 오프라인). pwa.js 가 배포본에서만 만든다 ── */
+.pwa-toast {
+  position: fixed; z-index: 60; left: 50%; bottom: 20px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 12px;
+  max-width: calc(100vw - 32px); padding: 10px 12px 10px 16px;
+  border: 1px solid var(--line); border-radius: 999px;
+  color: var(--ink); background: var(--surface); box-shadow: var(--shadow);
+}
+.pwa-toast[hidden] { display: none; }
+.pwa-toast__text { margin: 0; font-size: 14px; }
+.pwa-toast__action {
+  flex: none; min-height: 36px; padding: 0 14px; border: 0; border-radius: 999px;
+  color: var(--accent-ink); background: var(--accent);
+  font: inherit; font-size: 14px; font-weight: 700; cursor: pointer;
+}
+.pwa-toast__action:hover { filter: brightness(1.05); }
+@media (max-width: 760px) {
+  /* 모바일 하단 내비게이션을 가리지 않게 위로 올린다. */
+  .pwa-toast { bottom: 84px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     scroll-behavior: auto !important;

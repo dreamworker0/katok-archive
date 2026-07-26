@@ -6,6 +6,16 @@
   <meta name="robots" content="noindex, nofollow" />
   <title>사회복지 바이브코딩 아카이브</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+
+  <!-- 설치형(PWA). 배포본에만 있다 — 로컬 미리보기는 대화 전문을 임베드하므로 캐시에 얹지 않는다. -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#FBF6EE" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="우리의 기록" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800;900&amp;display=swap" rel="stylesheet" />
@@ -105,5 +115,6 @@
   <script src="graph.js"></script>
   <script src="app.js"></script>
   <script src="boot.js"></script>
+  <script src="pwa.js"></script>
 </body>
 </html>
