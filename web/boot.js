@@ -259,8 +259,11 @@
           return { claims: r[0], members: r[1], preferences: r[2], deletions: r[3] };
         });
       },
-      approve: function (email, nickname, role) {
-        return call("approveClaim", { email: email, nickname: nickname, role: role });
+      approve: function (email, nicknames, role) {
+        return call("approveClaim", { email: email, nicknames: nicknames, role: role });
+      },
+      setNicknames: function (email, nicknames) {
+        return call("setMemberNicknames", { email: email, nicknames: nicknames });
       },
       reject: function (email) { return call("rejectClaim", { email: email }); },
       setRole: function (email, role) {
@@ -308,8 +311,12 @@
         email: user.email,
         // 아카이브에서는 대화방 표시명이 가장 알아보기 쉽다
         name: member.nickname || member.name || user.displayName || user.email,
-        // 아카이브 참여자 닉네임 — "내 글" 같은 개인화의 열쇠
+        // 아카이브 참여자 표시명 — "내 글" 같은 개인화의 열쇠.
+        // 카톡에서 이름을 바꾼 사람은 여러 개를 갖는다.
         nickname: member.nickname || "",
+        nicknames: (member.nicknames && member.nicknames.length)
+          ? member.nicknames
+          : (member.nickname ? [member.nickname] : []),
       },
       role: member.role || "user",
       signOut: function () { firebase.auth().signOut(); },

@@ -467,15 +467,23 @@
       desc: "앞으로의 글을 아예 저장하지 않습니다. 되돌려도 그동안의 글은 복구할 수 없습니다." },
   ];
 
+  /** 내 표시명 전부. 카톡에서 이름을 바꾼 사람은 여러 개다 —
+   *  하나만 보면 그 사람 글의 절반이 '내 글'에서 사라진다. */
+  function myNicknames() {
+    var u = state.session && state.session.user;
+    if (!u) return [];
+    if (u.nicknames && u.nicknames.length) return u.nicknames;
+    return u.nickname ? [u.nickname] : [];
+  }
+
   function myMessages() {
-    var nick = state.session && state.session.user && state.session.user.nickname;
-    if (!nick) return [];
-    return MSGS.filter(function (m) { return m.nickname === nick; });
+    var names = myNicknames();
+    if (!names.length) return [];
+    return MSGS.filter(function (m) { return names.indexOf(m.nickname) !== -1; });
   }
 
   function canManageMine() {
-    return !!(state.session && state.session.requests &&
-              state.session.user && state.session.user.nickname);
+    return !!(state.session && state.session.requests && myNicknames().length);
   }
 
   function mineRow(m, pending) {
@@ -511,7 +519,7 @@
       return;
     }
 
-    var nick = state.session.user.nickname;
+    var names = myNicknames();
     var rows = myMessages();
     var del = state.mine.deletion;
     var pendingAll = !!(del && del.allMessages);
@@ -530,8 +538,10 @@
     el.view.innerHTML =
       '<section class="mine">' +
       '<h2 class="mine-title">내 글 관리</h2>' +
-      '<p class="mine-sub">대화방 표시명 <b>' + esc(nick) + "</b> 으로 남긴 글 " +
-      rows.length + "개입니다.</p>" +
+      '<p class="mine-sub">대화방 표시명 <b>' + esc(names.join(", ")) + "</b> 으로 남긴 글 " +
+      rows.length + "개입니다." +
+      (names.length > 1 ? " (이름을 바꾸신 이력이 있어 여러 개가 묶여 있습니다.)" : "") +
+      "</p>" +
 
       '<div class="mine-card">' +
       "<h3>앞으로의 수집</h3>" +
@@ -651,6 +661,43 @@
     return idx;
   }
 
+  /** 참여자 목록 드롭다운.
+   *
+   *  관리 화면은 관리자만 보므로 명단을 그대로 노출해도 된다 — 신청 화면에서
+   *  자유 입력을 쓰는 것과 이유가 다르다. 손으로 적으면 오타가 나고, 오타가 나면
+   *  그 사람의 '내 글 관리'가 조용히 비어 버린다.
+   *
+   *  아직 발언한 적 없는 사람은 명단에 없으므로 직접 입력도 남겨둔다.
+   */
+  function participantSelect(selected, cls) {
+    var opts = ['<option value="">— 참여자 선택 —</option>'];
+    (STATS.participants || []).forEach(function (p) {
+      opts.push('<option value="' + esc(p.nickname) + '"' +
+        (p.nickname === selected ? " selected" : "") + ">" +
+        esc(p.nickname) + " (" + p.message_count + ")</option>");
+    });
+    var custom = selected && !participantIndex()[selected];
+    opts.push('<option value="__custom__"' + (custom ? " selected" : "") +
+      ">직접 입력 (아직 발언 없음)</option>");
+    return '<select class="' + cls + '">' + opts.join("") + "</select>" +
+      '<input class="' + cls + '-text adm-nick" placeholder="대화방 표시명" value="' +
+      esc(custom ? selected : "") + '"' + (custom ? "" : ' hidden') + " />";
+  }
+
+  function bindParticipantSelect(scope, cls) {
+    var sel = scope.querySelector("." + cls);
+    var txt = scope.querySelector("." + cls + "-text");
+    if (!sel || !txt) return function () { return ""; };
+    sel.onchange = function () {
+      var custom = sel.value === "__custom__";
+      txt.hidden = !custom;
+      if (custom) txt.focus();
+    };
+    return function () {
+      return sel.value === "__custom__" ? (txt.value || "").trim() : sel.value;
+    };
+  }
+
   function adminClaimRow(c, parts) {
     var hit = parts[c.nickname];
     var match = hit
@@ -662,7 +709,7 @@
       '<div class="adm-meta">' + match +
       (c.displayName ? ' · 구글 계정명 ' + esc(c.displayName) : "") + "</div>" +
       '<div class="adm-act">' +
-      '<input class="adm-nick" value="' + esc(c.nickname || "") + '" title="승인할 표시명" />' +
+      participantSelect(c.nickname || "", "adm-pick") +
       '<button class="btn" data-act="approve">승인</button> ' +
       '<button class="btn ghost" data-act="reject">반려</button>' +
       "</div></div>";
@@ -724,16 +771,35 @@
 
       '<div class="mine-card"><h3>멤버 ' + d.members.length + "명</h3>" +
       d.members.map(function (m) {
-        var linked = m.nickname && parts[m.nickname];
+        var names = (m.nicknames && m.nicknames.length)
+          ? m.nicknames : (m.nickname ? [m.nickname] : []);
+        var unlinked = names.filter(function (n) { return !parts[n]; });
         var isAdm = m.role === "admin";
-        return '<div class="adm-line adm-member" data-email="' + esc(m.id) + '">' +
-          '<div class="adm-main"><b>' + esc(m.nickname || "(표시명 없음)") + "</b> " +
+        return '<div class="adm-member" data-email="' + esc(m.id) + '">' +
+          '<div class="adm-main"><b>' +
+          (names.length ? esc(names.join(", ")) : "(표시명 없음)") + "</b> " +
           '<span class="adm-mail">' + esc(m.id) + "</span>" +
           (isAdm ? ' <span class="adm-tag">관리자</span>' : "") +
-          (linked ? "" : ' <span class="bad">· 참여자 명단과 연결 안 됨</span>') +
+          (unlinked.length
+            ? ' <span class="bad">· ' + esc(unlinked.join(", ")) + " 은 아직 발언 없음</span>"
+            : "") +
           "</div>" +
+          '<div class="adm-act">' +
+          '<button class="btn ghost adm-link">연결 편집</button> ' +
           '<button class="btn ghost adm-role" data-role="' + (isAdm ? "user" : "admin") +
-          '">' + (isAdm ? "관리자 해제" : "관리자 지정") + "</button></div>";
+          '">' + (isAdm ? "관리자 해제" : "관리자 지정") + "</button></div>" +
+          '<div class="adm-link-panel" hidden>' +
+          '<p class="mine-note">이 사람이 대화방에서 쓴 표시명을 모두 고릅니다. ' +
+          "카톡에서 이름을 바꿨다면 옛 이름과 새 이름을 함께 묶어야 글이 온전히 보입니다.</p>" +
+          '<div class="adm-nick-list">' +
+          (STATS.participants || []).map(function (pp) {
+            return '<label><input type="checkbox" value="' + esc(pp.nickname) + '"' +
+              (names.indexOf(pp.nickname) !== -1 ? " checked" : "") + " /> " +
+              esc(pp.nickname) + ' <span class="adm-mail">' + pp.message_count + "</span></label>";
+          }).join("") + "</div>" +
+          '<button class="btn adm-link-save">저장</button> ' +
+          '<button class="btn ghost adm-link-cancel">취소</button>' +
+          "</div></div>";
       }).join("") +
       '<p class="mine-note">‘참여자 명단과 연결 안 됨’ 은 그 표시명으로 남긴 글이 ' +
       "아직 없다는 뜻입니다. 대화방에서 한 번 발언하면 그날 밤 자동으로 연결됩니다." +
@@ -749,6 +815,25 @@
 
     Array.prototype.forEach.call(el.view.querySelectorAll(".adm-member"), function (row) {
       var email = row.getAttribute("data-email");
+      var panel = row.querySelector(".adm-link-panel");
+      row.querySelector(".adm-link").onclick = function () { panel.hidden = !panel.hidden; };
+      row.querySelector(".adm-link-cancel").onclick = function () { panel.hidden = true; };
+      row.querySelector(".adm-link-save").onclick = function () {
+        var picked = Array.prototype.slice
+          .call(panel.querySelectorAll("input:checked"))
+          .map(function (i) { return i.value; });
+        if (!picked.length) {
+          window.alert("표시명을 하나 이상 고르세요. 연결이 끊기면 '내 글 관리'가 비어 버립니다.");
+          return;
+        }
+        var m = document.getElementById("roleMsg");
+        if (m) m.textContent = "연결하는 중…";
+        state.session.admin.setNicknames(email, picked).then(
+          function () { state.admin = null; renderAdmin(); },
+          function (e) { if (m) m.textContent = "실패: " + (e.message || String(e)); }
+        );
+      };
+
       var btn = row.querySelector(".adm-role");
       btn.onclick = function () {
         var role = btn.getAttribute("data-role");
@@ -765,7 +850,7 @@
 
     Array.prototype.forEach.call(el.view.querySelectorAll(".adm-row"), function (row) {
       var email = row.getAttribute("data-email");
-      var nickInput = row.querySelector(".adm-nick");
+      var pick = bindParticipantSelect(row, "adm-pick");
 
       var finish = function (verb) {
         return function () {
@@ -777,13 +862,14 @@
       var fail = function (e) { say("실패: " + (e.message || String(e))); };
 
       row.querySelector('[data-act="approve"]').onclick = function () {
-        var nickname = (nickInput.value || "").trim();
-        if (nickname.length < 2) { say("표시명을 확인해 주세요."); return; }
+        var nickname = pick();
+        if (nickname.length < 2) { say("연결할 참여자를 고르거나 표시명을 적어주세요."); return; }
         if (!participantIndex()[nickname] &&
             !window.confirm("'" + nickname + "' 은 참여자 명단에 없습니다.\n" +
-                            "그대로 승인하면 '내 글 관리'에 글이 하나도 안 보입니다. 계속할까요?")) return;
+                            "아직 발언이 없는 분이면 정상입니다. 계속할까요?")) return;
         say("승인 중…");
-        state.session.admin.approve(email, nickname, "user").then(finish("승인"), fail);
+        // 표시명은 목록으로 보낸다. 나중에 이름이 바뀌면 여기에 덧붙인다.
+        state.session.admin.approve(email, [nickname], "user").then(finish("승인"), fail);
       };
       row.querySelector('[data-act="reject"]').onclick = function () {
         if (!window.confirm(email + " 의 신청을 반려합니다. 계속할까요?")) return;

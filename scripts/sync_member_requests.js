@@ -46,14 +46,19 @@ function init() {
   }
 }
 
-/** 이메일 → 대화방 표시명. 이 대응이 없으면 요청을 메시지에 연결할 수 없다. */
-function nicknameByEmail() {
+/** 이메일 → 대화방 표시명 목록. 이 대응이 없으면 요청을 메시지에 연결할 수 없다.
+ *  한 사람이 표시명을 여러 개 가질 수 있다 (카톡에서 이름을 바꾼 경우). */
+function nicknamesByEmail() {
   if (!fs.existsSync(MEMBERS)) return new Map();
   const raw = JSON.parse(fs.readFileSync(MEMBERS, "utf8"));
   const map = new Map();
   for (const m of raw.members || []) {
     const email = String(m.email || "").toLowerCase();
-    if (email && m.nickname) map.set(email, m.nickname);
+    if (!email) continue;
+    const list = Array.isArray(m.nicknames) && m.nicknames.length
+      ? m.nicknames.filter(Boolean)
+      : (m.nickname ? [m.nickname] : []);
+    if (list.length) map.set(email, list);
   }
   return map;
 }
@@ -65,7 +70,7 @@ function isoOf(ts) {
 async function main() {
   init();
   const db = admin.firestore();
-  const nicknames = nicknameByEmail();
+  const nicknames = nicknamesByEmail();
 
   const [prefSnap, delSnap] = await Promise.all([
     db.collection("preferences").get(),
@@ -77,7 +82,7 @@ async function main() {
     if (!rows.has(email)) {
       rows.set(email, {
         email,
-        nickname: nicknames.get(email) || null,
+        nicknames: nicknames.get(email) || [],
         collection: "public",
         delete_all: false,
         delete_message_ids: [],
@@ -103,7 +108,7 @@ async function main() {
   });
 
   const requests = [...rows.values()];
-  const unmapped = requests.filter((r) => !r.nickname);
+  const unmapped = requests.filter((r) => !r.nicknames.length);
 
   const payload = {
     generated_at: new Date().toISOString(),
@@ -116,7 +121,7 @@ async function main() {
     if (r.collection !== "public") bits.push(`동의=${r.collection}`);
     if (r.delete_all) bits.push("전체삭제");
     if (r.delete_message_ids.length) bits.push(`개별삭제 ${r.delete_message_ids.length}건`);
-    if (bits.length) console.log(`  ${r.nickname || r.email}: ${bits.join(", ")}`);
+    if (bits.length) console.log(`  ${r.nicknames.join("/") || r.email}: ${bits.join(", ")}`);
   }
   if (unmapped.length) {
     // 닉네임이 없으면 어느 메시지가 이 사람 것인지 알 수 없어 요청을 반영할 수 없다
@@ -155,7 +160,7 @@ function canonical(requests) {
     [...requests]
       .map((r) => ({
         email: r.email,
-        nickname: r.nickname || null,
+        nicknames: [...(r.nicknames || [])].sort(),
         collection: r.collection || "public",
         delete_all: !!r.delete_all,
         delete_message_ids: [...(r.delete_message_ids || [])].sort(),

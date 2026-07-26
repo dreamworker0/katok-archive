@@ -25,7 +25,8 @@ MESSAGES = [
 
 def request(nickname, email="a@x.com", collection="public",
             delete_all=False, ids=()):
-    return {"email": email, "nickname": nickname, "collection": collection,
+    names = [nickname] if isinstance(nickname, str) else list(nickname)
+    return {"email": email, "nicknames": names, "collection": collection,
             "delete_all": delete_all, "delete_message_ids": list(ids)}
 
 
@@ -73,6 +74,62 @@ class OptOutTest(unittest.TestCase):
         rows = [request("이영희", collection="none")]
         self.assertEqual(mr.collection_opt_outs(rows), ["이영희"])
         self.assertEqual(mr.verify_ownership(rows, MESSAGES)["exclude_people"], [])
+
+
+class RenamedPersonTest(unittest.TestCase):
+    """카톡에서 이름을 바꾸면 그 시점부터 다른 참여자로 잡힌다.
+
+    표시명을 하나만 붙들면 그 사람 글의 절반이 사라진다. 옛 이름과 새 이름을
+    함께 묶을 수 있어야 한다.
+    """
+
+    MESSAGES = [
+        {"id": "msg-000001", "nickname": "김종원"},
+        {"id": "msg-000002", "nickname": "김종원(사협)"},
+        {"id": "msg-000003", "nickname": "다른사람"},
+    ]
+
+    def test_delete_all_covers_every_name(self):
+        out = mr.verify_ownership(
+            [request(["김종원", "김종원(사협)"], delete_all=True)], self.MESSAGES)
+        self.assertEqual(out["exclude_message_ids"], ["msg-000001", "msg-000002"])
+
+    def test_can_delete_message_written_under_old_name(self):
+        out = mr.verify_ownership(
+            [request(["김종원(사협)", "김종원"], ids=["msg-000001"])], self.MESSAGES)
+        self.assertEqual(out["exclude_message_ids"], ["msg-000001"])
+        self.assertEqual(out["rejected"], [])
+
+    def test_still_cannot_touch_other_people(self):
+        out = mr.verify_ownership(
+            [request(["김종원", "김종원(사협)"], ids=["msg-000003"])], self.MESSAGES)
+        self.assertEqual(out["exclude_message_ids"], [])
+        self.assertEqual(out["rejected"][0]["reason"], "본인 메시지가 아님")
+
+    def test_unpublished_hides_every_name(self):
+        out = mr.verify_ownership(
+            [request(["김종원", "김종원(사협)"], collection="unpublished")], self.MESSAGES)
+        self.assertEqual(out["exclude_people"], ["김종원", "김종원(사협)"])
+
+    def test_opt_out_covers_every_name(self):
+        rows = [request(["김종원", "김종원(사협)"], collection="none")]
+        self.assertEqual(mr.collection_opt_outs(rows), ["김종원", "김종원(사협)"])
+
+
+class LegacyShapeTest(unittest.TestCase):
+    """옛 요청 파일은 nickname 하나만 갖고 있다. 그대로 읽혀야 한다."""
+
+    def test_single_nickname_is_promoted_to_list(self):
+        import json, tempfile, os
+        from unittest import mock
+        payload = {"requests": [{"email": "a@x.com", "nickname": "홍길동",
+                                 "collection": "unpublished"}]}
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "member-requests.json"
+            path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            with mock.patch.object(mr, "REQUESTS_PATH", path):
+                rows = mr.load_requests()
+        self.assertEqual(rows[0]["nicknames"], ["홍길동"])
 
 
 class MergeTest(unittest.TestCase):

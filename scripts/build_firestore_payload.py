@@ -186,32 +186,47 @@ def load_members() -> list[dict]:
         role = m.get("role") or "user"
         if role not in ("admin", "user"):
             role = "user"
+        # 표시명은 여러 개일 수 있다. 카톡에서 이름을 바꾸면 그 시점부터 다른
+        # 참여자로 잡히므로, 하나만 붙들면 그 사람 글의 절반이 사라진다.
+        raw_list = m.get("nicknames")
+        if not isinstance(raw_list, list) or not raw_list:
+            raw_list = [m.get("nickname")] if m.get("nickname") else []
+        nicknames = []
+        for n in raw_list:
+            n = (n or "").strip()
+            if n and n not in nicknames:
+                nicknames.append(n)
         members.append({
             "email": email,
             "name": m.get("name") or "",
-            # 대화방 표시명. 아카이브 참여자와 로그인 계정을 잇는 유일한 고리라
-            # 오타가 나면 개인화가 조용히 어긋난다 — check_member_nicknames 가 잡는다.
-            "nickname": (m.get("nickname") or "").strip(),
+            # 대표 표시명 (화면 표시·하위호환)
+            "nickname": nicknames[0] if nicknames else "",
+            "nicknames": nicknames,
             "role": role,
         })
     return members
 
 
 def check_member_nicknames(members: list[dict], participants: dict) -> list[str]:
-    """멤버의 nickname 이 실제 참여자 명단에 있는지 대조한다.
+    """멤버의 표시명이 실제 참여자 명단에 있는지 대조한다.
 
     구글 계정(이메일)과 카톡 표시명은 공유하는 식별자가 없어 자동 매칭이 불가능하다.
-    사람이 손으로 넣는 값이므로, 발행 때마다 오타·미기입을 경고로 남긴다.
+    사람이 관리 화면에서 고르는 값이므로, 발행 때마다 어긋남을 경고로 남긴다.
+
+    아직 발언한 적 없는 사람은 명단에 없는 게 정상이다 — 경고는 "확인해보라"는
+    뜻이지 오류가 아니다.
     """
     known = {p["nickname"] for p in participants.get("participants", [])}
     warnings = []
     for m in members:
-        if not m["nickname"]:
-            warnings.append("%s: nickname 미기입 (개인화 기능이 동작하지 않음)" % m["email"])
-        elif m["nickname"] not in known:
+        if not m["nicknames"]:
+            warnings.append("%s: 표시명 미연결 (개인화 기능이 동작하지 않음)" % m["email"])
+            continue
+        missing = [n for n in m["nicknames"] if n not in known]
+        if missing:
             warnings.append(
-                "%s: nickname '%s' 이 참여자 명단에 없음 (오타 확인)"
-                % (m["email"], m["nickname"])
+                "%s: 표시명 %s 이 참여자 명단에 없음 (아직 발언이 없거나 오타)"
+                % (m["email"], ", ".join("'%s'" % n for n in missing))
             )
     return warnings
 

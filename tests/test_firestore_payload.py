@@ -92,9 +92,10 @@ class PayloadShapeTest(unittest.TestCase):
         for m in self.payload["members"]:
             self.assertIn(m["role"], ("admin", "user"))
 
-    def test_members_carry_nickname_field(self):
+    def test_members_carry_nickname_fields(self):
         for m in self.payload["members"]:
             self.assertIn("nickname", m)
+            self.assertIsInstance(m["nicknames"], list)
 
     def test_storage_rules_hold_no_member_emails(self):
         """Custom Claims 로 옮긴 뒤로 규칙에 이메일이 들어가면 안 된다.
@@ -115,21 +116,33 @@ class MemberNicknameTest(unittest.TestCase):
     PARTICIPANTS = {"participants": [{"nickname": "김종원"}, {"nickname": "한도윤"}]}
 
     def test_matching_nickname_has_no_warning(self):
-        members = [{"email": "a@x.com", "nickname": "김종원"}]
+        members = [{"email": "a@x.com", "nicknames": ["김종원"]}]
         self.assertEqual(bfp.check_member_nicknames(members, self.PARTICIPANTS), [])
 
     def test_typo_is_reported(self):
-        members = [{"email": "b@x.com", "nickname": "김종언"}]
+        members = [{"email": "b@x.com", "nicknames": ["김종언"]}]
         warnings = bfp.check_member_nicknames(members, self.PARTICIPANTS)
         self.assertEqual(len(warnings), 1)
         self.assertIn("b@x.com", warnings[0])
         self.assertIn("김종언", warnings[0])
 
     def test_missing_nickname_is_reported(self):
-        members = [{"email": "c@x.com", "nickname": ""}]
+        members = [{"email": "c@x.com", "nicknames": []}]
         warnings = bfp.check_member_nicknames(members, self.PARTICIPANTS)
         self.assertEqual(len(warnings), 1)
-        self.assertIn("미기입", warnings[0])
+        self.assertIn("미연결", warnings[0])
+
+    def test_multiple_names_all_known_is_clean(self):
+        """이름을 바꾼 사람은 두 표시명이 모두 명단에 있다."""
+        members = [{"email": "d@x.com", "nicknames": ["김종원", "한도윤"]}]
+        self.assertEqual(bfp.check_member_nicknames(members, self.PARTICIPANTS), [])
+
+    def test_only_the_unknown_name_is_reported(self):
+        members = [{"email": "e@x.com", "nicknames": ["김종원", "없는이름"]}]
+        warnings = bfp.check_member_nicknames(members, self.PARTICIPANTS)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("없는이름", warnings[0])
+        self.assertNotIn("김종원", warnings[0])
 
 
 class ExclusionTest(unittest.TestCase):

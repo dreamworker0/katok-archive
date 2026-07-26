@@ -69,6 +69,28 @@ async function applyClaim(email, isAdmin) {
   return { applied: true, uid: user.uid };
 }
 
+/** 대화방 표시명 목록을 정리한다.
+ *
+ *  한 사람이 표시명을 여러 개 가질 수 있다 — 카톡에서 이름을 바꾸면 그 시점을
+ *  기준으로 참여자가 둘로 갈리기 때문이다. 하나만 잡으면 내 글의 절반이 사라진다.
+ */
+function normalizeNicknames(value, fallback) {
+  var list = Array.isArray(value) ? value : (value ? [value] : []);
+  if (!list.length && fallback) list = [fallback];
+  const out = [];
+  for (const raw of list) {
+    const n = String(raw || "").trim();
+    if (n && n.length <= 40 && out.indexOf(n) === -1) out.push(n);
+  }
+  if (!out.length) {
+    throw new HttpsError("invalid-argument", "대화방 표시명이 없습니다.");
+  }
+  if (out.length > 10) {
+    throw new HttpsError("invalid-argument", "표시명은 10개까지만 묶을 수 있습니다.");
+  }
+  return out;
+}
+
 function normalizeEmail(value) {
   const email = String(value || "").trim().toLowerCase();
   if (!email || email.indexOf("@") === -1) {
@@ -84,23 +106,55 @@ exports.approveClaim = onCall(async (request) => {
 
   const claimSnap = await db().collection("claims").doc(email).get();
   const claimed = claimSnap.exists ? claimSnap.data() : null;
-  const nickname = String(
-    (request.data && request.data.nickname) || (claimed && claimed.nickname) || ""
-  ).trim();
-
-  if (!nickname) {
-    throw new HttpsError("invalid-argument",
-      "대화방 표시명이 없습니다. 신청서가 없으면 nickname 을 함께 보내야 합니다.");
-  }
+  const nicknames = normalizeNicknames(
+    (request.data && (request.data.nicknames || request.data.nickname)),
+    claimed && claimed.nickname
+  );
 
   await db().collection("members").doc(email).set(
-    { email, name: nickname, nickname, role, approvedBy: admins, approvedAt: new Date().toISOString() },
+    {
+      email,
+      name: nicknames[0],
+      // nickname 은 대표 표시명. 화면 표시와 하위호환용으로 남긴다.
+      nickname: nicknames[0],
+      nicknames,
+      role,
+      approvedBy: admins,
+      approvedAt: new Date().toISOString(),
+    },
     { merge: true }
   );
   const claim = await applyClaim(email, role === "admin");
   if (claimSnap.exists) await claimSnap.ref.delete();
 
-  return { ok: true, email, nickname, role, claim };
+  return { ok: true, email, nicknames, role, claim };
+});
+
+/** 표시명 연결을 다시 맞춘다.
+ *
+ *  카톡에서 이름을 바꿨거나, 승인할 때 엉뚱한 참여자에 붙였을 때 쓴다.
+ *  연결이 어긋나면 '내 글 관리'에 남의 글이 보이거나 내 글이 안 보인다.
+ */
+exports.setMemberNicknames = onCall(async (request) => {
+  const caller = await requireAdmin(request);
+  const email = normalizeEmail(request.data && request.data.email);
+  const nicknames = normalizeNicknames(request.data && request.data.nicknames);
+
+  const ref = db().collection("members").doc(email);
+  if (!(await ref.get()).exists) {
+    throw new HttpsError("not-found", "멤버가 아닙니다: " + email);
+  }
+  await ref.set(
+    {
+      name: nicknames[0],
+      nickname: nicknames[0],
+      nicknames,
+      nicknamesChangedBy: caller,
+      nicknamesChangedAt: new Date().toISOString(),
+    },
+    { merge: true }
+  );
+  return { ok: true, email, nicknames };
 });
 
 exports.rejectClaim = onCall(async (request) => {

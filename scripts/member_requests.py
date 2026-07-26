@@ -35,9 +35,17 @@ def load_requests() -> list[dict]:
     raw = build_site._read_json(REQUESTS_PATH)
     rows = []
     for r in raw.get("requests", []):
-        nickname = (r.get("nickname") or "").strip()
-        if not nickname:
-            # 닉네임이 없으면 어느 메시지가 이 사람 것인지 알 수 없다.
+        # 한 사람이 표시명을 여러 개 가질 수 있다 (카톡에서 이름을 바꾼 경우).
+        raw_names = r.get("nicknames")
+        if not isinstance(raw_names, list):
+            raw_names = [r.get("nickname")] if r.get("nickname") else []
+        nicknames = []
+        for n in raw_names:
+            n = (n or "").strip()
+            if n and n not in nicknames:
+                nicknames.append(n)
+        if not nicknames:
+            # 표시명이 없으면 어느 메시지가 이 사람 것인지 알 수 없다.
             # sync 스크립트가 이미 경고했으므로 여기서는 조용히 건너뛴다.
             continue
         mode = r.get("collection") or "public"
@@ -45,7 +53,7 @@ def load_requests() -> list[dict]:
             mode = "public"
         rows.append({
             "email": (r.get("email") or "").strip().lower(),
-            "nickname": nickname,
+            "nicknames": nicknames,
             "collection": mode,
             "delete_all": bool(r.get("delete_all")),
             "delete_message_ids": [str(i) for i in (r.get("delete_message_ids") or [])],
@@ -54,8 +62,12 @@ def load_requests() -> list[dict]:
 
 
 def collection_opt_outs(requests: list[dict]) -> list[str]:
-    """수집 자체를 거부한 사람의 대화방 표시명."""
-    return sorted({r["nickname"] for r in requests if r["collection"] == "none"})
+    """수집 자체를 거부한 사람의 대화방 표시명(쓰던 이름 전부)."""
+    out = set()
+    for r in requests:
+        if r["collection"] == "none":
+            out.update(r["nicknames"])
+    return sorted(out)
 
 
 def verify_ownership(requests: list[dict], messages: list[dict]) -> dict:
@@ -76,22 +88,23 @@ def verify_ownership(requests: list[dict], messages: list[dict]) -> dict:
     rejected: list[dict] = []
 
     for r in requests:
-        nickname = r["nickname"]
+        names = r["nicknames"]
 
         if r["collection"] == "unpublished":
-            exclude_people.add(nickname)
+            exclude_people.update(names)
 
         # '전체 삭제'는 지금 시점의 내 글을 스냅샷으로 담는다. 앞으로 쓰는 글까지
         # 막는 설정이 아니다 — 그건 수집 동의(unpublished/none)가 할 일이다.
         if r["delete_all"]:
-            exclude_ids.update(ids_by_nickname.get(nickname, []))
+            for n in names:
+                exclude_ids.update(ids_by_nickname.get(n, []))
 
         for mid in r["delete_message_ids"]:
             owner = owner_of.get(mid)
             if owner is None:
                 rejected.append({"email": r["email"], "message_id": mid,
                                  "reason": "없는 메시지"})
-            elif owner != nickname:
+            elif owner not in names:
                 # 남의 글을 지우려는 요청. 규칙으로는 막을 수 없어 여기서 걸러낸다.
                 rejected.append({"email": r["email"], "message_id": mid,
                                  "reason": "본인 메시지가 아님"})

@@ -309,9 +309,19 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .adm-nick { padding: 6px 9px; font: inherit; font-size: 13.5px; color: var(--ink);
   background: var(--bg); border: 1px solid var(--line); border-radius: 8px; min-width: 160px; }
 .adm-nick:focus { outline: none; border-color: var(--accent); }
-.adm-member { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+.adm-member { display: grid; grid-template-columns: 1fr auto; gap: 8px 10px;
+  align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+.adm-member:last-of-type { border-bottom: none; }
 .adm-member .adm-main { min-width: 0; }
 .adm-member .btn { padding: 5px 10px; font-size: 12.5px; white-space: nowrap; }
+.adm-link-panel { grid-column: 1 / -1; padding: 12px 14px; margin: 4px 0 8px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; }
+.adm-nick-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 4px 12px; max-height: 240px; overflow-y: auto; margin-bottom: 12px; }
+.adm-nick-list label { display: flex; gap: 6px; align-items: baseline;
+  font-size: 13px; cursor: pointer; }
+select.adm-pick { padding: 6px 9px; font: inherit; font-size: 13.5px; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; max-width: 240px; }
 .adm-line { padding: 6px 0; font-size: 13.5px; border-bottom: 1px solid var(--line); }
 .adm-line:last-child { border-bottom: none; }
 .adm-tag { font-size: 11px; font-weight: 700; color: var(--accent-ink);

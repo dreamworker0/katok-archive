@@ -72,10 +72,16 @@ async function main() {
   const members = snap.docs
     .map((d) => {
       const m = d.data() || {};
+      // 표시명은 여러 개일 수 있다 (카톡에서 이름을 바꾸면 참여자가 갈린다).
+      // 옛 문서는 nickname 하나만 갖고 있으므로 그것으로 채운다.
+      const nicknames = Array.isArray(m.nicknames) && m.nicknames.length
+        ? m.nicknames.filter(Boolean)
+        : (m.nickname ? [m.nickname] : []);
       return {
         email: d.id,
-        name: m.name || m.nickname || "",
-        nickname: m.nickname || "",
+        name: m.name || nicknames[0] || "",
+        nickname: nicknames[0] || "",
+        nicknames,
         role: m.role === "admin" ? "admin" : "user",
       };
     })
@@ -89,7 +95,8 @@ async function main() {
   for (const m of members) {
     const isNew = !beforeSet.has(m.email);
     console.log(
-      `  ${isNew ? "+" : " "} ${m.email}  ${m.nickname || "(표시명 없음)"}  ${m.role}`
+      `  ${isNew ? "+" : " "} ${m.email}  ` +
+      `${m.nicknames.length ? m.nicknames.join(", ") : "(표시명 없음)"}  ${m.role}`
     );
   }
   for (const m of before) {
