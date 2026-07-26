@@ -317,23 +317,49 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 
 /* ---------- 로그인 게이트 ---------- */
 .hidden { display: none !important; }
-.gate { min-height: 100vh; display: flex; flex-direction: column; align-items: center;
-  justify-content: center; padding: 24px; gap: 18px; }
-.gate-card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
-  box-shadow: var(--shadow); padding: 32px 28px; max-width: 420px; width: 100%; text-align: center; }
-.gate-title { margin: 0 0 10px; font-size: 20px; font-weight: 800; letter-spacing: -0.01em; }
-.gate-desc { margin: 0 0 18px; font-size: 14px; color: var(--ink-soft); line-height: 1.7; }
+.gate { min-height: 100vh; display: grid; place-items: center; padding: 32px; background: var(--bg); }
+.gate-card { width: min(920px, 100%); overflow: hidden; border: 1px solid var(--line);
+  border-radius: 24px; background: var(--surface); box-shadow: var(--shadow); }
+.gate-state { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .85fr);
+  min-height: 520px; }
+.gate-visual { position: relative; overflow: hidden; background: #E6EDDB; }
+.gate-visual::before { content: ""; position: absolute; width: 46%; aspect-ratio: 1;
+  top: 14%; right: 12%; border-radius: 50%; background: #EFB16D; }
+.gate-visual::after { content: ""; position: absolute; width: 54%; height: 22%;
+  right: 12%; bottom: 18%; border-radius: 26px 26px 26px 7px; background: var(--accent);
+  box-shadow: -100px 62px 0 -24px var(--sage), -44px -78px 0 -28px var(--surface); }
+.gate-copy { display: flex; flex-direction: column; justify-content: center; padding: 48px; }
+.eyebrow { margin: 0 0 10px; color: var(--accent); font-size: 11px; font-weight: 800;
+  letter-spacing: .14em; }
+.gate-title { margin: 0 0 12px; font-size: clamp(28px, 4vw, 42px); font-weight: 800;
+  line-height: 1.18; letter-spacing: -.055em; }
+.gate-desc { margin: 0 0 22px; font-size: 14px; color: var(--ink-soft); line-height: 1.8; }
+.gate-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .gate-btn { padding: 10px 18px; font-size: 14px; font-weight: 600; }
-.gate-foot { font-size: 12px; color: var(--ink-faint); margin: 14px 0 0; text-align: center; }
+.privacy-note, .gate-foot { margin: 16px 0 0; color: var(--ink-faint);
+  font-size: 12px; line-height: 1.65; }
 .gate-input { width: 100%; box-sizing: border-box; padding: 11px 13px; margin: 0 0 14px;
-  font: inherit; font-size: 15px; color: var(--ink); background: var(--bg);
-  border: 1px solid var(--line); border-radius: 10px; text-align: center; }
-.gate-input:focus { outline: none; border-color: var(--accent); }
+  font: inherit; font-size: 15px; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line-strong); border-radius: 11px; text-align: left; }
+.gate-input:focus { border-color: var(--accent); }
 .gate-warn { margin: 0 0 14px; padding: 9px 12px; font-size: 13px; line-height: 1.6;
-  color: var(--ink); background: var(--warn-bg, rgba(220, 120, 40, .1));
+  color: var(--ink); background: var(--danger-soft);
   border-radius: 10px; text-align: left; }
 .gate-spinner { width: 30px; height: 30px; margin: 4px auto 16px; border-radius: 50%;
   border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+.gate-progress { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+  margin: 0 0 24px; padding: 0; list-style: none; }
+.gate-progress li { color: var(--ink-faint); font-size: 11px; text-align: center; }
+.gate-progress span { display: grid; width: 28px; height: 28px; margin: 0 auto 6px;
+  place-items: center; border-radius: 50%; background: var(--surface-2); font-weight: 800; }
+.gate-progress .done, .gate-progress .current { color: var(--ink); }
+.gate-progress .done span { color: white; background: var(--sage); }
+.gate-progress .current span { color: white; background: var(--accent); }
+.error-detail { margin-top: 18px; color: var(--ink-faint); font-size: 12px; }
+.error-detail summary { cursor: pointer; }
+.error-detail p { overflow-wrap: anywhere; }
+.gate-state--error .gate-visual { background: var(--danger-soft); }
+.gate-state--loading .gate-copy { text-align: center; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---------- 주제 흐름 카드 ---------- */
@@ -576,6 +602,10 @@ img.img-error {
 }
 
 @media (max-width: 760px) {
+  .gate { padding: 16px; }
+  .gate-state { grid-template-columns: 1fr; min-height: 0; }
+  .gate-visual { min-height: 180px; }
+  .gate-copy { padding: 28px 22px; }
   .app { display: block; }
   .sidebar { display: none; }
   .utility-bar { padding: 12px 16px; }

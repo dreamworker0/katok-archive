@@ -97,5 +97,20 @@ class UiJavascriptContractTests(unittest.TestCase):
         self.assertIn("mobileMoreButton", self.app)
 
 
+class UiGateContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.boot = (ROOT / "web" / "boot.js").read_text(encoding="utf-8")
+
+    def test_gate_states_share_semantic_classes(self):
+        for class_name in ("gate-state", "gate-copy", "gate-actions", "gate-progress"):
+            self.assertIn(class_name, self.boot)
+
+    def test_gate_copy_explains_privacy_and_next_step(self):
+        self.assertIn("회원 전용으로 보호", self.boot)
+        self.assertIn("신청을 잘 받았어요", self.boot)
+        self.assertIn("관리자가 확인", self.boot)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -25,33 +25,51 @@
     el.gateBody.innerHTML = html;
   }
 
+  function gateFrame(kind, body) {
+    return '<section class="gate-state gate-state--' + kind + '">' +
+      '<div class="gate-visual" aria-hidden="true"></div>' +
+      '<div class="gate-copy">' + body + "</div></section>";
+  }
+
   function gateSignIn(message) {
-    show(
-      '<h2 class="gate-title">사회복지 바이브코딩 아카이브</h2>' +
-      '<p class="gate-desc">' +
-      (message || "구성원만 열람할 수 있습니다. Google 계정으로 로그인해 주세요.") +
-      "</p>" +
-      '<button class="btn gate-btn" id="signInBtn">Google로 로그인</button>'
-    );
+    var desc = message ||
+      "Google 계정으로 로그인하면 승인된 멤버만 기록을 열람할 수 있어요.";
+    show(gateFrame("signin",
+      '<p class="eyebrow">WELCOME BACK</p>' +
+      '<h1 class="gate-title">반가워요</h1>' +
+      '<p class="gate-desc">' + escapeHtml(desc) + "</p>" +
+      '<div class="gate-actions">' +
+      '<button class="btn gate-btn" id="signInBtn">Google로 계속하기</button></div>' +
+      '<p class="privacy-note">대화와 사진은 회원 전용으로 보호됩니다. ' +
+      "로그인 정보는 멤버 확인에만 사용합니다.</p>"
+    ));
     document.getElementById("signInBtn").onclick = signIn;
   }
 
   function gateError(title, detail, opts) {
-    show(
-      '<h2 class="gate-title">' + title + "</h2>" +
-      '<p class="gate-desc">' + detail + "</p>" +
-      '<button class="btn ghost gate-btn" id="signOutBtn">다른 계정으로 로그인</button>' +
+    show(gateFrame("error",
+      '<p class="eyebrow">잠시 멈췄어요</p>' +
+      '<h1 class="gate-title">' + escapeHtml(title) + "</h1>" +
+      '<p class="gate-desc">요청은 반영되지 않았습니다. 아래 방법으로 다시 이어갈 수 있어요.</p>' +
+      '<div class="gate-actions">' +
       (opts && opts.retry
-        ? ' <button class="btn gate-btn" id="retryBtn">다시 시도</button>'
-        : "")
-    );
+        ? '<button class="btn gate-btn" id="retryBtn">다시 시도</button>'
+        : "") +
+      '<button class="btn ghost gate-btn" id="signOutBtn">다른 계정으로 로그인</button></div>' +
+      '<details class="error-detail"><summary>자세한 내용</summary><p>' +
+      detail + "</p></details>"
+    ));
     bindSignOut();
     var rt = document.getElementById("retryBtn");
     if (rt) rt.onclick = function () { location.reload(); };
   }
 
   function gateLoading(msg) {
-    show('<div class="gate-spinner"></div><p class="gate-desc">' + msg + "</p>");
+    show(gateFrame("loading",
+      '<div class="gate-spinner"></div>' +
+      '<h1 class="gate-title">기록을 준비하고 있어요</h1>' +
+      '<p class="gate-desc">' + escapeHtml(msg) + "</p>"
+    ));
   }
 
   function bindSignOut() {
@@ -63,18 +81,19 @@
 
   /** 신청 폼. 참여자 명단은 보여주지 않고 본인이 직접 적게 한다. */
   function gateClaim(user, prefill, warn) {
-    show(
-      '<h2 class="gate-title">열람 신청</h2>' +
+    show(gateFrame("claim",
+      '<p class="eyebrow">MEMBERS ONLY</p>' +
+      '<h1 class="gate-title">열람 신청</h1>' +
       '<p class="gate-desc"><b>' + escapeHtml(user.email) + "</b> 으로 로그인했습니다.<br>" +
       "대화방에서 쓰시는 이름을 적어주세요. 관리자가 확인한 뒤 열어드립니다.</p>" +
       (warn ? '<p class="gate-warn">' + warn + "</p>" : "") +
       '<input class="gate-input" id="claimNick" type="text" maxlength="40" ' +
       'autocomplete="off" placeholder="대화방 표시 이름" value="' +
       escapeHtml(prefill || "") + '" />' +
-      '<button class="btn gate-btn" id="claimBtn">신청하기</button> ' +
-      '<button class="btn ghost gate-btn" id="signOutBtn">다른 계정으로 로그인</button>' +
-      '<p class="gate-foot">적어주신 이름은 관리자에게만 보입니다.</p>'
-    );
+      '<div class="gate-actions"><button class="btn gate-btn" id="claimBtn">신청하기</button>' +
+      '<button class="btn ghost gate-btn" id="signOutBtn">다른 계정으로 로그인</button></div>' +
+      '<p class="privacy-note">적어주신 이름은 관리자에게만 보입니다.</p>'
+    ));
     var input = document.getElementById("claimNick");
     document.getElementById("claimBtn").onclick = function () { submitClaim(user, input.value); };
     input.onkeydown = function (e) { if (e.key === "Enter") submitClaim(user, input.value); };
@@ -108,14 +127,19 @@
   }
 
   function gatePending(user, nickname) {
-    show(
-      '<h2 class="gate-title">승인 대기 중</h2>' +
+    show(gateFrame("pending",
+      '<p class="eyebrow">REQUEST RECEIVED</p>' +
+      '<h1 class="gate-title">신청을 잘 받았어요</h1>' +
       '<p class="gate-desc"><b>' + escapeHtml(nickname) + "</b> 님으로 신청이 접수되었습니다.<br>" +
-      "관리자가 확인하면 바로 열람할 수 있습니다.</p>" +
-      '<button class="btn gate-btn" id="retryBtn">다시 확인</button> ' +
+      "관리자가 확인하면 이곳에서 바로 기록을 만날 수 있어요.</p>" +
+      '<ol class="gate-progress" aria-label="열람 승인 단계">' +
+      '<li class="done"><span>1</span>신청 완료</li>' +
+      '<li class="current"><span>2</span>관리자 확인</li>' +
+      '<li><span>3</span>기록 열람</li></ol>' +
+      '<div class="gate-actions"><button class="btn gate-btn" id="retryBtn">다시 확인</button>' +
       '<button class="btn ghost gate-btn" id="editBtn">이름 수정</button> ' +
-      '<button class="btn ghost gate-btn" id="signOutBtn">다른 계정으로 로그인</button>'
-    );
+      '<button class="btn ghost gate-btn" id="signOutBtn">다른 계정으로 로그인</button></div>'
+    ));
     document.getElementById("retryBtn").onclick = function () { location.reload(); };
     document.getElementById("editBtn").onclick = function () { gateClaim(user, nickname, ""); };
     bindSignOut();
