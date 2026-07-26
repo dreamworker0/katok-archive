@@ -56,5 +56,31 @@ class UiShellContractTests(unittest.TestCase):
                 self.assertEqual(VIEWS, page.views)
 
 
+class UiStyleContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.css = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
+
+    def test_warm_palette_tokens_exist(self):
+        for value in (
+            "#FBF6EE",
+            "#FFFDF8",
+            "#3C332C",
+            "#CA7154",
+            "#879D78",
+            "#B85F4B",
+        ):
+            self.assertIn(value.lower(), self.css.lower())
+
+    def test_dark_theme_and_reduced_motion_are_explicit(self):
+        self.assertIn(':root[data-theme="dark"]', self.css)
+        self.assertIn("@media (prefers-reduced-motion: reduce)", self.css)
+
+    def test_desktop_and_mobile_navigation_rules_exist(self):
+        self.assertIn(".sidebar", self.css)
+        self.assertIn(".mobile-nav", self.css)
+        self.assertIn("@media (max-width: 760px)", self.css)
+
+
 if __name__ == "__main__":
     unittest.main()
