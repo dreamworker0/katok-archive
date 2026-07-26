@@ -1,4 +1,5 @@
 from html.parser import HTMLParser
+import json
 from pathlib import Path
 import unittest
 
@@ -110,6 +111,26 @@ class UiStyleContractTests(unittest.TestCase):
         self.assertIn(".mobile-nav", self.css)
         self.assertIn("@media (max-width: 760px)", self.css)
 
+    def test_sidebar_and_toolbar_controls_have_clear_size_hierarchy(self):
+        self.assertIn(".room-sub__dates", self.css)
+        self.assertIn("font-size: 11.5px", self.css)
+        self.assertIn("font-size: 14px", self.css)
+        self.assertIn("height: 50px", self.css)
+        self.assertIn(".sidebar-session .chip", self.css)
+        self.assertIn(".sidebar-session .icon-btn", self.css)
+
+    def test_every_interface_uses_noto_sans_korean_without_serif_overrides(self):
+        self.assertIn('font-family: "Noto Sans KR", sans-serif;', self.css)
+        for legacy_family in (
+            "Pretendard",
+            "Apple SD Gothic Neo",
+            "Malgun Gothic",
+            "Nanum Myeongjo",
+            "Batang",
+            "ui-monospace",
+        ):
+            self.assertNotIn(legacy_family, self.css)
+
 
 class UiJavascriptContractTests(unittest.TestCase):
     @classmethod
@@ -124,6 +145,17 @@ class UiJavascriptContractTests(unittest.TestCase):
     def test_mobile_more_has_explicit_open_state(self):
         self.assertIn("setMobileMore", self.app)
         self.assertIn("mobileMoreButton", self.app)
+
+    def test_theme_controls_name_the_mode_they_will_switch_to(self):
+        self.assertIn("function updateThemeControls(", self.app)
+        self.assertIn('"라이트 모드"', self.app)
+        self.assertIn('"다크 모드"', self.app)
+        self.assertIn('setAttribute("aria-label", label + "로 전환")', self.app)
+        self.assertIn('data-mobile-action="theme"', self.app)
+
+    def test_room_summary_breaks_dates_onto_their_own_line(self):
+        self.assertIn('class="room-sub__counts"', self.app)
+        self.assertIn('class="room-sub__dates"', self.app)
 
 
 class UiGateContractTests(unittest.TestCase):
@@ -184,6 +216,32 @@ class UiArtworkContractTests(unittest.TestCase):
                 path = art / name
                 self.assertTrue(path.is_file())
                 self.assertLessEqual(path.stat().st_size, budget)
+
+
+class FirebaseHostingContractTests(unittest.TestCase):
+    def test_hosting_enables_oauth_popup_opener_compatibility(self):
+        config = json.loads((ROOT / "firebase.json").read_text(encoding="utf-8"))
+        for hosting in config["hosting"]:
+            with self.subTest(site=hosting["site"]):
+                headers = [
+                    header
+                    for rule in hosting.get("headers", [])
+                    for header in rule.get("headers", [])
+                ]
+                self.assertIn(
+                    {
+                        "key": "Cross-Origin-Opener-Policy",
+                        "value": "same-origin-allow-popups",
+                    },
+                    headers,
+                )
+
+    def test_shells_load_noto_sans_korean_and_name_the_default_theme_action(self):
+        for name in ("index.html", "index.hosting.html"):
+            with self.subTest(name=name):
+                source = (ROOT / "web" / name).read_text(encoding="utf-8")
+                self.assertIn("fonts.googleapis.com/css2?family=Noto+Sans+KR", source)
+                self.assertIn('aria-label="다크 모드로 전환">다크 모드</button>', source)
 
 
 if __name__ == "__main__":

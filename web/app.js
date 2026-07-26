@@ -2077,13 +2077,31 @@
     }
   }
 
-  function toggleTheme() {
+  function currentTheme() {
     var cur = document.documentElement.getAttribute("data-theme");
-    var isDark = cur === "dark" ||
-      (!cur && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
-    var next = isDark ? "light" : "dark";
+    if (cur) return cur;
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark" : "light";
+  }
+
+  function updateThemeControls() {
+    var label = currentTheme() === "dark" ? "라이트 모드" : "다크 모드";
+    if (el.themeBtn) {
+      el.themeBtn.textContent = label;
+      el.themeBtn.setAttribute("aria-label", label + "로 전환");
+    }
+    var mobileTheme = document.querySelector('[data-mobile-action="theme"]');
+    if (mobileTheme) {
+      mobileTheme.textContent = label;
+      mobileTheme.setAttribute("aria-label", label + "로 전환");
+    }
+  }
+
+  function toggleTheme() {
+    var next = currentTheme() === "dark" ? "light" : "dark";
     document.documentElement.setAttribute("data-theme", next);
     try { localStorage.setItem("kakao-archive-theme", next); } catch (e) {}
+    updateThemeControls();
   }
 
   function removeViewControls(view) {
@@ -2101,9 +2119,10 @@
       '<button type="button" data-view="stats">통계</button>',
     ];
     if (isAdmin()) html.push('<button type="button" data-view="admin">관리자</button>');
-    html.push('<button type="button" data-mobile-action="theme">화면 테마 전환</button>');
+    html.push('<button type="button" data-mobile-action="theme"></button>');
     if (state.session) html.push('<button type="button" data-mobile-action="signout">로그아웃</button>');
     el.mobileMore.innerHTML = html.join("");
+    updateThemeControls();
   }
 
   function setView(v) {
@@ -2160,8 +2179,11 @@
     renderMobileMore();
     el.roomTitle.textContent = A.chat_room || "아카이브";
     var t = STATS.totals || {};
-    el.roomSub.textContent = (t.messages || 0) + "개 메시지 · " + (t.participants || 0) + "명 · " +
-      (t.date_start || "") + " ~ " + (t.date_end || "");
+    el.roomSub.innerHTML =
+      '<span class="room-sub__counts">' + esc(t.messages || 0) + "개 메시지 · " +
+      esc(t.participants || 0) + "명</span>" +
+      '<span class="room-sub__dates">' + esc(t.date_start || "") + " ~ " +
+      esc(t.date_end || "") + "</span>";
     (STATS.participants || []).forEach(function (p) {
       var o = document.createElement("option");
       o.value = p.nickname; o.textContent = p.nickname + " (" + p.message_count + ")";
@@ -2225,6 +2247,7 @@
 
     var saved = null; try { saved = localStorage.getItem("kakao-archive-theme"); } catch (e) {}
     if (saved) document.documentElement.setAttribute("data-theme", saved);
+    updateThemeControls();
     el.themeBtn.addEventListener("click", toggleTheme);
 
     setNavigationState(state.view);
