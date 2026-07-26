@@ -139,6 +139,12 @@ class UiStyleContractTests(unittest.TestCase):
         self.assertIn("font-size: 14px", self.css)
         self.assertIn(".tc-toggle-icon", self.css)
 
+    def test_contextual_link_cards_are_readable_and_wrap_long_urls(self):
+        self.assertIn(".md-link-anchor", self.css)
+        self.assertIn(".context-link-card", self.css)
+        self.assertIn(".context-link-url", self.css)
+        self.assertIn("overflow-wrap: anywhere", self.css)
+
 
 class UiJavascriptContractTests(unittest.TestCase):
     @classmethod
@@ -176,6 +182,18 @@ class UiJavascriptContractTests(unittest.TestCase):
         self.assertIn('aria-expanded="', self.app)
         self.assertIn('"보고서 접기"', self.app)
         self.assertIn('setAttribute("aria-expanded"', self.app)
+
+    def test_report_markdown_supports_contextual_link_anchors(self):
+        self.assertIn('class="md-link-anchor"', self.app)
+        self.assertIn("function contextualLinkHtml(", self.app)
+        self.assertIn("link:([A-Za-z0-9_-]+)", self.app)
+        self.assertIn('rel="noopener noreferrer"', self.app)
+
+    def test_contextual_links_are_removed_from_the_footer(self):
+        self.assertIn("context: context", self.app)
+        self.assertIn("lk.context", self.app)
+        self.assertIn("data-link-anchor", self.app)
+        self.assertIn("이 주제에서 함께 공유된 자료", self.app)
 
 
 class UiGateContractTests(unittest.TestCase):

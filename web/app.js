@@ -442,8 +442,17 @@
 
   /** 본문에 주소가 적힌 링크와 그렇지 않은 링크로 가른다. */
   function splitLinks(t) {
-    var rep = t.report || "", inline = [], rest = [], seen = {};
+    var rep = t.report || "", inline = [], context = [], rest = [], seen = {};
+    var contextIds = {};
+    rep.replace(/^!\[\[link:([A-Za-z0-9_-]+)\]\]\s*$/gm, function (all, id) {
+      contextIds[id] = 1;
+      return all;
+    });
     (t.links || []).forEach(function (l) {
+      if (l.id && contextIds[l.id]) {
+        context.push(l);
+        return;
+      }
       var h = hostOf(l.url);
       if (h && rep.indexOf(h) !== -1 && !seen[h]) {
         seen[h] = 1;
@@ -454,7 +463,7 @@
     });
     // 긴 호스트를 먼저 바꿔야 짧은 것이 긴 것 안을 잘라먹지 않는다
     inline.sort(function (a, b) { return b.host.length - a.host.length; });
-    return { inline: inline, rest: rest };
+    return { inline: inline, context: context, rest: rest };
   }
 
   function renderMarkdown(src) {
@@ -469,6 +478,14 @@
       var ln = lines[i];
 
       if (!ln.trim()) { flushPara(para); i++; continue; }
+
+      var linkAnchor = /^!\[\[link:([A-Za-z0-9_-]+)\]\]$/.exec(ln.trim());
+      if (linkAnchor) {
+        flushPara(para);
+        out.push('<div class="md-link-anchor" data-link-anchor="' +
+          esc(linkAnchor[1]) + '"></div>');
+        i++; continue;
+      }
 
       /* 사진·첨부 자리표 — `![[msg-000123]]` 한 줄.
        *
@@ -555,10 +572,11 @@
       '<path d="M14 3v4h4M9 12h6M9 16h6"></path></svg>';
   }
 
-  function detailBlock(t, inlineLinks) {
+  function detailBlock(t, inlineLinks, contextualLinks) {
     if (!t.report) return "";
     var open = !!state.q;
     var n = mediaOf(t.id).length;
+    var hasResources = n || contextualLinks.length;
     return '<div class="tc-detail' + (open ? " on" : "") + '" data-tid="' + esc(t.id) + '">' +
       '<div class="tc-detail-bar">' +
       '<button class="tc-toggle" type="button" aria-expanded="' + (open ? "true" : "false") + '">' +
@@ -568,7 +586,7 @@
       "⬇ .md</button></div>" +
       '<div class="tc-detail-body md">' +
       highlightText(linkifyHosts(renderMarkdown(t.report), inlineLinks), state.q) +
-      (n ? '<div class="tc-media" data-media="' + esc(t.id) + '"></div>' : "") +
+      (hasResources ? '<div class="tc-media" data-media="' + esc(t.id) + '"></div>' : "") +
       "</div></div>";
   }
 
@@ -608,10 +626,27 @@
       (files.length ? '<div class="tcf-list">' + files.join("") + "</div>" : "");
   }
 
-  /* 보고서에 그날 오간 사진·첨부를 붙인다.
+  function contextualLinkHtml(rows) {
+    return rows.map(function (l) {
+      var host = hostOf(l.url) || "외부 링크";
+      return '<a class="context-link-card" href="' + esc(l.url) + '" target="_blank" ' +
+        'rel="noopener noreferrer">' +
+        '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
+        '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>' +
+        '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>' +
+        "</svg>" +
+        '<span class="context-link-copy"><strong>' + esc(host) + "</strong>" +
+        '<span class="context-link-url">' + esc(l.url) + "</span>" +
+        '<span class="context-link-meta">' + esc(l.nickname || "") + " · " +
+        esc(l.date || "") + (l.time ? " " + esc(l.time) : "") + "</span></span></a>";
+    }).join("");
+  }
+
+  /* 보고서에 문맥 링크와 그날 오간 사진·첨부를 붙인다.
    *
-   * 본문에 자리표(![[msg-…]])가 있으면 그 자리에 끼우고, 자리표가 없는 것만
-   * 보고서 끝으로 모은다. 전부 자리를 찾았으면 끝의 묶음은 비워 둔다.
+   * 본문에 링크 자리표(![[link:msg-…]])와 미디어 자리표(![[msg-…]])가 있으면
+   * 그 자리에 끼우고, 자리표가 없는 미디어만 보고서 끝으로 모은다.
    *
    * 펼칠 때 채운다. 165개 카드의 이미지를 미리 다 걸어 두면 Storage 인증
    * 요청이 한꺼번에 나간다. data-filled 로 두 번 채우는 것을 막는다.
@@ -619,9 +654,22 @@
   function fillMedia(box) {
     var host = box.querySelector(".tc-media");
     if (!host || host.getAttribute("data-filled")) return;
-    var rows = mediaOf(host.getAttribute("data-media"));
-    if (!rows.length) return;
+    var tid = host.getAttribute("data-media");
+    var rows = mediaOf(tid);
+    var thread = THREADS.filter(function (t) { return t.id === tid; })[0];
     host.setAttribute("data-filled", "1");
+
+    var linkAnchors = {};
+    Array.prototype.forEach.call(box.querySelectorAll(".md-link-anchor"), function (a) {
+      linkAnchors[a.getAttribute("data-link-anchor")] = a;
+    });
+    var linksByMessage = {};
+    (thread && thread.links || []).forEach(function (l) {
+      if (linkAnchors[l.id]) (linksByMessage[l.id] || (linksByMessage[l.id] = [])).push(l);
+    });
+    Object.keys(linksByMessage).forEach(function (id) {
+      linkAnchors[id].innerHTML = contextualLinkHtml(linksByMessage[id]);
+    });
 
     var anchors = {};
     Array.prototype.forEach.call(box.querySelectorAll(".md-anchor"), function (a) {
@@ -636,7 +684,7 @@
     });
 
     host.innerHTML = rest.length
-      ? "<h4>이 주제에서 오간 사진·첨부</h4>" + mediaHtml(rest, false)
+      ? "<h4>이 주제에서 함께 공유된 자료</h4>" + mediaHtml(rest, false)
       : "";
     bindImages(box);
     bindFiles(box);
@@ -654,7 +702,16 @@
       "---", ""].join("\n");
     /* 자리표는 화면에서만 사진으로 부풀 뿐, 파일에 그대로 두면 뜻 모를 기호가
        된다. 무엇이 그 자리에 있었는지 한 줄로 적어 남긴다. */
-    var body = String(t.report || "").replace(/^!\[\[\s*([A-Za-z0-9_-]+)\s*\]\]$/gm,
+    var body = String(t.report || "").replace(
+      /^!\[\[link:([A-Za-z0-9_-]+)\]\]$/gm,
+      function (all, id) {
+        var links = (t.links || []).filter(function (x) { return x.id === id; });
+        return links.map(function (l) {
+          return "> 🔗 [" + hostOf(l.url) + "](" + l.url + ") — " +
+            l.nickname + " · " + l.date + " " + (l.time || "");
+        }).join("\n");
+      }
+    ).replace(/^!\[\[\s*([A-Za-z0-9_-]+)\s*\]\]$/gm,
       function (all, id) {
         var m = MEDIA.filter(function (x) { return x.id === id; })[0];
         if (!m) return "";
@@ -702,9 +759,10 @@
             return '<button class="chip kw" data-kw="' + esc(k) + '">' +
               esc(k) + "</button>"; }).join("") + "</div>"
         : "") +
-      detailBlock(t, lk.inline) +
+      detailBlock(t, lk.inline, lk.context) +
       (people ? '<div class="tc-people">' + people + "</div>" : "") +
-      (links ? '<div class="tc-links">' + links + more + "</div>" : "") +
+      (links ? '<div class="tc-links"><p class="tc-links-label">' +
+        "이 주제에서 함께 공유된 자료</p>" + links + more + "</div>" : "") +
       // 관리자에게만 보인다. 잡담 주제를 보다가 그 자리에서 뺄 수 있어야 한다.
       (isAdmin()
         ? '<div class="tc-admin"><button class="btn ghost tc-hide" data-tid="' +
