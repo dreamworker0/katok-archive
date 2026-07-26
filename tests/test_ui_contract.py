@@ -193,24 +193,36 @@ class UiStyleContractTests(unittest.TestCase):
                 self.assertLess(source.index("</main>", view),
                                 source.index('id="mobileNav"'))
 
-    def test_mobile_more_lays_icon_actions_out_in_one_row(self):
-        """모바일 '더보기'의 아이콘 두 개는 한 줄에 나란히 둔다.
+    def test_mobile_more_items_all_look_like_the_same_kind_of_thing(self):
+        """모바일 '더보기'의 글자 크기·테마도 다른 항목과 같은 전체폭 행이다.
 
-        .mobile-more 는 단일 컬럼 그리드다. 아이콘 버튼에 justify-self: end 를 주면
-        각자 한 행을 차지해, 오른쪽에 작은 버튼 하나씩 뜬 빈 줄이 두 개 생긴다.
+        라벨이 붙은 전체폭 행들의 목록에 아이콘만 있는 44px 버튼을 끼우니 다른
+        물건처럼 보였다. 모바일에서는 '가' 와 달 모양만 보고 무엇인지 추측해야
+        한다는 문제도 있었다. 이름과 지금 값을 적어 목록에 맞춘다.
         """
-        self.assertIn(
-            ".mobile-more__icons { display: flex; justify-content: flex-end; gap: 8px; }",
-            self.css,
-        )
-        # 옛 규칙(각 버튼을 제 행에 오른쪽 정렬)이 남아 있으면 안 된다. 주석에
-        # 그 형태를 설명해 두었으므로 속성이 아니라 선택자로 확인한다.
-        self.assertNotIn(".mobile-more button[data-mobile-action=", self.css)
         app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
-        self.assertIn('class="mobile-more__icons"', app)
-        # 탭 영역은 44px 를 지킨다.
-        block = self.css[self.css.index(".mobile-more__icons button"):]
-        self.assertIn("width: 44px; height: 44px", block[:160])
+        self.assertIn('.mobile-more button[data-mobile-action="font"]', self.css)
+        self.assertIn('.mobile-more button[data-mobile-action="theme"]', self.css)
+        self.assertIn("function mobileRow(", app)
+        self.assertIn('mobileRow("글자 크기", now.label)', app)
+        self.assertIn('mobileRow("다크 모드",', app)
+        # 오른쪽에 지금 값 — 열지 않고도 상태를 읽을 수 있어야 한다.
+        self.assertIn('class="mm-value"', app)
+        self.assertIn(".mobile-more .mm-value { margin-left: auto;", self.css)
+        # 아이콘만 있던 옛 묶음은 남기지 않는다.
+        self.assertNotIn("mobile-more__icons", self.css)
+        self.assertNotIn("mobile-more__icons", app)
+
+    def test_mobile_more_rows_keep_a_reachable_tap_target(self):
+        block = self.css[self.css.index('.mobile-more button[data-mobile-action="font"]'):]
+        self.assertIn("min-height: 44px", block[:260])
+
+    def test_sidebar_keeps_the_compact_icon_toggles(self):
+        # 사이드바 푸터는 40px 아이콘 자리다. 목록이 아니므로 라벨 행이 아니라
+        # 아이콘이 맞다 — 같은 동작이라도 자리에 따라 모양이 다를 수 있다.
+        app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('class="font-toggle__mark" aria-hidden="true">가<', app)
+        self.assertIn(".font-toggle__mark", self.css)
 
     def test_font_toggle_previews_the_size_it_will_switch_to(self):
         self.assertIn(".font-toggle__mark", self.css)
@@ -344,9 +356,14 @@ class MobileDensityContractTests(unittest.TestCase):
     def test_toggle_says_what_is_inside_before_you_open_it(self):
         # 열어봐야 아는 상자는 안 열어보게 된다.
         self.assertIn('class="doc-toggle-hint"', self.app)
-        for label in ("결과물 ", "링크 ", "주제 "):
+        for label in ("결과물 ", "링크 "):
             with self.subTest(label=label):
                 self.assertIn('counts.push("%s"' % label, self.app)
+
+    def test_toggle_hint_does_not_repeat_the_card_header(self):
+        """주제 개수는 세지 않는다 — doc-meta 가 위에서 이미 "N개 주제" 를 적는다."""
+        self.assertIn('개 메시지 · " + (d.threads || []).length + "개 주제', self.app)
+        self.assertNotIn('counts.push("주제 ', self.app)
 
     def test_toggle_is_an_accessible_disclosure(self):
         self.assertIn('aria-expanded="false"', self.app)

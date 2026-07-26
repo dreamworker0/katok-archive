@@ -204,11 +204,14 @@
 
     /* 모바일에서는 이 아래를 접는다. 12개 주제가 전부 펼쳐지면 첫 화면이 25화면
      * 분량(20,375px)이 되어 아무도 끝까지 보지 않는다. 무엇이 들어 있는지 세어
-     * 버튼에 적어 둔다 — 열어봐야 아는 상자는 안 열어보게 된다. */
+     * 버튼에 적어 둔다 — 열어봐야 아는 상자는 안 열어보게 된다.
+     *
+     * 주제 개수는 세지 않는다: 카드 우상단 doc-meta 가 이미 "N개 주제" 를 적고
+     * 있어서 같은 숫자가 위아래로 두 번 나온다. 접었을 때 어디에도 안 보이는
+     * 것만 센다. */
     var counts = [];
     if ((d.apps || []).length) counts.push("결과물 " + d.apps.length);
     if (links.length) counts.push("링크 " + links.length);
-    if (threadList.length) counts.push("주제 " + threadList.length);
 
     var body =
       (kw ? '<div class="doc-kw">' + kw + "</div>" : "") +
@@ -2231,10 +2234,20 @@
     }
     var mobileTheme = document.querySelector('[data-mobile-action="theme"]');
     if (mobileTheme) {
-      mobileTheme.innerHTML = themeIcon(next);
+      // 모바일 '더보기'는 라벨이 붙은 전체폭 행들의 목록이다. 거기에 아이콘만 있는
+      // 작은 버튼을 끼우면 다른 물건처럼 보이고, 무엇인지 눌러봐야 안다.
+      mobileTheme.innerHTML = mobileRow("다크 모드",
+        currentTheme() === "dark" ? "켜짐" : "꺼짐");
       mobileTheme.setAttribute("aria-label", label);
       mobileTheme.setAttribute("title", label);
     }
+  }
+
+  /** 모바일 '더보기' 한 줄: 왼쪽에 이름, 오른쪽에 지금 값. 다른 항목과 같은
+   *  전체폭 행이라 목록에서 튀지 않고, 열어보지 않아도 상태를 읽을 수 있다. */
+  function mobileRow(name, value) {
+    return '<span class="mm-label">' + esc(name) + "</span>" +
+      '<span class="mm-value">' + esc(value) + "</span>";
   }
 
   function toggleTheme() {
@@ -2273,16 +2286,18 @@
     var now = FONT_STEPS[currentFontIndex()];
     // 테마 토글처럼 "누르면 어디로 가는지"를 알린다. 지금 크기도 같이 읽어 준다.
     var label = "글자 크기 " + next.to + " 전환 (지금 " + now.label + ")";
-    var mark = '<span class="font-toggle__mark" aria-hidden="true">가</span>';
-    [el.fontBtn, document.querySelector('[data-mobile-action="font"]')].forEach(
-      function (btn) {
-        if (!btn) return;
-        btn.innerHTML = mark;
-        btn.setAttribute("data-font-next", next.id);
-        btn.setAttribute("aria-label", label);
-        btn.setAttribute("title", label);
-      }
-    );
+    // 사이드바는 40px 아이콘 자리라 '가' 를 다음 단계 크기로 보여 준다.
+    // 모바일 '더보기'는 라벨 목록이라 같은 모양의 전체폭 행으로 준다.
+    var mobileFont = document.querySelector('[data-mobile-action="font"]');
+    [[el.fontBtn, '<span class="font-toggle__mark" aria-hidden="true">가</span>'],
+     [mobileFont, mobileRow("글자 크기", now.label)]].forEach(function (pair) {
+      var btn = pair[0];
+      if (!btn) return;
+      btn.innerHTML = pair[1];
+      btn.setAttribute("data-font-next", next.id);
+      btn.setAttribute("aria-label", label);
+      btn.setAttribute("title", label);
+    });
   }
 
   function applyFont(id) {
@@ -2311,12 +2326,9 @@
       '<button type="button" data-view="stats">통계</button>',
     ];
     if (isAdmin()) html.push('<button type="button" data-view="admin">관리자</button>');
-    // 아이콘 하나짜리 두 개는 한 줄에 묶는다. 각자 한 행을 차지하면 빈 자리만
-    // 늘고 목록이 끊겨 보인다. 순서는 사이드바와 같게 둔다(글자 크기 다음 테마).
-    html.push('<div class="mobile-more__icons">' +
-      '<button type="button" data-mobile-action="font"></button>' +
-      '<button type="button" data-mobile-action="theme"></button>' +
-      "</div>");
+    // 다른 항목과 같은 전체폭 행으로 둔다. 순서는 사이드바와 같다(글자 크기 다음 테마).
+    html.push('<button type="button" data-mobile-action="font"></button>');
+    html.push('<button type="button" data-mobile-action="theme"></button>');
     if (state.session) html.push('<button type="button" data-mobile-action="signout">로그아웃</button>');
     el.mobileMore.innerHTML = html.join("");
     updateFontControls();
