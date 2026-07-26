@@ -32,6 +32,22 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path))
 
+# 자식 프로세스 출력 인코딩을 UTF-8 로 맞춘다.
+#
+# Node 는 언제나 UTF-8 로 쓴다. 그런데 콘솔 코드페이지가 cp949(한국어 윈도 기본)면
+# PowerShell 이 그 바이트를 cp949 로 읽어 '멤버' 가 '硫ㅻ쾭' 처럼 깨진다. 로그를
+# 못 읽는 것도 문제지만, 진짜 문제는 아래에서 출력을 -match 로 읽는다는 점이다.
+# 깨진 글자는 절대 매칭되지 않으므로 '요청 변경: 있음' 을 놓치고, 조용한 날에
+# 들어온 삭제 요청이 발행되지 않은 채 묻힌다.
+#
+# 그래서 두 겹으로 막는다: (1) 인코딩을 맞춰 애초에 안 깨지게 하고,
+# (2) 판단에 쓰는 신호는 ASCII 표식(REQUESTS_CHANGED / NEW_MESSAGES)으로 받는다.
+# 작업 스케줄러처럼 콘솔이 없는 환경에서는 (1)이 실패할 수 있어 (2)가 필요하다.
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+# 파이썬도 같은 인코딩으로 내보내게 한다. PYTHONUTF8 과 달리 open() 기본값은
+# 건드리지 않아, 파일을 읽고 쓰는 기존 동작이 그대로 유지된다.
+$env:PYTHONIOENCODING = 'utf-8'
+
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Force $LogDir | Out-Null }
 $log = Join-Path $LogDir ("daily-{0}.log" -f (Get-Date -Format 'yyyyMMdd'))
 
@@ -74,9 +90,17 @@ $syncArgs = @('scripts\sync_member_requests.js')
 if ($DryRun) { $syncArgs += '--dry-run' }
 $syncOut = Invoke-Step '멤버 요청 동기화' { node @syncArgs }
 
-$requestsChanged = $false
+# 표식이 아예 없으면 '변경 없음' 으로 넘기지 않는다. 그렇게 하면 요청이 조용히
+# 묻히고, 묻힌 사실조차 남지 않는다. 모를 때는 발행하는 쪽으로 기운다 — 불필요한
+# 발행은 손해가 없지만, 삭제 요청을 못 지키는 건 되돌릴 수 없다.
+$requestsChanged = $null
 foreach ($l in $syncOut) {
-    if ($l -match '요청 변경:\s*있음') { $requestsChanged = $true }
+    if ($l -match 'REQUESTS_CHANGED=([01])') { $requestsChanged = ($Matches[1] -eq '1') }
+}
+if ($null -eq $requestsChanged) {
+    Say "멤버 요청 변경 여부를 읽지 못했습니다 (REQUESTS_CHANGED 표식 없음)." 'WARN'
+    Say "    요청을 놓치지 않으려고 변경된 것으로 보고 발행합니다." 'WARN'
+    $requestsChanged = $true
 }
 
 # 4) 증분 반영
@@ -84,11 +108,17 @@ $ingestArgs = @('-m', 'scripts.ingest_incremental')
 if ($DryRun) { $ingestArgs += '--dry-run' }
 $ingestOut = Invoke-Step '증분 반영' { python @ingestArgs }
 
-# '신규 N건' 을 읽어 새 메시지 여부 판단.
-# 닫는 괄호까지 묶으면 '(신규 2건, 수집 거부 1건)' 같은 줄을 놓친다.
-$added = 0
+# 새 메시지 수. 여기도 ASCII 표식으로 받는다 — 못 읽으면 새 글이 있어도 발행을
+# 건너뛰고, 그날 대화가 아카이브에 들어오지 않는다.
+$added = $null
 foreach ($l in $ingestOut) {
-    if ($l -match '신규\s+(\d+)건') { $added = [int]$Matches[1] }
+    if ($l -match 'NEW_MESSAGES=(\d+)') { $added = [int]$Matches[1] }
+}
+if ($null -eq $added) {
+    Say "새 메시지 수를 읽지 못했습니다 (NEW_MESSAGES 표식 없음)." 'WARN'
+    Say "    새 글을 놓치지 않으려고 발행을 진행합니다." 'WARN'
+    $added = 0
+    $requestsChanged = $true
 }
 Say "새 메시지: $added 건 / 멤버 요청 변경: $requestsChanged"
 

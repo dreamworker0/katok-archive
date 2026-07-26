@@ -163,6 +163,13 @@ async function main() {
     canonical(prev.requests) !== canonical(requests) ||
     JSON.stringify(prev.hidden_threads || []) !== JSON.stringify(hiddenThreads);
   console.log(`요청 변경: ${changed ? "있음" : "없음"}`);
+  // 위 줄은 사람이 읽는 것이고, 아래 표식은 run_daily.ps1 이 읽는다.
+  //
+  // 한글로 신호를 주면 안 되는 이유: Node 는 UTF-8 로 쓰는데 콘솔 코드페이지가
+  // cp949 면 PowerShell 이 그 바이트를 cp949 로 읽어 글자가 깨진다. 그러면
+  // `-match '요청 변경: 있음'` 이 영영 빗나가고, 조용한 날에 들어온 삭제 요청이
+  // 발행되지 않은 채 묻힌다. ASCII 표식은 어느 코드페이지에서도 살아남는다.
+  console.log(`REQUESTS_CHANGED=${changed ? 1 : 0}`);
 
   if (DRY) {
     console.log("\n--dry-run: 파일을 쓰지 않았습니다.");

@@ -340,6 +340,9 @@ def main() -> int:
     print("\n메시지 %d건 -> %d건 (신규 %d건%s)"
           % (summary["before"], summary["after"], summary["added"],
              ", 수집 거부 %d건" % summary["refused"] if summary["refused"] else ""))
+    # 위 줄은 사람이 읽는 것이고, 아래 표식은 run_daily.ps1 이 읽는다. 콘솔
+    # 코드페이지에 따라 한글이 깨지면 '신규 N건' 을 못 읽어 발행을 건너뛴다.
+    print("NEW_MESSAGES=%d" % summary["added"])
     if summary["added"] and not args.dry_run:
         print("다음: python -m scripts.build_firestore_payload"
               " && node scripts/upload_firestore.js")
