@@ -105,6 +105,71 @@ def build_digests(
     return digests
 
 
+def enrich_threads(threads: list[dict], messages: list[dict]) -> list[dict]:
+    """스레드에 링크와 미디어 개수를 붙인다.
+
+    원문 대신 요약을 발행하기로 하면서 스레드가 화면의 최소 단위가 됐다. 그런데
+    요약만으로는 "그래서 뭘 공유했나"를 알 수 없다 — 링크와 파일은 대화의 내용이
+    아니라 결과물이므로 그대로 남긴다.
+    """
+    # 발행본 스레드에는 message_ids 가 없다(build_data 가 뺀다). 메시지 쪽에 붙어
+    # 있는 thread_id 로 되짚는다.
+    by_thread: dict[str, list[dict]] = {}
+    for m in messages:
+        tid = m.get("thread_id")
+        if tid:
+            by_thread.setdefault(tid, []).append(m)
+
+    out = []
+    for t in threads:
+        links, media = [], 0
+        seen = set()
+        for m in by_thread.get(t["id"], []):
+            for u in m.get("urls") or []:
+                if u not in seen:
+                    seen.add(u)
+                    links.append({"url": u, "nickname": m["nickname"], "date": m["date"]})
+            if m.get("images") or m.get("file"):
+                media += 1
+        nt = {k: v for k, v in t.items() if k != "message_ids"}
+        nt["links"] = links
+        nt["media_count"] = media
+        out.append(nt)
+    return out
+
+
+def build_media(messages: list[dict]) -> list[dict]:
+    """사진·첨부만 따로 발행한다.
+
+    원문 텍스트는 내보내지 않지만 사진과 파일은 그 자체가 공유된 결과물이라
+    남긴다. 본문이 없으므로 대화 내용이 새지 않는다.
+    """
+    out = []
+    for m in messages:
+        item = None
+        if m.get("images"):
+            item = {"kind": "image", "images": m["images"],
+                    "count": m.get("image_count") or len(m["images"])}
+        elif m.get("file"):
+            item = {"kind": "file", "name": m["file"]["name"], "file": m["file"]}
+        elif m.get("is_file_share"):
+            # 원본을 못 구한 첨부. 목록에서 빼면 "누가 무엇을 올렸는데 지금은 없다"는
+            # 사실이 사라져 다시 구해달라고 부탁할 근거도 없어진다. 파일명은 대화
+            # 내용이 아니라 결과물의 이름이므로 남긴다.
+            name = (m.get("text") or "").replace("파일:", "", 1).strip()
+            item = {"kind": "file", "name": name}
+        if not item:
+            continue
+        item.update({
+            "id": m["id"], "nickname": m["nickname"],
+            "date": m["date"], "time": m["time"],
+            "thread_id": m.get("thread_id"), "category": m.get("category"),
+        })
+        out.append(item)
+    return out
+
+
+
 def build_data(
     messages: list[dict],
     images: list[dict],
@@ -331,6 +396,10 @@ def main() -> None:
     files = _read_jsonl(files_path) if files_path.exists() else []
 
     data = build_data(messages, images, participants, topics, knowledge, digest_prose, files)
+    # 화면은 원문이 아니라 스레드 요약과 결과물을 쓴다. 배포본과 같은 모양으로 맞춘다.
+    data["threads"] = enrich_threads(data["threads"], data["messages"])
+    data["media"] = build_media(data["messages"])
+    data.pop("messages", None)
     write_site(data)
 
     t = data["stats"]["totals"]

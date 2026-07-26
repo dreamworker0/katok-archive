@@ -6,8 +6,9 @@
 
 생성물 (`firestore-payload/`)
   meta.json            아카이브 요약·카테고리·통계
-  chunks.json          발행본 메시지 청크(기본 100건/문서) — 멤버 읽기
-  threads.json         주제 스레드
+  threads.json         스레드 요약 — 멤버가 보는 본문(원문 대신)
+  media.json           사진·첨부 목록 — 멤버 읽기
+  my-messages.json     멤버별 '내가 쓴 글' — 본인만 읽기
   digests.json         주제별 지식 문서
   graph.json           지식 그래프(노드·엣지 벌크 2문서)
   messages-source.json 원본 전체 — 관리자 전용(P2 개별 숨김에 사용)
@@ -32,9 +33,6 @@ OUTPUT = ROOT / "output"
 CONFIG = ROOT / "config"
 PAYLOAD = ROOT / "firestore-payload"
 ASSETS_IMAGES = ROOT / "assets" / "images"
-
-CHUNK_SIZE = 100
-
 
 # ────────────────────────── 제외 규칙 ──────────────────────────
 
@@ -148,27 +146,33 @@ def prune_knowledge(knowledge: dict, messages: list[dict], exclusions: dict) -> 
 
 # ────────────────────────── 페이로드 조립 ──────────────────────────
 
-def chunk_messages(messages: list[dict], size: int = CHUNK_SIZE) -> list[dict]:
-    """메시지를 청크 문서로 나눈다.
+MY_MESSAGES_LIMIT = 700_000   # Firestore 문서 1MiB 한도 아래로 여유
 
-    문서당 1건씩 두면 전체 로드에 1,500회 읽기가 들지만, 100건씩 묶으면 ~16회로
-    줄어든다. 과거 대화는 불변이라 청크가 적합하다.
+
+def build_my_messages(messages: list[dict], members: list[dict]) -> dict[str, list[dict]]:
+    """멤버별로 '본인이 쓴 글'만 모은다.
+
+    본인 글은 본인에게 원문으로 보여야 한다 — 무엇을 지울지 고르려면 봐야 하고,
+    자기 글을 보는 건 개인정보 문제가 아니다. 반대로 남의 원문은 아무도 못 본다.
+
+    메시지 하나하나를 문서로 두고 규칙으로 거르는 방법도 있지만, 그러면 378건
+    쓴 사람이 화면을 열 때마다 378회를 읽는다. 사람별로 한 문서에 묶으면 1회다.
+    메시지는 한 사람에게만 속하므로 이렇게 나눠도 전체 용량은 같다.
     """
-    chunks = []
-    for i in range(0, len(messages), size):
-        part = messages[i:i + size]
-        seq = len(chunks)
-        chunks.append({
-            "id": "c%04d" % seq,
-            "seq": seq,
-            "count": len(part),
-            "first_msg": part[0]["id"],
-            "last_msg": part[-1]["id"],
-            "date_start": part[0]["date"],
-            "date_end": part[-1]["date"],
-            "messages": part,
-        })
-    return chunks
+    by_nickname: dict[str, list[dict]] = {}
+    for m in messages:
+        by_nickname.setdefault(m["nickname"], []).append(m)
+
+    out: dict[str, list[dict]] = {}
+    for mem in members:
+        items: list[dict] = []
+        for name in mem["nicknames"]:
+            items.extend(by_nickname.get(name, []))
+        if not items:
+            continue
+        items.sort(key=lambda x: x["id"])
+        out[mem["email"]] = items
+    return out
 
 
 def load_members() -> list[dict]:
@@ -265,8 +269,18 @@ def build_payload() -> dict:
         kept, images, participants, topics_pruned, knowledge_pruned, digest_prose, files
     )
 
-    chunks = chunk_messages(data["messages"])
+    # 원문 청크는 더 이상 멤버에게 발행하지 않는다.
+    #
+    # 예전에는 chunks 문서에 메시지 본문이 그대로 실려 나갔고, 화면에 안 보여도
+    # devtools 로 1,500건을 전부 읽을 수 있었다. 이 방의 가치는 대화 자체가 아니라
+    # 그 안의 내용이므로, 스레드 요약과 결과물(링크·사진·첨부)만 발행한다.
+    # 원문이 필요한 곳은 두 군데뿐이고 둘 다 따로 다룬다:
+    #   - 관리자 전체 열람   messagesSource (규칙이 관리자만 허용)
+    #   - 본인 글 관리       messagesSource 중 본인 표시명 것만 (클레임으로 판정)
+    threads_pub = build_site.enrich_threads(data["threads"], data["messages"])
+    media = build_site.build_media(data["messages"])
     members = load_members()
+    my_messages = build_my_messages(data["messages"], members)
 
     # 발행본에 실제로 등장하는 이미지만 업로드 대상으로 삼는다
     used_images: list[str] = []
@@ -286,10 +300,10 @@ def build_payload() -> dict:
         "chat_room": data["chat_room"],
         "categories": data["categories"],
         "stats": data["stats"],
-        "chunk_count": len(chunks),
-        "chunk_size": CHUNK_SIZE,
+        "media_count": len(media),
+        "my_message_owners": len(my_messages),
         "message_count": len(data["messages"]),
-        "thread_count": len(data["threads"]),
+        "thread_count": len(threads_pub),
         "image_count": len(used_images),
         "file_count": len(used_files),
         "node_types": data["knowledge"].get("node_types", []),
@@ -300,8 +314,9 @@ def build_payload() -> dict:
 
     return {
         "meta": meta,
-        "chunks": chunks,
-        "threads": data["threads"],
+        "threads": threads_pub,
+        "media": media,
+        "my_messages": my_messages,
         "digests": data["digests"],
         "graph": {
             "nodes": data["knowledge"].get("nodes", []),
@@ -327,8 +342,9 @@ def write_payload(payload: dict) -> None:
         )
 
     dump("meta.json", payload["meta"])
-    dump("chunks.json", payload["chunks"])
     dump("threads.json", payload["threads"])
+    dump("media.json", payload["media"])
+    dump("my-messages.json", payload["my_messages"])
     dump("digests.json", payload["digests"])
     dump("graph.json", payload["graph"])
     dump("messages-source.json", payload["messages_source"])
@@ -347,14 +363,24 @@ def main() -> None:
     r = payload["exclusion_report"]
     m = payload["meta"]
     print(
-        "페이로드 생성 완료: 메시지 %d / 청크 %d / 스레드 %d / 노드 %d / 엣지 %d / 이미지 %d"
-        % (m["message_count"], m["chunk_count"], m["thread_count"],
-           len(payload["graph"]["nodes"]), len(payload["graph"]["edges"]),
-           m["image_count"])
+        "페이로드 생성 완료: 원문 %d(비발행) / 스레드 %d / 미디어 %d / 노드 %d / 엣지 %d"
+        % (m["message_count"], m["thread_count"], m["media_count"],
+           len(payload["graph"]["nodes"]), len(payload["graph"]["edges"]))
     )
     if payload["files"]:
         print("첨부 파일 %d건 연결" % len(payload["files"]))
     print("멤버 %d명" % len(payload["members"]))
+    big = [
+        (email, len(json.dumps(items, ensure_ascii=False).encode("utf-8")))
+        for email, items in payload["my_messages"].items()
+    ]
+    for email, size in big:
+        if size > MY_MESSAGES_LIMIT:
+            print("[주의] %s 의 '내 글' 문서가 %dKB — Firestore 한도에 근접합니다."
+                  % (email, size // 1024))
+    if payload["my_messages"]:
+        print("내 글 문서 %d명분 (최대 %dKB)"
+              % (len(big), max(s for _, s in big) // 1024))
     for w in payload["member_warnings"]:
         print("[닉네임 확인] %s" % w)
     if r["dropped_count"]:

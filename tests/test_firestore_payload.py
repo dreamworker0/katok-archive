@@ -26,29 +26,52 @@ class PayloadShapeTest(unittest.TestCase):
         cls.payload = bfp.build_payload()
         cls.messages = _messages()
 
-    def test_chunks_cover_all_messages_in_order(self):
-        seen = []
-        for ch in self.payload["chunks"]:
-            seen.extend(m["id"] for m in ch["messages"])
-        self.assertEqual(len(seen), len(self.messages))
-        self.assertEqual(seen, [m["id"] for m in self.messages])
+    def test_no_raw_message_text_is_published(self):
+        """멤버에게 나가는 발행본에 대화 본문이 섞이면 안 된다.
 
-    def test_chunk_docs_are_well_under_firestore_limit(self):
-        """Firestore 문서 상한은 1MiB. 청크가 이를 넘으면 적재가 실패한다."""
-        for ch in self.payload["chunks"]:
-            size = len(json.dumps(ch, ensure_ascii=False).encode("utf-8"))
-            self.assertLess(size, 700_000, ch["id"])
+        예전에는 chunks 문서에 본문이 실려 나가 화면에 안 보여도 devtools 로
+        전부 읽혔다. 이 방의 가치는 오간 말이 아니라 그 안의 내용이다.
+        """
+        self.assertNotIn("chunks", self.payload)
+        published = json.dumps(
+            {k: self.payload[k] for k in ("meta", "threads", "media", "digests", "graph")},
+            ensure_ascii=False,
+        )
+        # 원문에만 있고 요약에는 없을 법한 문장을 표본으로 확인한다
+        # 링크는 결과물이라 일부러 남긴다. URL 이 든 글은 표본에서 뺀다.
+        sample = [m["text"] for m in self.messages
+                  if m.get("kind") == "text" and not m.get("urls")
+                  and len(m.get("text") or "") > 40][:80]
+        for text in sample:
+            self.assertNotIn(text, published, "원문이 발행본에 남았다: " + text[:40])
 
-    def test_chunk_sequence_is_contiguous(self):
-        seqs = [c["seq"] for c in self.payload["chunks"]]
-        self.assertEqual(seqs, list(range(len(seqs))))
+    def test_published_docs_are_well_under_firestore_limit(self):
+        """스레드·미디어는 한 문서로 묶어 발행한다. 1MiB 한도를 지켜야 한다."""
+        for name in ("threads", "media"):
+            size = len(json.dumps({"items": self.payload[name]},
+                                  ensure_ascii=False).encode("utf-8"))
+            self.assertLess(size, 700_000, "%s 가 너무 큼: %d bytes" % (name, size))
 
     def test_meta_counts_match_payload(self):
         m = self.payload["meta"]
-        self.assertEqual(m["chunk_count"], len(self.payload["chunks"]))
         self.assertEqual(m["thread_count"], len(self.payload["threads"]))
+        self.assertEqual(m["media_count"], len(self.payload["media"]))
         self.assertEqual(m["message_count"], len(self.messages))
         self.assertEqual(m["image_count"], len(self.payload["images"]))
+
+    def test_my_messages_only_hold_own_posts(self):
+        """본인 문서에 남의 글이 섞이면 그대로 유출이다."""
+        members = {m["email"]: set(m["nicknames"]) for m in self.payload["members"]}
+        for email, items in self.payload["my_messages"].items():
+            names = members.get(email, set())
+            for it in items:
+                self.assertIn(it["nickname"], names,
+                              "%s 문서에 %s 의 글이 들어 있다" % (email, it["nickname"]))
+
+    def test_my_messages_fit_in_one_document(self):
+        for email, items in self.payload["my_messages"].items():
+            size = len(json.dumps({"items": items}, ensure_ascii=False).encode("utf-8"))
+            self.assertLess(size, 1_000_000, "%s 문서가 1MiB 를 넘음" % email)
 
     def test_images_listed_exist_on_disk(self):
         for rel in self.payload["images"]:
@@ -63,6 +86,7 @@ class PayloadShapeTest(unittest.TestCase):
         """스레드·그래프는 한 문서로 묶어 발행한다(읽기 절약). 1MiB 한도 확인."""
         for name, obj in (
             ("threads/all", {"items": self.payload["threads"]}),
+            ("media/all", {"items": self.payload["media"]}),
             ("graph/nodes", {"items": self.payload["graph"]["nodes"]}),
             ("graph/edges", {"items": self.payload["graph"]["edges"]}),
         ):
@@ -77,13 +101,13 @@ class PayloadShapeTest(unittest.TestCase):
         """
         reads = (
             1                                   # meta/archive
-            + len(self.payload["chunks"])       # 메시지 청크
             + 1                                 # threads/all
+            + 1                                 # media/all
             + len(self.payload["digests"])      # 요지(주제별 편집 단위라 개별 유지)
             + 2                                 # graph/nodes, graph/edges
             + 1                                 # 본인 members 문서
         )
-        self.assertLessEqual(reads, 60, "전체 로드 읽기가 너무 많음: %d회" % reads)
+        self.assertLessEqual(reads, 30, "전체 로드 읽기가 너무 많음: %d회" % reads)
 
     def test_member_emails_are_lowercased_and_unique(self):
         emails = [m["email"] for m in self.payload["members"]]
@@ -167,10 +191,11 @@ class ExclusionTest(unittest.TestCase):
                 "exclude_message_ids": [], "drop_person_apps": True}
         payload = self._payload_with(excl)
 
-        # 1) 발행 청크에 해당 인물의 메시지가 하나도 없다
-        for ch in payload["chunks"]:
-            for m in ch["messages"]:
-                self.assertNotEqual(m["nickname"], self.victim)
+        # 1) 발행본 어디에도 해당 인물이 남지 않는다
+        for t in payload["threads"]:
+            self.assertNotIn(self.victim, t.get("participants") or [])
+        for m in payload["media"]:
+            self.assertNotEqual(m["nickname"], self.victim)
 
         # 2) 통계 참여자 목록에서도 사라진다
         nicks = [p["nickname"] for p in payload["meta"]["stats"]["participants"]]
@@ -203,8 +228,8 @@ class ExclusionTest(unittest.TestCase):
                 "exclude_message_ids": [], "drop_person_apps": True}
         payload = self._payload_with(excl)
 
-        for ch in payload["chunks"]:
-            for m in ch["messages"]:
+        for items in payload["my_messages"].values():
+            for m in items:
                 self.assertNotIn(token, m.get("text") or "")
         reasons = payload["exclusion_report"]["dropped_by_reason"]
         self.assertIn("keyword:" + token, reasons)
@@ -214,19 +239,20 @@ class ExclusionTest(unittest.TestCase):
         excl = {"exclude_people": [], "exclude_keywords": [],
                 "exclude_message_ids": [target], "drop_person_apps": True}
         payload = self._payload_with(excl)
-        published = {m["id"] for ch in payload["chunks"] for m in ch["messages"]}
-        self.assertNotIn(target, published)
+        for items in payload["my_messages"].values():
+            self.assertNotIn(target, [m["id"] for m in items])
+        self.assertNotIn(target, [m["id"] for m in payload["media"]])
 
     def test_threads_stay_consistent_after_exclusion(self):
         """제외 후에도 스레드가 발행된 메시지만 가리켜야 한다."""
         excl = {"exclude_people": [self.victim], "exclude_keywords": [],
                 "exclude_message_ids": [], "drop_person_apps": True}
         payload = self._payload_with(excl)
-        published = {m["id"] for ch in payload["chunks"] for m in ch["messages"]}
         for t in payload["threads"]:
-            self.assertIn(t["start_msg"], published, t["id"])
-            self.assertIn(t["end_msg"], published, t["id"])
             self.assertGreaterEqual(t["count"], 1)
+            self.assertNotIn(self.victim, t.get("participants") or [])
+            self.assertTrue(t.get("title"))
+            self.assertTrue(t.get("start_date"))
 
     def test_source_collection_keeps_everything(self):
         """원본(관리자 전용)은 제외와 무관하게 전량 보존한다."""
@@ -239,8 +265,7 @@ class ExclusionTest(unittest.TestCase):
         excl = {"exclude_people": [], "exclude_keywords": [],
                 "exclude_message_ids": [], "drop_person_apps": True}
         payload = self._payload_with(excl)
-        published = [m for ch in payload["chunks"] for m in ch["messages"]]
-        self.assertEqual(len(published), len(self.messages))
+        self.assertEqual(payload["exclusion_report"]["kept_count"], len(self.messages))
         self.assertEqual(payload["exclusion_report"]["dropped_count"], 0)
 
 

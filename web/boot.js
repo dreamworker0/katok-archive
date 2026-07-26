@@ -148,27 +148,27 @@
       var meta = metaSnap.data();
 
       return Promise.all([
-        db.collection("chunks").orderBy("seq").get(),
         db.collection("threads").get(),   // threads/all 1문서
+        db.collection("media").get(),     // media/all 1문서
         db.collection("digests").get(),
         db.collection("graph").get(),     // graph/nodes, graph/edges
       ]).then(function (res) {
-        var chunkSnap = res[0], threadSnap = res[1],
+        var threadSnap = res[0], mediaSnap = res[1],
             digestSnap = res[2], graphSnap = res[3];
 
-        var messages = [];
-        chunkSnap.forEach(function (d) {
-          var m = d.data().messages || [];
-          for (var i = 0; i < m.length; i++) messages.push(m[i]);
-        });
-
-        // 스레드는 threads/all 한 문서에 묶여 있다(읽기 절약)
+        // 스레드·미디어는 각각 한 문서에 묶여 있다(읽기 절약)
         var threads = [];
         threadSnap.forEach(function (d) {
           var items = d.data().items;
           if (items) threads = threads.concat(items);
         });
         threads.sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });
+
+        var media = [];
+        mediaSnap.forEach(function (d) {
+          var items = d.data().items;
+          if (items) media = media.concat(items);
+        });
 
         var digests = {};
         digestSnap.forEach(function (d) { digests[d.id] = d.data(); });
@@ -183,8 +183,8 @@
           chat_room: meta.chat_room,
           categories: meta.categories || [],
           stats: meta.stats || {},
-          messages: messages,
           threads: threads,
+          media: media,
           digests: digests,
           knowledge: {
             nodes: graph.nodes,
@@ -210,6 +210,12 @@
     var stamp = function () { return firebase.firestore.FieldValue.serverTimestamp(); };
 
     return {
+      /** 내가 쓴 글 원문. 사람별로 한 문서라 읽기 1회다. */
+      loadMine: function () {
+        return db.collection("myMessages").doc(email).get().then(function (d) {
+          return d.exists ? (d.data().items || []) : [];
+        });
+      },
       load: function () {
         return Promise.all([prefs.get(), dels.get()]).then(function (r) {
           var p = r[0].exists ? r[0].data() : {};

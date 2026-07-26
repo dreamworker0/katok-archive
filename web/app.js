@@ -2,7 +2,8 @@
 (function () {
   "use strict";
   var A = window.ARCHIVE || {};
-  var MSGS = A.messages || [];
+  var THREADS = A.threads || [];
+  var MEDIA = A.media || [];
   var CATS = A.categories || [];
   var STATS = A.stats || {};
   var DIGESTS = A.digests || {};
@@ -206,68 +207,81 @@
     });
   }
 
-  // ---------- 타임라인 ----------
-  function matches(m) {
-    if (state.nick && m.nickname !== state.nick) return false;
+  /* ---------- 주제 흐름 (옛 타임라인) ----------
+   *
+   * 원문을 한 줄씩 늘어놓지 않는다. 이 방의 가치는 오간 말이 아니라 그 안의
+   * 내용이고, 원문을 뿌리면 devtools 로 전부 읽히기까지 한다. 대신 스레드 요약을
+   * 시간순으로 보여주고, 결과물(링크·사진·첨부)은 그대로 붙인다.
+   */
+  function threadMatches(t) {
+    if (state.nick && (t.participants || []).indexOf(state.nick) === -1) return false;
     if (state.q) {
       var q = state.q.toLowerCase();
-      if ((m.text + " " + m.nickname + " " + m.date + " " + m.time).toLowerCase().indexOf(q) === -1) return false;
+      var hay = (t.title + " " + t.summary + " " + (t.participants || []).join(" ") +
+                 " " + t.start_date + " " + (t.links || []).map(function (l) {
+                   return l.url; }).join(" ")).toLowerCase();
+      if (hay.indexOf(q) === -1) return false;
     }
     return true;
   }
+
   function renderTimeline() {
-    var rows = MSGS.filter(matches);
+    var rows = THREADS.filter(threadMatches);
     if (!rows.length) { el.view.innerHTML = '<p class="hint">검색 결과가 없어요.</p>'; return; }
-    var html = [], lastDate = null, lastNick = null;
-    for (var i = 0; i < rows.length; i++) {
-      var m = rows[i];
-      if (m.date !== lastDate) {
-        html.push('<div class="date-sep">' + esc(fmtDate(m.date)) + "</div>");
-        lastDate = m.date; lastNick = null;
+
+    var html = ['<p class="room-sub" style="margin:0 0 12px">주제 ' + rows.length +
+      "개" + (rows.length !== THREADS.length ? " / 전체 " + THREADS.length : "") +
+      " · 대화 원문은 보관만 하고 공개하지 않습니다</p>"];
+    var lastDate = null;
+    rows.forEach(function (t) {
+      if (t.start_date !== lastDate) {
+        html.push('<div class="date-sep">' + esc(fmtDate(t.start_date)) + "</div>");
+        lastDate = t.start_date;
       }
-      var cont = m.nickname === lastNick;
-      lastNick = m.nickname;
-      html.push(renderEntry(m, cont));
-    }
+      html.push(renderThreadCard(t));
+    });
     el.view.innerHTML = html.join("");
-    bindImages(el.view);
-    bindFiles(el.view);
-  }
-  function renderEntry(m, cont) {
-    var inner;
-    if (m.kind === "image") {
-      if (m.image_pending) {
-        inner = '<div class="img-pending">🖼 사진' + (m.image_count > 1 ? " " + m.image_count + "장" : "") + " (수집 대기)</div>";
-      } else {
-        var single = m.images.length === 1 ? " single" : "";
-        inner = '<div class="imgs' + single + '">' +
-          m.images.map(function (s) { return '<img data-img="' + esc(s) + '" alt="" />'; }).join("") + "</div>";
-      }
-    } else if (m.is_file_share) {
-      // 원본을 구한 첨부만 내려받기 버튼이 된다. 나머지는 예전처럼 이름만 남는다 —
-      // 눌러도 아무 일이 없는 링크보다 눌리지 않는 배지가 정직하다.
-      var fname = (m.text || "").replace(/^파일:\s*/, "");
-      if (m.file) {
-        inner = '<button class="file-badge has-file" data-file="' + esc(m.file.path) +
-          '" data-name="' + esc(m.file.name) + '">📎 ' + esc(m.file.name) +
-          ' <span class="file-size">' + fmtSize(m.file.size) + '</span></button>';
-      } else {
-        inner = '<div class="file-badge">📎 ' + linkify(esc(fname)) + "</div>";
-      }
-    } else {
-      inner = '<div class="entry-text">' + highlightText(linkify(esc(m.text)), state.q) + "</div>";
-    }
-    var cat = m.category ? '<span class="cat" style="--c:' + colorFor(m.category) + '">#' +
-      esc(CAT_LABEL[m.category] || m.category) + "</span>" : "";
-    return '<div class="entry' + (cont ? " cont" : "") + '" id="m-' + m.id + '" style="--c:' +
-      colorFor(m.category) + '">' +
-      '<div class="avatar" style="' + avatarStyle(m.nickname) + '">' + esc(initial(m.nickname)) + "</div>" +
-      '<div class="entry-body">' +
-      (cont ? "" : '<div class="entry-head"><span class="nm">' + esc(m.nickname) + '</span><span class="tm">' +
-        esc(m.time) + "</span>" + cat + "</div>") +
-      inner + "</div></div>";
+    bindThreadCards(el.view);
   }
 
+  function renderThreadCard(t) {
+    var col = colorFor(t.category);
+    var people = (t.participants || []).map(function (n) {
+      return '<button class="chip" data-nick="' + esc(n) + '">' + esc(n) + "</button>";
+    }).join("");
+    var links = (t.links || []).slice(0, 6).map(function (l) {
+      return '<div class="tc-link"><a href="' + esc(l.url) + '" target="_blank" ' +
+        'rel="noopener noreferrer">' + esc(l.url) + "</a></div>";
+    }).join("");
+    var more = (t.links || []).length > 6
+      ? '<div class="tc-more">링크 ' + ((t.links || []).length - 6) + "개 더</div>" : "";
+    var range = t.start_date === t.end_date
+      ? t.start_date : t.start_date + " ~ " + t.end_date;
+
+    return '<article class="tcard" id="t-' + esc(t.id) + '" style="--c:' + col + '">' +
+      '<div class="tc-head">' +
+      '<span class="cat" style="--c:' + col + '">#' +
+      esc(CAT_LABEL[t.category] || t.category) + "</span>" +
+      '<span class="tc-meta">' + esc(range) + " · 대화 " + (t.count || 0) + "건" +
+      (t.media_count ? " · 사진·첨부 " + t.media_count : "") + "</span></div>" +
+      '<h3 class="tc-title">' + highlightText(esc(t.title), state.q) + "</h3>" +
+      '<p class="tc-summary">' + highlightText(esc(t.summary || ""), state.q) + "</p>" +
+      (people ? '<div class="tc-people">' + people + "</div>" : "") +
+      (links ? '<div class="tc-links">' + links + more + "</div>" : "") +
+      "</article>";
+  }
+
+  function bindThreadCards(scope) {
+    Array.prototype.forEach.call(scope.querySelectorAll("[data-nick]"), function (b) {
+      b.onclick = function () {
+        el.filter.value = b.getAttribute("data-nick");
+        state.nick = el.filter.value;
+        render();
+      };
+    });
+  }
+
+  /** 스레드 카드로 이동. 원문이 없으므로 메시지가 아니라 주제 단위로 간다. */
   function jumpToTimeline(anchor) {
     state.q = ""; state.nick = ""; el.search.value = ""; el.filter.value = "";
     setView("timeline");
@@ -284,16 +298,17 @@
   // ---------- 갤러리 ----------
   function renderGallery() {
     var items = [];
-    MSGS.forEach(function (m) {
-      if (m.kind === "image" && m.images && m.images.length) {
-        if (state.nick && m.nickname !== state.nick) return;
-        m.images.forEach(function (src) { items.push({ src: src, nick: m.nickname, date: m.date, id: m.id }); });
-      }
+    MEDIA.forEach(function (m) {
+      if (m.kind !== "image" || !m.images || !m.images.length) return;
+      if (state.nick && m.nickname !== state.nick) return;
+      m.images.forEach(function (src) {
+        items.push({ src: src, nick: m.nickname, date: m.date, tid: m.thread_id });
+      });
     });
     if (!items.length) { el.view.innerHTML = '<p class="hint">표시할 이미지가 없어요.</p>'; return; }
     var html = ['<p class="room-sub" style="margin:0 0 12px">보관된 사진 ' + items.length + "장</p>", '<div class="gallery">'];
     items.forEach(function (it) {
-      html.push('<figure data-jump="m-' + it.id + '"><img data-img="' + esc(it.src) +
+      html.push('<figure data-jump="t-' + esc(it.tid || "") + '"><img data-img="' + esc(it.src) +
         '" alt="" /><figcaption>' + esc(it.date) + " · " + esc(it.nick) + "</figcaption></figure>");
     });
     html.push("</div>");
@@ -321,7 +336,7 @@
   }
 
   function renderFiles() {
-    var rows = MSGS.filter(function (m) { return m.is_file_share; });
+    var rows = MEDIA.filter(function (m) { return m.kind === "file"; });
     if (!rows.length) {
       el.view.innerHTML = '<p class="hint">공유된 파일이 없어요.</p>';
       return;
@@ -344,7 +359,7 @@
     } else {
       html.push('<div class="files">');
       shown.forEach(function (m) {
-        var name = m.file ? m.file.name : (m.text || "").replace(/^파일:\s*/, "");
+        var name = m.file ? m.file.name : (m.name || "");
         html.push(
           '<div class="file-card' + (m.file ? "" : " no-src") + '">' +
           '<span class="fc-icon">' + fileIcon(name) + "</span>" +
@@ -357,7 +372,7 @@
             ? '<button class="btn ghost fc-dl" data-file="' + esc(m.file.path) +
               '" data-name="' + esc(m.file.name) + '">받기</button>'
             : '<span class="fc-none" title="원본을 구하지 못했습니다">원본 없음</span>') +
-          '<button class="btn ghost fc-jump" data-jump="m-' + m.id + '">대화</button>' +
+          '<button class="btn ghost fc-jump" data-jump="t-' + esc(m.thread_id || "") + '">주제</button>' +
           "</div></div>"
         );
       });
@@ -476,10 +491,9 @@
     return u.nickname ? [u.nickname] : [];
   }
 
+  /** 내가 쓴 글 원문. 발행본에는 없고 본인 문서(myMessages/{이메일})에서 따로 받는다. */
   function myMessages() {
-    var names = myNicknames();
-    if (!names.length) return [];
-    return MSGS.filter(function (m) { return names.indexOf(m.nickname) !== -1; });
+    return (state.mine && state.mine.items) || [];
   }
 
   function canManageMine() {
@@ -509,8 +523,13 @@
     }
     if (!state.mine) {
       el.view.innerHTML = '<p class="hint">설정을 불러오는 중…</p>';
-      state.session.requests.load().then(
-        function (data) { state.mine = data; if (state.view === "mine") renderMine(); },
+      var api = state.session.requests;
+      Promise.all([api.load(), api.loadMine()]).then(
+        function (r) {
+          state.mine = r[0];
+          state.mine.items = r[1];
+          if (state.view === "mine") renderMine();
+        },
         function (e) {
           el.view.innerHTML = '<p class="hint">설정을 불러오지 못했습니다: ' +
             esc(e.message || String(e)) + "</p>";
@@ -954,7 +973,8 @@
   function init(session) {
     // boot.js 가 Firestore 로드를 끝낸 뒤 호출하므로 여기서 다시 읽는다
     A = window.ARCHIVE || {};
-    MSGS = A.messages || [];
+    THREADS = A.threads || [];
+    MEDIA = A.media || [];
     CATS = A.categories || [];
     STATS = A.stats || {};
     DIGESTS = A.digests || {};
@@ -1019,5 +1039,6 @@
   // 보호모드(hosting)에서는 boot.js 가 로그인·데이터 로드를 끝낸 뒤 start() 를 부른다.
   // 로컬 미리보기(site/)에서는 data.js 가 이미 window.ARCHIVE 를 채워두므로 바로 시작.
   window.ArchiveApp = { start: init };
-  if (window.ARCHIVE && window.ARCHIVE.messages) init(null);
+  // 원문(messages)은 더 이상 싣지 않는다. 스레드 요약이 있으면 데이터가 준비된 것이다.
+  if (window.ARCHIVE && window.ARCHIVE.threads) init(null);
 })();

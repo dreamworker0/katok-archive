@@ -208,7 +208,8 @@ async function uploadImages(bucket, images) {
 
 async function main() {
   const meta = readPayload("meta.json");
-  const chunks = readPayload("chunks.json");
+  const media = readPayload("media.json");
+  const mine = readPayload("my-messages.json");
   const threads = readPayload("threads.json");
   const digests = readPayload("digests.json");
   const graph = readPayload("graph.json");
@@ -219,11 +220,13 @@ async function main() {
 
   const digestDocs = Object.keys(digests).map((k) => ({ id: k, ...digests[k] }));
   const sourceDocs = source.map((m) => ({ id: m.id, ...m }));
-  const docCount = 1 + chunks.length + 1 + digestDocs.length + 2;
+  const mineDocs = Object.keys(mine).map((email) => ({ id: email, items: mine[email] }));
+  const docCount = 1 + 1 + 1 + digestDocs.length + 2;   // meta·threads·media·digests·graph
   console.log("적재 계획 (문서 수)");
-  console.log(`  meta 1 / chunks ${chunks.length} / threads 1 (${threads.length}건 묶음)`);
+  console.log(`  meta 1 / threads 1 (${threads.length}건 묶음) / media 1 (${media.length}건 묶음)`);
   console.log(`  digests ${digestDocs.length} / graph 2`);
   console.log(`  members ${members.length}명 — 적재하지 않음 (Firestore 가 주인)`);
+  console.log(`  myMessages ${mineDocs.length}명분 (본인만 읽음)`);
   console.log(`  messagesSource ${sourceDocs.length} (관리자 전용 원본)`);
   console.log(`  총 쓰기 ${docCount + sourceDocs.length}건`);
   console.log(`  → 멤버가 전체를 읽을 때: ${docCount + 1}회 읽기`);
@@ -246,10 +249,13 @@ async function main() {
 
   console.log("\nFirestore 적재");
   await syncCollection(db, "meta", [{ id: "archive", ...meta, updatedAt: new Date().toISOString() }]);
-  await syncCollection(db, "chunks", chunks);
-  // 스레드는 165건이지만 전부 합쳐 58KB뿐이라 한 문서로 발행한다.
-  // 개별 문서로 두면 전체 로드에 165회 읽기가 추가된다.
+  // 스레드 요약이 멤버가 보는 본문이다. 165건이지만 합쳐 83KB뿐이라 한 문서로
+  // 발행한다 — 개별 문서로 두면 전체 로드에 165회 읽기가 추가된다.
   await syncCollection(db, "threads", [{ id: "all", items: threads }]);
+  await syncCollection(db, "media", [{ id: "all", items: media }]);
+  await syncCollection(db, "myMessages", mineDocs);
+  // chunks 는 더 이상 발행하지 않는다. 예전 적재분을 지운다.
+  await syncCollection(db, "chunks", []);
   await syncCollection(db, "digests", digestDocs);
   await syncCollection(db, "graph", [
     { id: "nodes", items: graph.nodes },
