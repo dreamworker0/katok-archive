@@ -28,7 +28,7 @@ import shutil
 from collections import Counter
 from pathlib import Path
 
-from scripts import build_site
+from scripts import build_site, member_requests
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
@@ -257,8 +257,20 @@ def build_payload() -> dict:
     knowledge = build_site._read_json(OUTPUT / "knowledge.json")
     digest_prose = build_site._read_json(OUTPUT / "topic-digests.json")
 
+    # 멤버가 웹에서 낸 요청을 손으로 쓴 제외 규칙 위에 얹는다. 삭제 요청은 반드시
+    # 소유권을 확인한 뒤에 반영한다 — 보안 규칙만으로는 남의 글을 지우려는 요청을
+    # 막을 수 없다. member_requests 모듈 설명 참고.
     exclusions = load_exclusions()
+    requests = member_requests.load_requests()
+    resolved = member_requests.verify_ownership(requests, messages_raw)
+    exclusions = member_requests.merge_into_exclusions(exclusions, resolved)
+
     kept, report = apply_exclusions(messages_raw, exclusions)
+    report["member_requests"] = {
+        "applied_people": resolved["exclude_people"],
+        "applied_message_ids": len(resolved["exclude_message_ids"]),
+        "rejected": resolved["rejected"],
+    }
     kept_ids = {m["id"] for m in kept}
 
     topics_pruned = prune_topics(topics, kept_ids)
@@ -360,6 +372,14 @@ def main() -> None:
         print("제외됨 %d건 %s" % (r["dropped_count"], r["dropped_by_reason"]))
     else:
         print("제외 규칙 적용 결과: 제외된 메시지 없음")
+
+    mr = r["member_requests"]
+    if mr["applied_people"] or mr["applied_message_ids"]:
+        print("멤버 요청 반영: 발행 제외 %d명, 개별 메시지 %d건"
+              % (len(mr["applied_people"]), mr["applied_message_ids"]))
+    for rej in mr["rejected"]:
+        # 남의 글을 지우려는 요청은 조용히 넘기지 않는다
+        print("[요청 거부] %s → %s (%s)" % (rej["email"], rej["message_id"], rej["reason"]))
     if not payload["members"]:
         print("[주의] config/members.json 이 없어 아무도 접근할 수 없는 규칙이 생성되었습니다.")
 

@@ -76,6 +76,45 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ── 수집 동의: 본인이 정하고 본인만 바꾼다 ──
+    //
+    // public       기본. 수집·발행 모두 한다.
+    // unpublished  수집은 하되 발행본에서 뺀다. 되돌리면 다시 보인다.
+    // none         수집 자체를 안 한다. 되돌려도 그 기간은 영영 비어 있다.
+    //
+    // 실제 반영은 매일 23:40 자동화가 파이프라인을 다시 돌리며 한다.
+    match /preferences/{prefEmail} {
+      allow get:  if signedIn() && (callerEmail() == prefEmail || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isMember()
+        && callerEmail() == prefEmail
+        && request.resource.data.keys().hasOnly(['collection', 'updatedAt'])
+        && request.resource.data.collection in ['public', 'unpublished', 'none']
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    // ── 삭제 요청: 본인 글만 ──
+    //
+    // 규칙은 "문서를 본인만 쓴다"까지만 보장한다. 목록에 남의 메시지 ID 를 섞어
+    // 넣는 것은 규칙으로 막을 수 없다(다른 문서를 조회해야 하므로). 그래서 소유권
+    // 검증은 반영 단계에서 messages.jsonl 과 대조해 한 번 더 한다.
+    // scripts/member_requests.py 의 verify_ownership 를 함께 볼 것.
+    match /deletionRequests/{reqEmail} {
+      allow get:  if signedIn() && (callerEmail() == reqEmail || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isMember()
+        && callerEmail() == reqEmail
+        && request.resource.data.keys().hasOnly(['messageIds', 'allMessages', 'requestedAt'])
+        && request.resource.data.messageIds is list
+        && request.resource.data.messageIds.size() <= 1000
+        && request.resource.data.allMessages is bool
+        && request.resource.data.requestedAt == request.time;
+      // 요청 철회는 본인이 할 수 있어야 한다 — 잘못 눌렀을 때 되돌릴 길이 필요하다.
+      // 반영이 끝난 뒤 정리하는 것은 Admin SDK 가 한다.
+      allow delete: if isMember() && callerEmail() == reqEmail;
+    }
+
     // 그 밖의 모든 경로 차단
     match /{document=**} { allow read, write: if false; }
   }

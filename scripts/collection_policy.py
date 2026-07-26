@@ -36,16 +36,29 @@ DEFAULT_KEYWORDS = ["[제외]", "［제외］"]
 
 
 def load_policy() -> dict:
-    """수집 정책을 읽는다. 파일이 없으면 기본 키워드만 적용한다."""
-    if not POLICY_PATH.exists():
-        return {"keywords": list(DEFAULT_KEYWORDS), "opt_out_people": []}
-    raw = build_site._read_json(POLICY_PATH)
-    keywords = raw.get("keywords")
-    if keywords is None:
+    """수집 정책을 읽는다. 파일이 없으면 기본 키워드만 적용한다.
+
+    멤버가 웹에서 '수집 거부'로 바꾼 사람도 여기에 합쳐진다. 손으로 쓴 설정과
+    본인 의사 표시는 둘 다 존중해야 하므로 합집합으로 둔다.
+    """
+    if POLICY_PATH.exists():
+        raw = build_site._read_json(POLICY_PATH)
+        keywords = raw.get("keywords")
+        if keywords is None:
+            keywords = list(DEFAULT_KEYWORDS)
+        opt_out = {p.strip() for p in (raw.get("opt_out_people") or []) if p.strip()}
+    else:
         keywords = list(DEFAULT_KEYWORDS)
+        opt_out = set()
+
+    # 순환 임포트를 피하려고 함수 안에서 부른다 (member_requests → build_site → ...)
+    from scripts import member_requests
+
+    opt_out |= set(member_requests.collection_opt_outs(member_requests.load_requests()))
+
     return {
         "keywords": [k for k in keywords if k],
-        "opt_out_people": [p.strip() for p in (raw.get("opt_out_people") or []) if p.strip()],
+        "opt_out_people": sorted(opt_out),
     }
 
 

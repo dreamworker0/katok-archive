@@ -202,6 +202,43 @@ node scripts/upload_firestore.js
 > 과거에 이미 수집된 글은 그대로 남는다. 그것까지 내리려면 `exclusions.json` 의
 > `exclude_people` 에도 넣어야 한다.
 
+### 멤버가 직접 정하는 경우
+
+멤버는 웹에서 수집 동의를 3단계로 고르고 자기 글 삭제를 요청할 수 있다.
+요청은 Firestore 에 쌓이고 **매일 23:40 자동화가 파이프라인을 다시 돌리며 반영한다.**
+
+| 설정 | 뜻 | 반영되는 곳 |
+|---|---|---|
+| `public` | 기본. 수집·발행 모두 한다 | — |
+| `unpublished` | 수집은 하되 발행본에서 뺀다 | `exclude_people` |
+| `none` | 수집 자체를 안 한다 | `collection-policy` 의 `opt_out_people` |
+
+```bash
+node scripts/sync_member_requests.js            # Firestore → output/member-requests.json
+node scripts/sync_member_requests.js --dry-run  # 내려받을 내용만 확인
+```
+
+**소유권은 반영 직전에 다시 확인한다.** 보안 규칙은 "본인 문서에만 쓴다"까지만
+보장하고, 그 문서 안에 남의 메시지 ID 를 적는 것은 막지 못한다(규칙에서 다른
+문서를 조회할 수 없다). 그래서 `messages.jsonl` 과 대조해 본인 글이 아닌 ID 는
+버리고 발행 로그에 남긴다.
+
+```
+[요청 거부] someone@gmail.com → msg-000417 (본인 메시지가 아님)
+```
+
+`nickname` 이 없는 멤버의 요청은 어느 메시지가 그 사람 것인지 알 수 없어
+반영되지 않는다 — sync 단계에서 경고가 뜨므로 `members.json` 을 채운다.
+
+> **반영 시점 주의:** 일일 자동화는 새 메시지가 0건이면 발행을 건너뛴다.
+> 그대로 두면 조용한 날 들어온 삭제 요청이 묻히므로, **요청이 바뀐 것도 발행
+> 사유**로 넣었다. 급하면 아래를 직접 돌려 즉시 반영한다.
+> ```bash
+> node scripts/sync_member_requests.js
+> python -m scripts.build_firestore_payload
+> node scripts/upload_firestore.js --skip-images
+> ```
+
 ---
 
 **로컬 미리보기** (로그인 없이, 배포와 무관)
