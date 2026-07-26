@@ -334,6 +334,63 @@
     return cells.map(function (c) { return c.trim(); });
   }
 
+  /* 본문에 이미 적힌 주소를 링크로 만든다.
+   *
+   * 보고서를 쓰다 보면 "urimal.vercel.app 을 공개했다"처럼 주소를 글 안에
+   * 적게 된다. 그런데 같은 링크가 카드 아래 목록에도 또 나와서 두 번 보였다.
+   * ==내용 중에 나오면 내용 중에 넣는 것이 낫다== — 본문에서 링크로 걸고
+   * 아래 목록에서는 뺀다.
+   *
+   * 이미 <a> 나 <code> 안에 있는 글자는 건드리지 않는다. 태그 경계를 세어
+   * 판단하므로 링크 안의 링크나 코드 속 주소가 깨지지 않는다.
+   */
+  function linkifyHosts(html, map) {
+    if (!map || !map.length) return html;
+    var parts = html.split(/(<[^>]+>)/);
+    var depth = 0;
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i];
+      if (!p) continue;
+      if (p[0] === "<") {
+        if (/^<(a|code)\b/i.test(p)) depth++;
+        else if (/^<\/(a|code)>/i.test(p)) depth = Math.max(0, depth - 1);
+        continue;
+      }
+      if (depth) continue;
+      map.forEach(function (m) {
+        if (p.indexOf(m.host) === -1) return;
+        p = p.split(m.host).join(
+          '<a href="' + esc(m.url) + '" target="_blank" rel="noopener noreferrer">' +
+          esc(m.host) + "</a>");
+      });
+      parts[i] = p;
+    }
+    return parts.join("");
+  }
+
+  /** 링크의 호스트. www 는 떼어 본문 표기와 맞춘다. */
+  function hostOf(url) {
+    var m = /^https?:\/\/([^/?#]+)/.exec(String(url || ""));
+    return m ? m[1].replace(/^www\./, "") : "";
+  }
+
+  /** 본문에 주소가 적힌 링크와 그렇지 않은 링크로 가른다. */
+  function splitLinks(t) {
+    var rep = t.report || "", inline = [], rest = [], seen = {};
+    (t.links || []).forEach(function (l) {
+      var h = hostOf(l.url);
+      if (h && rep.indexOf(h) !== -1 && !seen[h]) {
+        seen[h] = 1;
+        inline.push({ host: h, url: l.url });
+      } else {
+        rest.push(l);
+      }
+    });
+    // 긴 호스트를 먼저 바꿔야 짧은 것이 긴 것 안을 잘라먹지 않는다
+    inline.sort(function (a, b) { return b.host.length - a.host.length; });
+    return { inline: inline, rest: rest };
+  }
+
   function renderMarkdown(src) {
     var lines = String(src || "").replace(/\r\n/g, "\n").split("\n");
     var out = [], i = 0;
@@ -412,7 +469,7 @@
    * 훑을 때는 방해가 되므로 접어 두고, 검색 중이면 어디가 걸렸는지 보이도록
    * 펼쳐 둔다. 사진·첨부는 media 발행본에서 thread_id 로 찾아 붙인다.
    */
-  function detailBlock(t) {
+  function detailBlock(t, inlineLinks) {
     if (!t.report) return "";
     var open = !!state.q;
     var n = mediaOf(t.id).length;
@@ -423,7 +480,7 @@
       '<button class="tc-dl" type="button" title="이 보고서를 .md 파일로 저장합니다">' +
       "⬇ .md</button></div>" +
       '<div class="tc-detail-body md">' +
-      highlightText(renderMarkdown(t.report), state.q) +
+      highlightText(linkifyHosts(renderMarkdown(t.report), inlineLinks), state.q) +
       (n ? '<div class="tc-media" data-media="' + esc(t.id) + '"></div>' : "") +
       "</div></div>";
   }
@@ -495,12 +552,14 @@
     var people = (t.participants || []).map(function (n) {
       return '<button class="chip" data-nick="' + esc(n) + '">' + esc(n) + "</button>";
     }).join("");
-    var links = (t.links || []).slice(0, 6).map(function (l) {
+    // 본문에 주소가 적힌 링크는 본문에서 걸고, 아래 목록에는 나머지만 남긴다
+    var lk = splitLinks(t);
+    var links = lk.rest.slice(0, 6).map(function (l) {
       return '<div class="tc-link"><a href="' + esc(l.url) + '" target="_blank" ' +
         'rel="noopener noreferrer">' + esc(l.url) + "</a></div>";
     }).join("");
-    var more = (t.links || []).length > 6
-      ? '<div class="tc-more">링크 ' + ((t.links || []).length - 6) + "개 더</div>" : "";
+    var more = lk.rest.length > 6
+      ? '<div class="tc-more">링크 ' + (lk.rest.length - 6) + "개 더</div>" : "";
     var range = t.start_date === t.end_date
       ? t.start_date : t.start_date + " ~ " + t.end_date;
 
@@ -517,7 +576,7 @@
             return '<button class="chip kw" data-kw="' + esc(k) + '">' +
               esc(k) + "</button>"; }).join("") + "</div>"
         : "") +
-      detailBlock(t) +
+      detailBlock(t, lk.inline) +
       (people ? '<div class="tc-people">' + people + "</div>" : "") +
       (links ? '<div class="tc-links">' + links + more + "</div>" : "") +
       // 관리자에게만 보인다. 잡담 주제를 보다가 그 자리에서 뺄 수 있어야 한다.
@@ -597,6 +656,9 @@
     });
   }
 
+  /** 사진·첨부 정렬 키. 같은 날 여러 건이라 시각까지 봐야 순서가 맞는다. */
+  function mediaKey(m) { return (m.date || "") + " " + (m.time || ""); }
+
   // ---------- 갤러리 ----------
   function renderGallery() {
     var items = [];
@@ -604,10 +666,13 @@
       if (m.kind !== "image" || !m.images || !m.images.length) return;
       if (state.nick && m.nickname !== state.nick) return;
       m.images.forEach(function (src) {
-        items.push({ src: src, nick: m.nickname, date: m.date, tid: m.thread_id });
+        items.push({ src: src, nick: m.nickname, date: m.date, time: m.time,
+                     tid: m.thread_id });
       });
     });
     if (!items.length) { el.view.innerHTML = '<p class="hint">표시할 이미지가 없어요.</p>'; return; }
+    // 최근 것부터. 어제 무엇이 올라왔는지가 가장 궁금하다.
+    items.sort(function (a, b) { return mediaKey(b).localeCompare(mediaKey(a)); });
     var list = state.gview === "list";
     var html = ['<div class="gal-head">',
       '<p class="room-sub">보관된 사진 ' + items.length + "장</p>",
@@ -665,6 +730,8 @@
       var name = m.file ? m.file.name : (m.text || "");
       return (name + " " + m.nickname + " " + m.date).toLowerCase().indexOf(q) !== -1;
     });
+    // 최근 첨부부터
+    shown.sort(function (a, b) { return mediaKey(b).localeCompare(mediaKey(a)); });
 
     var html = ['<p class="room-sub" style="margin:0 0 12px">공유된 파일 ' + rows.length +
       "개 · 원본 보관 " + have.length + "개" +
@@ -715,6 +782,150 @@
       '<span class="val">' + value + "</span></div>";
   }
   function card(v, k) { return '<div class="stat-card"><div class="v">' + (v == null ? "-" : v) + '</div><div class="k">' + esc(k) + "</div></div>"; }
+  /* ---------- 나의 기록 ----------
+   *
+   * 로그인한 본인이 이 방에 무엇을 남겼는지 정리해 보여 준다. 남의 것은
+   * 보이지 않는다 — 참여자별 순위표를 없앤 것과 같은 이유다. 서로를 줄 세우면
+   * 적게 쓴 사람이 위축된다. 대신 각자 자기 발자취를 본다.
+   *
+   * 발행본(threads·media)만으로 계산한다. 별도 조회가 없어 빠르고, 본인 원문을
+   * 불러오지 않으므로 통계 탭에서 원문이 오갈 일도 없다.
+   */
+  function myFootprint() {
+    var names = myNicknames();
+    if (!names.length) return null;
+    var mine = function (n) { return names.indexOf(n) !== -1; };
+
+    var joined = THREADS.filter(function (t) {
+      return (t.participants || []).some(mine);
+    });
+    if (!joined.length) return null;
+
+    var byCat = {}, mates = {}, first = null, last = null;
+    joined.forEach(function (t) {
+      byCat[t.category] = (byCat[t.category] || 0) + 1;
+      (t.participants || []).forEach(function (p) { if (!mine(p)) mates[p] = 1; });
+      if (!first || t.start_date < first) first = t.start_date;
+      if (!last || t.end_date > last) last = t.end_date;
+    });
+    var cats = Object.keys(byCat)
+      .map(function (c) { return { id: c, label: CAT_LABEL[c] || c, n: byCat[c] }; })
+      .sort(function (a, b) { return b.n - a.n; });
+
+    var links = 0;
+    THREADS.forEach(function (t) {
+      (t.links || []).forEach(function (l) { if (mine(l.nickname)) links++; });
+    });
+    var photos = 0, files = 0;
+    MEDIA.forEach(function (m) {
+      if (!mine(m.nickname)) return;
+      if (m.kind === "image") photos += (m.images ? m.images.length : m.count || 1);
+      else files++;
+    });
+
+    var msgs = 0;
+    (STATS.participants || []).forEach(function (p) {
+      if (mine(p.nickname)) msgs += p.message_count;
+    });
+
+    return { names: names, msgs: msgs, joined: joined.length, total: THREADS.length,
+             cats: cats, mates: Object.keys(mates).length,
+             links: links, photos: photos, files: files, first: first, last: last };
+  }
+
+  /** 숫자에서 읽히는 것만 적는다. 근거 없는 칭찬은 넣지 않는다. */
+  function myHighlights(f) {
+    var out = [];
+    var share = f.joined / Math.max(1, f.total);
+    if (share >= 0.5) {
+      out.push("이 방의 주제 <b>절반 이상</b>에 함께하셨습니다. 오간 이야기의 큰 줄기를 " +
+        "곁에서 지켜본 셈입니다.");
+    } else if (share >= 0.2) {
+      out.push("전체 주제의 <b>" + Math.round(share * 100) + "%</b>에 함께하셨습니다.");
+    }
+    if (f.cats.length >= 5) {
+      out.push("<b>" + f.cats.length + "개 분야</b>에 걸쳐 이야기하셨습니다. 한쪽에 머물지 " +
+        "않고 폭넓게 오가셨습니다.");
+    } else if (f.cats.length) {
+      out.push("<b>" + f.cats[0].label + "</b>을(를) 중심으로 이야기하셨습니다.");
+    }
+    if (f.links >= 10) {
+      out.push("자료 링크를 <b>" + f.links + "건</b> 나누셨습니다. 혼자 찾은 것을 " +
+        "그때그때 꺼내 놓으신 기록입니다.");
+    }
+    if (f.photos + f.files >= 10) {
+      out.push("사진과 파일을 <b>" + (f.photos + f.files) + "개</b> 올리셨습니다. " +
+        "말로만 하지 않고 결과물을 보여 주셨습니다.");
+    }
+    if (f.mates >= 10) {
+      out.push("<b>" + f.mates + "명</b>과 같은 자리에서 이야기하셨습니다.");
+    }
+    if (!out.length) {
+      out.push("남기신 것이 이 방의 기록에 함께 담겨 있습니다.");
+    }
+    return out;
+  }
+
+  function myReport() {
+    var f = myFootprint();
+    if (!f) return "";
+    var top = f.cats.slice(0, 4).map(function (c) {
+      return '<span class="chip dot" style="--c:' + colorFor(c.id) + '">' +
+        esc(c.label) + " " + c.n + "</span>";
+    }).join("");
+    return '<div class="panel mypanel">' +
+      "<h3>나의 기록 — " + esc(f.names.join(", ")) + "</h3>" +
+      '<p class="my-lead">' + esc(f.first) + " 부터 " + esc(f.last) + " 까지, " +
+      "<b>" + f.joined + "개 주제</b>에 함께하며 <b>" + f.msgs + "건</b>을 남기셨습니다.</p>" +
+      '<div class="my-nums">' +
+      numCell(f.joined + " / " + f.total, "함께한 주제") +
+      numCell(f.msgs, "남긴 메시지") +
+      numCell(f.links, "나눈 링크") +
+      numCell(f.photos, "올린 사진") +
+      numCell(f.files, "올린 파일") +
+      numCell(f.mates, "함께한 사람") +
+      "</div>" +
+      (top ? '<div class="my-cats">' + top + "</div>" : "") +
+      "<ul class='my-notes'>" +
+      myHighlights(f).map(function (s) { return "<li>" + s + "</li>"; }).join("") +
+      "</ul>" +
+      '<p class="hint" style="text-align:left;padding:6px 0 0;font-size:12px">' +
+      "이 칸은 <b>본인에게만</b> 보입니다. 다른 사람의 기록은 볼 수 없습니다.</p></div>";
+  }
+  function numCell(v, k) {
+    return '<div class="my-num"><div class="v">' + v + '</div><div class="k">' + esc(k) + "</div></div>";
+  }
+
+  /** 여러 색이 쌓인 막대. 한 달 안에서 어떤 주제가 오갔는지 색으로 보인다. */
+  function stackBar(label, segs, total, max) {
+    var pct = max ? (total / max) * 100 : 0;
+    var inner = segs.map(function (s) {
+      return '<span class="seg" style="width:' + (s.n / total * 100) + "%;background:" +
+        colorFor(s.id) + '" title="' + esc(s.label + " " + s.n) + '"></span>';
+    }).join("");
+    return '<div class="bar-row"><span class="lab">' + esc(label) + "</span>" +
+      '<span class="track"><span class="fill stack" style="width:' + pct + '%">' +
+      inner + "</span></span>" +
+      '<span class="val">' + total + "</span></div>";
+  }
+
+  /** 월별 × 주제별 집계. 스레드의 시작 달을 그 스레드의 달로 본다. */
+  function monthlyByCategory() {
+    var by = {};
+    THREADS.forEach(function (t) {
+      var m = (t.start_date || "").slice(0, 7);
+      if (!m) return;
+      (by[m] = by[m] || {})[t.category] = (by[m][t.category] || 0) + (t.count || 0);
+    });
+    return Object.keys(by).sort().map(function (m) {
+      var segs = Object.keys(by[m])
+        .map(function (c) { return { id: c, label: CAT_LABEL[c] || c, n: by[m][c] }; })
+        .sort(function (a, b) { return b.n - a.n; });
+      return { month: m, segs: segs,
+               total: segs.reduce(function (s, x) { return s + x.n; }, 0) };
+    });
+  }
+
   function renderStats() {
     var t = STATS.totals || {}, html = [];
     html.push('<div class="stat-cards">' + card(t.messages, "메시지") + card(t.participants, "참여자") +
@@ -722,21 +933,22 @@
       card(t.downloaded_images, "보관 사진") + card(t.urls, "링크") + "</div>");
     html.push('<p class="room-sub" style="margin:-6px 0 16px">기간 ' + esc(t.date_start || "") + " ~ " + esc(t.date_end || "") + "</p>");
 
-    var ps = STATS.participants || [], top = ps.slice(0, 15);
-    var restN = ps.slice(15).reduce(function (s, p) { return s + p.message_count; }, 0);
-    var maxP = top.length ? top[0].message_count : 1;
-    var pb = top.map(function (p) { return bar(p.nickname, p.message_count, maxP, "var(--accent)"); }).join("");
-    if (restN) pb += bar("그 외 " + (ps.length - 15) + "명", restN, maxP, "var(--ink-faint)");
-    html.push('<div class="panel"><h3>참여자별 메시지 (상위 15)</h3>' + pb + "</div>");
-
-    var mo = STATS.monthly || [], maxM = mo.reduce(function (s, x) { return Math.max(s, x.count); }, 1);
-    html.push('<div class="panel"><h3>월별 활동</h3>' + mo.map(function (x) { return bar(x.month, x.count, maxM, "var(--accent)"); }).join("") + "</div>");
-
+    // 주제 분포를 먼저 — 이 방이 무엇을 이야기했는지가 먼저 보여야 한다
     var cs = (STATS.categories || []).slice().sort(function (a, b) { return b.messages - a.messages; });
     var maxC = cs.reduce(function (s, x) { return Math.max(s, x.messages); }, 1);
     html.push('<div class="panel"><h3>주제 분포</h3>' + cs.map(function (x) {
       return bar(x.label, x.messages, maxC, colorFor(x.id));
     }).join("") + "</div>");
+
+    // 월별 활동은 주제 색을 쌓아 보여 준다. 그 달에 무엇이 오갔는지까지 읽힌다.
+    var mc = monthlyByCategory();
+    var maxM = mc.reduce(function (s, x) { return Math.max(s, x.total); }, 1);
+    html.push('<div class="panel"><h3>월별 활동</h3>' +
+      mc.map(function (x) { return stackBar(x.month, x.segs, x.total, maxM); }).join("") +
+      '<p class="hint" style="padding:8px 0 0;text-align:left;font-size:12px">' +
+      "막대의 색은 주제입니다. 마우스를 올리면 건수가 보입니다.</p></div>");
+
+    html.push(myReport());
     el.view.innerHTML = html.join("");
   }
 

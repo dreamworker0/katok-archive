@@ -133,6 +133,40 @@ def build_digests(
     return digests
 
 
+def weigh_knowledge(knowledge: dict, messages: list[dict]) -> list[str]:
+    """지식 노드의 크기를 실제 언급량으로 다시 매긴다. 한 번도 안 나온 이름을 돌려준다.
+
+    예전에는 종류마다 값이 고정이었다 — 주제 26, 앱 13, 도구 10. 그래서 관계망에서
+    노드 크기가 아무것도 말해 주지 않았다. 차량 운행일지(수십 번 언급)와 한 번
+    스치듯 나온 앱이 같은 크기였다.
+
+    이제 원문에서 query·label 이 몇 번 나왔는지 세어 크기를 준다. 사람 노드는
+    이미 발언량으로 계산돼 있으므로 건드리지 않는다.
+    """
+    hay = [
+        ((m.get("text") or "") + " " + " ".join(m.get("urls") or [])).lower()
+        for m in messages
+    ]
+    cat_msgs: Counter[str] = Counter(m.get("category") for m in messages if m.get("category"))
+
+    stale = []
+    for n in knowledge.get("nodes", []):
+        if n["type"] == "person":
+            continue
+        if n["type"] == "topic":
+            # 주제는 그 분류에 실제로 담긴 메시지 수로
+            c = cat_msgs.get(n["category"], 0)
+            n["value"] = round(8 + min(22, (c ** 0.5) * 1.1), 1)
+            continue
+        needles = [x.lower() for x in (n.get("query"), n["label"]) if x]
+        hits = sum(1 for h in hay if any(nd in h for nd in needles))
+        if hits == 0:
+            stale.append("%s(%s)" % (n["label"], n["type"]))
+        # 1번 언급 → 4.5, 10번 → 9, 50번 → 16 정도. 제곱근으로 눌러 편차를 줄인다
+        n["value"] = round(3.5 + min(18, (hits ** 0.5) * 1.8), 1)
+    return stale
+
+
 def enrich_threads(threads: list[dict], messages: list[dict]) -> list[dict]:
     """스레드에 링크와 미디어 개수를 붙인다.
 
@@ -366,6 +400,11 @@ def build_data(
               % (len(thin), ", ".join("%s(%d건 %d자<%d)" % x for x in thin[:5])))
 
     knowledge = knowledge or {"nodes": [], "edges": [], "node_types": [], "edge_types": []}
+    # 관계망 노드 크기를 실제 언급량으로 다시 매긴다
+    stale = weigh_knowledge(knowledge, out_messages)
+    if stale:
+        print("[관계망] 원문에 한 번도 안 나오는 노드 %d개: %s"
+              % (len(stale), ", ".join(stale[:12])))
     digests = build_digests(
         out_messages, threads_meta, topics, knowledge, digest_prose or {}
     )

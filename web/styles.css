@@ -140,16 +140,29 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
   border-radius: 8px; padding: 5px 9px; font-size: 12px; cursor: pointer; }
 .graph-toolbar button:hover { color: var(--ink); }
 .graph-toolbar button.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
-#graphSvg { display: block; width: 100%; height: 66vh; min-height: 420px; touch-action: none; cursor: grab; background:
-  radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--accent-soft) 40%, transparent), transparent 70%); }
+#graphSvg { display: block; width: 100%; height: 66vh; min-height: 420px; touch-action: none; cursor: grab;
+  background: radial-gradient(ellipse at 50% 42%,
+    color-mix(in srgb, var(--accent-soft) 55%, transparent) 0%,
+    color-mix(in srgb, var(--surface-2) 70%, transparent) 45%, transparent 75%); }
 #graphSvg.grabbing { cursor: grabbing; }
-.gedge { stroke: var(--line-strong); stroke-opacity: .55; }
-.gedge.hl { stroke: var(--accent); stroke-opacity: .9; }
-.gnode { cursor: pointer; }
-.gnode text { font-size: 10px; fill: var(--ink-soft); paint-order: stroke; stroke: var(--surface);
-  stroke-width: 3px; stroke-linejoin: round; pointer-events: none; }
-.gnode.dim { opacity: .12; }
-.gedge.dim { opacity: .05; }
+
+/* 간선 — 얇고 옅게. 강조되면 색이 들어오며 굵어진다 */
+.gedge { fill: none; stroke: var(--line-strong); stroke-opacity: .45; stroke-width: 1;
+  stroke-linecap: round; transition: stroke .18s ease, stroke-opacity .18s ease,
+  stroke-width .18s ease, opacity .18s ease; }
+.gedge.hl { stroke: var(--accent); stroke-opacity: .85; stroke-width: 2; }
+.gedge.dim { opacity: .06; }
+
+.gnode { cursor: pointer; transition: opacity .18s ease; }
+.gnode:hover circle, .gnode:hover rect { transform-box: fill-box; transform-origin: center;
+  transform: scale(1.18); }
+.gnode circle, .gnode rect { transition: transform .14s ease; }
+.gnode.dim { opacity: .1; }
+/* 글자는 배경을 얇게 깔아 겹쳐도 읽힌다 */
+.gnode text { font-size: 10px; font-weight: 600; fill: var(--ink-soft);
+  paint-order: stroke; stroke: var(--surface); stroke-width: 3.5px; stroke-linejoin: round;
+  pointer-events: none; letter-spacing: -0.01em; }
+.gnode text.topic-label { font-size: 11.5px; font-weight: 800; fill: var(--ink); }
 
 .node-panel { position: absolute; top: 54px; right: 12px; width: 250px; max-width: 72%;
   background: var(--surface); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow);
@@ -230,6 +243,23 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .bar-row .lab { width: 112px; flex: 0 0 112px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-soft); }
 .bar-row .track { flex: 1; background: var(--surface-2); border-radius: 6px; height: 16px; overflow: hidden; }
 .bar-row .fill { height: 100%; border-radius: 6px; background: var(--c, var(--accent)); }
+/* 주제 색이 쌓인 막대 */
+.bar-row .fill.stack { display: flex; background: none; overflow: hidden; }
+.bar-row .fill.stack .seg { height: 100%; min-width: 1px; }
+
+/* 나의 기록 — 본인에게만 보인다 */
+.mypanel { border-color: var(--accent); background:
+  linear-gradient(180deg, var(--accent-soft) 0%, var(--surface) 60%); }
+.my-lead { font-size: 14.5px; line-height: 1.75; margin: 0 0 14px; color: var(--ink); }
+.my-nums { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 8px; margin-bottom: 14px; }
+.my-num { background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 8px; text-align: center; }
+.my-num .v { font-size: 18px; font-weight: 800; letter-spacing: -0.02em; }
+.my-num .k { font-size: 11.5px; color: var(--ink-faint); margin-top: 2px; }
+.my-cats { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.my-notes { margin: 0; padding-left: 18px; }
+.my-notes li { font-size: 13.5px; line-height: 1.8; color: var(--ink); margin-bottom: 4px; }
 .bar-row .val { width: 46px; text-align: right; flex: 0 0 46px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
 
 /* ---------- 라이트박스 ---------- */

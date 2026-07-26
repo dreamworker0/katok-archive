@@ -74,15 +74,26 @@
     mount.appendChild(toolbar);
 
     var s = svg("svg", { id: "graphSvg" });
+
+    /* 노드에 얹는 부드러운 그림자.
+     * 흰 테두리로 배경과 분리하던 것을 그림자로 바꿨다. 테두리는 겹친
+     * 노드끼리 서로를 잘라 먹는데, 그림자는 깊이만 준다. */
+    var defs = svg("defs");
+    defs.innerHTML =
+      '<filter id="gsoft" x="-50%" y="-50%" width="200%" height="200%">' +
+      '<feDropShadow dx="0" dy="1" stdDeviation="1.6" flood-opacity="0.28" />' +
+      "</filter>";
+    s.appendChild(defs);
+
     var vp = svg("g");
-    var gEdges = svg("g"); var gNodes = svg("g");
+    var gEdges = svg("g"); var gNodes = svg("g", { filter: "url(#gsoft)" });
     vp.appendChild(gEdges); vp.appendChild(gNodes);
     s.appendChild(vp);
     mount.appendChild(s);
 
-    // 엣지 요소
+    // 엣지 요소 — 직선 대신 완만한 곡선. 선이 겹쳐도 어느 쪽으로 흐르는지 보인다.
     var edgeEls = edges.map(function (e) {
-      var ln = svg("line", { class: "gedge" });
+      var ln = svg("path", { class: "gedge" });
       ln._e = e; gEdges.appendChild(ln); return ln;
     });
     // 노드 요소
@@ -92,17 +103,19 @@
       var shape;
       if (n.type === "tool") {
         shape = svg("rect", { x: -n.r, y: -n.r, width: n.r * 2, height: n.r * 2,
-          transform: "rotate(45)", rx: 2, fill: col, stroke: "var(--surface)", "stroke-width": 1.5 });
+          transform: "rotate(45)", rx: 2.5, fill: col });
+      } else if (n.type === "topic") {
+        // 주제는 속을 비워 테두리로 보여 준다 — 크기가 커도 화면을 덜 먹는다
+        shape = svg("circle", { r: n.r, fill: "var(--surface)",
+          stroke: col, "stroke-width": 3 });
       } else {
         shape = svg("circle", { r: n.r, fill: col,
-          stroke: n.type === "topic" ? "var(--ink)" : "var(--surface)",
-          "stroke-width": n.type === "topic" ? 2 : 1.5,
-          "fill-opacity": n.type === "person" ? 0.7 : 1 });
+          "fill-opacity": n.type === "person" ? 0.85 : 1 });
       }
       g.appendChild(shape);
       if (n.type === "topic") {
-        var tx = svg("text", { "text-anchor": "middle", y: -n.r - 4,
-          style: "font-weight:700;font-size:11px" });
+        var tx = svg("text", { "text-anchor": "middle", y: -n.r - 6,
+          class: "topic-label" });
         tx.textContent = n.label; g.appendChild(tx);
       } else {
         var tx2 = svg("text", { "text-anchor": "middle", y: -n.r - 3, style: "display:none" });
@@ -157,7 +170,8 @@
     }
 
     s.addEventListener("pointerdown", function (ev) {
-      if (ev.target === s || ev.target === vp || ev.target.tagName === "line") {
+      // 간선(path)을 잡아도 배경처럼 화면을 끌 수 있게 한다
+      if (ev.target === s || ev.target === vp || ev.target.tagName === "path") {
         drag = { pan: true, x: ev.clientX, y: ev.clientY, moved: false };
         s.classList.add("grabbing"); capture(ev);
       }
@@ -173,7 +187,7 @@
         drag.x = ev.clientX; drag.y = ev.clientY; applyView();
       } else if (drag.node) {
         var pt = toWorld(ev);
-        drag.node.fx = pt.x; drag.node.fy = pt.y; alpha = Math.max(alpha, 0.3);
+        drag.node.fx = pt.x; drag.node.fy = pt.y; kick(0.3);
       }
     });
     s.addEventListener("pointerup", function () {
@@ -279,17 +293,43 @@
       nodes.forEach(function (n) { n._g.setAttribute("transform", "translate(" + n.x + "," + n.y + ")"); });
       edgeEls.forEach(function (ln) {
         var e = ln._e;
-        ln.setAttribute("x1", e.s.x); ln.setAttribute("y1", e.s.y);
-        ln.setAttribute("x2", e.t.x); ln.setAttribute("y2", e.t.y);
+        // 두 점을 잇되 수직으로 살짝 밀어 곡선으로 그린다(거리의 12%).
+        var mx = (e.s.x + e.t.x) / 2, my = (e.s.y + e.t.y) / 2;
+        var dx = e.t.x - e.s.x, dy = e.t.y - e.s.y;
+        ln.setAttribute("d",
+          "M" + e.s.x + "," + e.s.y +
+          "Q" + (mx - dy * 0.12) + "," + (my + dx * 0.12) +
+          " " + e.t.x + "," + e.t.y);
       });
     }
-    var raf;
+    var raf = null;
     function loop() {
       tick(); tick(); draw();
       alpha *= 0.99;
       if (alpha > 0.03 || drag) raf = requestAnimationFrame(loop);
+      else raf = null;                 // 멎으면 루프를 놓는다
     }
-    applyView(); loop();
+    /** 멈춰 있던 시뮬레이션을 다시 데운다. 끌어다 놓을 때 쓴다. */
+    function kick(a) {
+      alpha = Math.max(alpha, a || 0.3);
+      if (!raf) raf = requestAnimationFrame(loop);
+    }
+
+    /* 그리기 전에 미리 안정시킨다.
+     *
+     * 예전에는 alpha 1 에서 시작해 화면에서 식혔다. 노드가 6초쯤 어지럽게
+     * 흔들리다 멎어서 "정신이 없다"는 말이 나왔다. 배치가 결정론적이라
+     * 굳이 그 과정을 보여 줄 이유가 없다 — 같은 결과를 미리 계산해 두고
+     * 자리를 잡은 그림부터 보여 준다. 노드 100여 개라 수십 밀리초면 끝난다.
+     * 끌어다 놓을 때는 loop() 가 다시 돌며 반응한다.
+     */
+    function settle() {
+      var a = alpha;
+      for (var i = 0; i < 700 && a > 0.03; i++) { tick(); a *= 0.99; alpha = a; }
+      alpha = 0;   // 멈춘 상태로 시작 — 드래그하면 다시 데워진다
+      draw();
+    }
+    applyView(); settle();
 
     return {
       focus: function (nodeId) {
