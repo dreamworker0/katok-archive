@@ -30,6 +30,7 @@
     filter: document.getElementById("participantFilter"),
     roomTitle: document.getElementById("roomTitle"),
     roomSub: document.getElementById("roomSub"),
+    signOut: document.getElementById("signOutTop"),
     themeBtn: document.getElementById("themeBtn"),
     lightbox: document.getElementById("lightbox"),
     lightboxImg: document.getElementById("lightboxImg"),
@@ -2233,13 +2234,25 @@
     var host = document.getElementById("sessionBox");
     if (!host) return;
     var s = state.session;
-    if (!s) { host.innerHTML = ""; return; }
+    if (!s) {
+      host.innerHTML = "";
+      if (el.signOut) {
+        el.signOut.hidden = true;
+        el.signOut.onclick = null;
+      }
+      return;
+    }
     host.innerHTML =
-      '<span class="chip" title="' + esc(s.user.email) + '">' +
-      esc(s.user.name) + (s.role === "admin" ? " · 관리자" : "") + "</span>" +
-      '<button class="icon-btn" id="signOutTop" title="로그아웃">로그아웃</button>';
-    var b = document.getElementById("signOutTop");
-    if (b) b.onclick = function () { s.signOut(); };
+      '<span class="sidebar-avatar" style="' + avatarStyle(s.user.name) +
+      '" aria-hidden="true">' + esc(initial(s.user.name)) + "</span>" +
+      '<span class="sidebar-identity"><strong class="sidebar-name" title="' +
+      esc(s.user.email) + '">' + esc(s.user.name) + "</strong>" +
+      '<span class="sidebar-role">' + (s.role === "admin" ? "관리자" : "멤버") +
+      "</span></span>";
+    if (el.signOut) {
+      el.signOut.hidden = false;
+      el.signOut.onclick = function () { s.signOut(); };
+    }
   }
 
   // ---------- 초기화 ----------

@@ -23,6 +23,7 @@ REQUIRED_IDS = {
     "searchInput",
     "participantFilter",
     "sessionBox",
+    "signOutTop",
     "themeBtn",
     "view",
     "lightbox",
@@ -85,6 +86,22 @@ class UiShellContractTests(unittest.TestCase):
                 self.assertIn('id="mobileMoreButton" aria-label=', source)
                 self.assertIn('id="lightboxClose" type="button" aria-label=', source)
 
+    def test_sidebar_footer_contains_stable_account_actions(self):
+        for name in ("index.html", "index.hosting.html"):
+            with self.subTest(name=name):
+                source = (ROOT / "web" / name).read_text(encoding="utf-8")
+                footer = source.index('class="sidebar-footer"')
+                session = source.index('id="sessionBox"', footer)
+                actions = source.index('class="sidebar-actions"', session)
+                signout = source.index('id="signOutTop"', actions)
+                theme = source.index('id="themeBtn"', signout)
+                aside_end = source.index("</aside>", theme)
+                self.assertLess(footer, session)
+                self.assertLess(session, actions)
+                self.assertLess(actions, signout)
+                self.assertLess(signout, theme)
+                self.assertLess(theme, aside_end)
+
 
 class UiStyleContractTests(unittest.TestCase):
     @classmethod
@@ -116,10 +133,19 @@ class UiStyleContractTests(unittest.TestCase):
         self.assertIn("font-size: 11.5px", self.css)
         self.assertIn("font-size: 14px", self.css)
         self.assertIn("height: 50px", self.css)
-        self.assertIn(".sidebar-session .chip", self.css)
-        self.assertIn(".sidebar-session .icon-btn", self.css)
+        self.assertIn(".sidebar-avatar", self.css)
+        self.assertIn(".sidebar-signout", self.css)
         self.assertIn(".theme-toggle svg", self.css)
-        self.assertIn("width: 36px", self.css)
+        self.assertIn("width: 40px", self.css)
+
+    def test_sidebar_account_footer_has_equal_height_actions(self):
+        self.assertIn(
+            ".sidebar-actions { display: grid; grid-template-columns: minmax(0, 1fr) 40px",
+            self.css,
+        )
+        self.assertIn(".sidebar-signout, .theme-toggle { height: 40px", self.css)
+        self.assertIn(".sidebar-name", self.css)
+        self.assertIn("text-overflow: ellipsis", self.css)
 
     def test_every_interface_uses_noto_sans_korean_without_serif_overrides(self):
         self.assertIn('font-family: "Noto Sans KR", sans-serif;', self.css)
@@ -194,6 +220,13 @@ class UiJavascriptContractTests(unittest.TestCase):
         self.assertIn("lk.context", self.app)
         self.assertIn("data-link-anchor", self.app)
         self.assertIn("이 주제에서 함께 공유된 자료", self.app)
+
+    def test_session_renders_identity_into_the_stable_footer(self):
+        self.assertIn("signOut: document.getElementById(\"signOutTop\")", self.app)
+        self.assertIn('class="sidebar-name"', self.app)
+        self.assertIn('class="sidebar-role"', self.app)
+        self.assertIn("el.signOut.hidden = false", self.app)
+        self.assertNotIn("'<button class=\"icon-btn\" id=\"signOutTop\"", self.app)
 
 
 class UiGateContractTests(unittest.TestCase):
