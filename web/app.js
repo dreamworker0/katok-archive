@@ -30,7 +30,7 @@
     lightboxImg: document.getElementById("lightboxImg"),
     lightboxClose: document.getElementById("lightboxClose"),
   };
-  var state = { view: "summary", q: "", nick: "", graph: null, session: null };
+  var state = { view: "summary", q: "", nick: "", graph: null, session: null, mine: null };
 
   // ---------- 유틸 ----------
   function esc(s) {
@@ -342,6 +342,192 @@
   }
   function closeLightbox() { el.lightbox.classList.remove("on"); el.lightboxImg.src = ""; }
 
+  /* ---------- 내 글 관리 ----------
+   *
+   * 이 화면이 있어야 "언제든 본인 글을 내릴 수 있습니다"를 말할 수 있고,
+   * 그래야 멤버들에게 공개 동의를 구할 수 있다.
+   *
+   * 반영은 즉시가 아니다. 발행본을 다시 만들려면 스레드·요지·그래프까지 재생성해야
+   * 해서 브라우저에서 할 수 있는 일이 아니다. 매일 23:40 자동화가 처리하며,
+   * 화면에서도 그렇게 안내한다 — 눌렀는데 그대로면 고장으로 보이기 때문이다.
+   */
+  var COLLECTION_MODES = [
+    { id: "public", label: "공개",
+      desc: "기본값입니다. 앞으로의 글도 아카이브에 담깁니다." },
+    { id: "unpublished", label: "발행 제외",
+      desc: "수집은 되지만 아카이브에 보이지 않습니다. 설정을 되돌리면 다시 보입니다." },
+    { id: "none", label: "수집 거부",
+      desc: "앞으로의 글을 아예 저장하지 않습니다. 되돌려도 그동안의 글은 복구할 수 없습니다." },
+  ];
+
+  function myMessages() {
+    var nick = state.session && state.session.user && state.session.user.nickname;
+    if (!nick) return [];
+    return MSGS.filter(function (m) { return m.nickname === nick; });
+  }
+
+  function canManageMine() {
+    return !!(state.session && state.session.requests &&
+              state.session.user && state.session.user.nickname);
+  }
+
+  function mineRow(m, pending) {
+    var body;
+    if (m.kind === "image") body = "🖼 사진" + (m.image_count > 1 ? " " + m.image_count + "장" : "");
+    else if (m.is_file_share) body = "📎 " + esc((m.text || "").replace(/^파일:\s*/, ""));
+    else body = esc(m.text || "");
+
+    return '<label class="mine-row' + (pending ? " pending" : "") + '">' +
+      '<input type="checkbox" data-mid="' + esc(m.id) + '"' + (pending ? " checked" : "") + " />" +
+      '<span class="mine-when">' + esc(m.date) + " " + esc(m.time) + "</span>" +
+      '<span class="mine-text">' + body + "</span>" +
+      (pending ? '<span class="mine-flag">내리는 중</span>' : "") +
+      "</label>";
+  }
+
+  function renderMine() {
+    if (!canManageMine()) {
+      el.view.innerHTML =
+        '<p class="hint">이 화면은 대화방 표시명이 연결된 계정에서만 쓸 수 있습니다.<br>' +
+        "관리자에게 이름 연결을 요청해 주세요.</p>";
+      return;
+    }
+    if (!state.mine) {
+      el.view.innerHTML = '<p class="hint">설정을 불러오는 중…</p>';
+      state.session.requests.load().then(
+        function (data) { state.mine = data; if (state.view === "mine") renderMine(); },
+        function (e) {
+          el.view.innerHTML = '<p class="hint">설정을 불러오지 못했습니다: ' +
+            esc(e.message || String(e)) + "</p>";
+        }
+      );
+      return;
+    }
+
+    var nick = state.session.user.nickname;
+    var rows = myMessages();
+    var del = state.mine.deletion;
+    var pendingAll = !!(del && del.allMessages);
+    var pendingIds = {};
+    if (del) (del.messageIds || []).forEach(function (id) { pendingIds[id] = true; });
+    var pendingCount = pendingAll ? rows.length : Object.keys(pendingIds).length;
+
+    var modes = COLLECTION_MODES.map(function (mo) {
+      return '<label class="mine-mode' + (state.mine.collection === mo.id ? " on" : "") + '">' +
+        '<input type="radio" name="collectionMode" value="' + mo.id + '"' +
+        (state.mine.collection === mo.id ? " checked" : "") + " />" +
+        '<span class="mine-mode-label">' + esc(mo.label) + "</span>" +
+        '<span class="mine-mode-desc">' + esc(mo.desc) + "</span></label>";
+    }).join("");
+
+    el.view.innerHTML =
+      '<section class="mine">' +
+      '<h2 class="mine-title">내 글 관리</h2>' +
+      '<p class="mine-sub">대화방 표시명 <b>' + esc(nick) + "</b> 으로 남긴 글 " +
+      rows.length + "개입니다.</p>" +
+
+      '<div class="mine-card">' +
+      "<h3>앞으로의 수집</h3>" +
+      '<div class="mine-modes">' + modes + "</div>" +
+      '<button class="btn" id="saveMode">이 설정으로 저장</button>' +
+      '<span class="mine-msg" id="modeMsg"></span>' +
+      "</div>" +
+
+      '<div class="mine-card">' +
+      "<h3>이미 올린 글 내리기</h3>" +
+      (pendingCount
+        ? '<p class="mine-note">현재 <b>' + pendingCount + "개</b>를 내려달라고 요청해 두셨습니다. " +
+          "아직 반영 전이라 철회할 수 있습니다.</p>"
+        : '<p class="mine-note">내릴 글을 고르세요. 발행본에서 빠지며, ' +
+          "되돌리려면 관리자에게 요청해야 합니다.</p>") +
+      '<div class="mine-actions">' +
+      '<button class="btn ghost" id="selAll">전체 선택</button> ' +
+      '<button class="btn ghost" id="selNone">선택 해제</button> ' +
+      '<button class="btn" id="submitDel">선택한 글 내리기</button> ' +
+      (pendingCount ? '<button class="btn ghost" id="cancelDel">요청 철회</button>' : "") +
+      '<span class="mine-msg" id="delMsg"></span>' +
+      "</div>" +
+      '<div class="mine-list">' +
+      (rows.length
+        ? rows.map(function (m) {
+            return mineRow(m, pendingAll || !!pendingIds[m.id]);
+          }).join("")
+        : '<p class="hint">아직 남긴 글이 없습니다.</p>') +
+      "</div></div>" +
+
+      '<p class="mine-foot">요청은 매일 밤 23:40 자동 갱신 때 반영됩니다. ' +
+      "급하시면 관리자에게 말씀해 주세요.</p>" +
+      "</section>";
+
+    bindMineActions();
+  }
+
+  function bindMineActions() {
+    var api = state.session.requests;
+    var boxes = function () {
+      return Array.prototype.slice.call(el.view.querySelectorAll("input[data-mid]"));
+    };
+    var setMsg = function (id, text) {
+      var n = document.getElementById(id); if (n) n.textContent = text || "";
+    };
+
+    document.getElementById("saveMode").onclick = function () {
+      var picked = el.view.querySelector('input[name="collectionMode"]:checked');
+      if (!picked) return;
+      var mode = picked.value;
+      // 되돌릴 수 없는 선택이므로 한 번 더 묻는다
+      if (mode === "none" && !window.confirm(
+        "수집 거부로 바꾸면 앞으로의 글이 저장되지 않습니다.\n" +
+        "나중에 되돌려도 그동안의 글은 복구할 수 없습니다. 계속할까요?")) return;
+      setMsg("modeMsg", "저장 중…");
+      api.saveCollection(mode).then(
+        function () { state.mine.collection = mode; setMsg("modeMsg", "저장했습니다."); },
+        function (e) { setMsg("modeMsg", "저장 실패: " + (e.message || e)); }
+      );
+    };
+
+    document.getElementById("selAll").onclick = function () {
+      boxes().forEach(function (b) { b.checked = true; });
+    };
+    document.getElementById("selNone").onclick = function () {
+      boxes().forEach(function (b) { b.checked = false; });
+    };
+
+    document.getElementById("submitDel").onclick = function () {
+      var picked = boxes().filter(function (b) { return b.checked; });
+      var ids = picked.map(function (b) { return b.getAttribute("data-mid"); });
+      if (!ids.length) { setMsg("delMsg", "고른 글이 없습니다."); return; }
+
+      var total = myMessages().length;
+      var all = ids.length === total;
+      // 1000개 제한은 보안 규칙에도 걸려 있다. 전체 선택이면 목록 대신 플래그로 보낸다.
+      if (!all && ids.length > 1000) {
+        setMsg("delMsg", "한 번에 1000개까지만 됩니다. 나눠서 요청해 주세요.");
+        return;
+      }
+      if (!window.confirm(ids.length + "개의 글을 내려달라고 요청합니다.\n" +
+                          "오늘 밤 반영되며, 그 전까지는 철회할 수 있습니다. 계속할까요?")) return;
+
+      setMsg("delMsg", "요청하는 중…");
+      api.saveDeletion(all ? [] : ids, all).then(
+        function () {
+          state.mine.deletion = { messageIds: all ? [] : ids, allMessages: all };
+          renderMine();
+        },
+        function (e) { setMsg("delMsg", "요청 실패: " + (e.message || e)); }
+      );
+    };
+
+    var cancel = document.getElementById("cancelDel");
+    if (cancel) cancel.onclick = function () {
+      setMsg("delMsg", "철회하는 중…");
+      api.clearDeletion().then(
+        function () { state.mine.deletion = null; renderMine(); },
+        function (e) { setMsg("delMsg", "철회 실패: " + (e.message || e)); }
+      );
+    };
+  }
+
   // ---------- 검색·라우팅 ----------
   function runSearch(q) {
     state.q = q || ""; el.search.value = state.q;
@@ -361,6 +547,7 @@
     else if (state.view === "timeline") renderTimeline();
     else if (state.view === "gallery") renderGallery();
     else if (state.view === "stats") renderStats();
+    else if (state.view === "mine") renderMine();
   }
 
   // 로그인한 사용자 표시 + 로그아웃 (보호모드에서만 세션이 주어진다)
@@ -390,6 +577,11 @@
 
     state.session = session || null;
     renderSession();
+
+    // '내 글 관리' 는 표시명이 연결된 로그인 사용자에게만 의미가 있다.
+    // 로컬 미리보기(site/)에는 세션이 없으므로 탭 자체를 감춘다.
+    var mineTab = el.tabs.querySelector('[data-view="mine"]');
+    if (mineTab && !canManageMine()) mineTab.remove();
     el.roomTitle.textContent = A.chat_room || "아카이브";
     var t = STATS.totals || {};
     el.roomSub.textContent = (t.messages || 0) + "개 메시지 · " + (t.participants || 0) + "명 · " +

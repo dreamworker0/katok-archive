@@ -198,6 +198,44 @@
     });
   }
 
+  /** 앱에 넘길 요청 API.
+   *
+   *  앱 로직이 Firebase 를 직접 부르지 않게 여기서 감싼다. 로컬 미리보기(site/)는
+   *  세션 자체가 없어 이 객체도 없고, 그래서 '내 글 관리' 탭이 뜨지 않는다.
+   */
+  function makeRequestApi(db, user) {
+    var email = user.email.toLowerCase();
+    var prefs = db.collection("preferences").doc(email);
+    var dels = db.collection("deletionRequests").doc(email);
+    var stamp = function () { return firebase.firestore.FieldValue.serverTimestamp(); };
+
+    return {
+      load: function () {
+        return Promise.all([prefs.get(), dels.get()]).then(function (r) {
+          var p = r[0].exists ? r[0].data() : {};
+          var d = r[1].exists ? r[1].data() : null;
+          return {
+            collection: p.collection || "public",
+            deletion: d
+              ? { messageIds: d.messageIds || [], allMessages: d.allMessages === true }
+              : null,
+          };
+        });
+      },
+      saveCollection: function (mode) {
+        return prefs.set({ collection: mode, updatedAt: stamp() });
+      },
+      saveDeletion: function (messageIds, allMessages) {
+        return dels.set({
+          messageIds: messageIds || [],
+          allMessages: !!allMessages,
+          requestedAt: stamp(),
+        });
+      },
+      clearDeletion: function () { return dels.delete(); },
+    };
+  }
+
   function start(user, member) {
     // 이미지는 Storage 보호 모드로 (로그인 토큰 첨부 요청)
     window.ArchiveImages.useStorage({
@@ -217,6 +255,7 @@
       },
       role: member.role || "user",
       signOut: function () { firebase.auth().signOut(); },
+      requests: makeRequestApi(firebase.firestore(), user),
     });
   }
 

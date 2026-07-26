@@ -238,6 +238,38 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
   border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ---------- 내 글 관리 ---------- */
+.mine { max-width: 760px; margin: 0 auto; }
+.mine-title { margin: 0 0 4px; font-size: 19px; font-weight: 800; }
+.mine-sub { margin: 0 0 18px; font-size: 14px; color: var(--ink-soft); }
+.mine-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 18px 20px; margin-bottom: 16px; box-shadow: var(--shadow-sm); }
+.mine-card h3 { margin: 0 0 12px; font-size: 15px; font-weight: 700; }
+.mine-note { margin: 0 0 12px; font-size: 13px; color: var(--ink-soft); line-height: 1.7; }
+
+.mine-modes { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.mine-mode { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: start;
+  padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.mine-mode.on { border-color: var(--accent); background: var(--accent-soft); }
+.mine-mode input { grid-row: span 2; margin-top: 3px; }
+.mine-mode-label { font-size: 14px; font-weight: 600; }
+.mine-mode-desc { font-size: 12.5px; color: var(--ink-soft); line-height: 1.6; }
+
+.mine-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.mine-msg { font-size: 13px; color: var(--ink-soft); }
+
+.mine-list { max-height: 460px; overflow-y: auto; border: 1px solid var(--line);
+  border-radius: 10px; }
+.mine-row { display: grid; grid-template-columns: auto auto 1fr auto; gap: 10px; align-items: baseline;
+  padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 13.5px; }
+.mine-row:last-child { border-bottom: none; }
+.mine-row:hover { background: var(--surface-2); }
+.mine-row.pending { background: var(--accent-soft); }
+.mine-when { color: var(--ink-faint); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mine-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mine-flag { font-size: 11.5px; font-weight: 700; color: var(--accent); white-space: nowrap; }
+.mine-foot { font-size: 12.5px; color: var(--ink-faint); text-align: center; margin: 0; }
+
 /* 로그인 사용자 칩 */
 .session { display: inline-flex; align-items: center; gap: 6px; }
 .session .chip { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
