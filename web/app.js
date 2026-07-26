@@ -78,15 +78,40 @@
     return p[0] + "년 " + (+p[1]) + "월 " + (+p[2]) + "일 (" + WD[dt.getDay()] + ")";
   }
 
+  function emptyState(kind, title, body, actionHtml) {
+    return '<section class="empty-state empty-state--' + esc(kind) + '">' +
+      '<div class="empty-state__art" aria-hidden="true"></div>' +
+      '<div class="empty-state__copy"><h2>' + esc(title) + "</h2>" +
+      '<p>' + esc(body) + "</p>" +
+      (actionHtml ? '<div class="empty-state__actions">' + actionHtml + "</div>" : "") +
+      "</div></section>";
+  }
+
   // ---------- 주제별 지식(요약) ----------
   function renderSummary() {
-    var html = ['<div class="cat-nav">'];
+    var totals = STATS.totals || {};
+    var html = [
+      '<section class="archive-welcome">' +
+      '<div class="archive-welcome__copy">' +
+      '<p class="eyebrow">우리의 아카이브</p>' +
+      '<h1>함께 나눈 이야기를<br>천천히 다시 만나요</h1>' +
+      '<p>' + esc(totals.messages || 0) + "개의 기록과 " +
+      esc(totals.participants || 0) + "명의 이야기를 주제별로 모았습니다.</p>" +
+      '</div><div class="archive-welcome__art" aria-hidden="true"></div></section>',
+      '<div class="cat-nav">',
+    ];
+    var digestCount = 0;
     CATS.forEach(function (c) {
       var d = DIGESTS[c.id]; if (!d) return;
+      digestCount++;
       html.push('<button data-goto="doc-' + c.id + '"><span class="swatch" style="background:' +
         colorFor(c.id) + '"></span>' + esc(c.label) + " · " + (d.message_count || 0) + "</button>");
     });
     html.push("</div>");
+    if (!digestCount) {
+      html.push(emptyState("archive", "아직 모인 기록이 없어요",
+        "새로운 이야기가 정리되면 이곳에서 가장 먼저 만날 수 있습니다."));
+    }
     CATS.forEach(function (c) {
       var d = DIGESTS[c.id]; if (!d) return;
       html.push(renderDoc(c.id, d));
@@ -282,7 +307,8 @@
         "전체 보기</button></div>"
       : "";
     if (!rows.length) {
-      el.view.innerHTML = pickBar + '<p class="hint">해당하는 주제가 없어요.</p>';
+      el.view.innerHTML = pickBar + emptyState("search", "조건에 맞는 이야기를 찾지 못했어요",
+        "검색어를 조금 줄이거나 참여자 필터를 비우고 다시 살펴보세요.");
       bindPickClear();
       return;
     }
@@ -737,7 +763,11 @@
                      tid: m.thread_id });
       });
     });
-    if (!items.length) { el.view.innerHTML = '<p class="hint">표시할 이미지가 없어요.</p>'; return; }
+    if (!items.length) {
+      el.view.innerHTML = emptyState("gallery", "아직 모아 둔 사진이 없어요",
+        "대화 속 사진이 보관되면 날짜와 사람별로 이곳에 차곡차곡 나타납니다.");
+      return;
+    }
     // 최근 것부터. 어제 무엇이 올라왔는지가 가장 궁금하다.
     items.sort(function (a, b) { return mediaKey(b).localeCompare(mediaKey(a)); });
     var list = state.gview === "list";
@@ -786,7 +816,8 @@
   function renderFiles() {
     var rows = MEDIA.filter(function (m) { return m.kind === "file"; });
     if (!rows.length) {
-      el.view.innerHTML = '<p class="hint">공유된 파일이 없어요.</p>';
+      el.view.innerHTML = emptyState("files", "아직 보관된 파일이 없어요",
+        "대화에서 나눈 문서와 자료가 생기면 잊지 않도록 이곳에 모아 둡니다.");
       return;
     }
     var have = rows.filter(function (m) { return m.file; });
@@ -805,7 +836,8 @@
       (shown.length !== rows.length ? " · 표시 " + shown.length + "개" : "") + "</p>"];
 
     if (!shown.length) {
-      html.push('<p class="hint">조건에 맞는 파일이 없어요.</p>');
+      html.push(emptyState("search", "조건에 맞는 파일을 찾지 못했어요",
+        "검색어를 줄이거나 참여자 필터를 비우고 다시 살펴보세요."));
     } else {
       html.push('<div class="files">');
       shown.forEach(function (m) {

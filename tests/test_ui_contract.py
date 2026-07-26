@@ -112,5 +112,19 @@ class UiGateContractTests(unittest.TestCase):
         self.assertIn("관리자가 확인", self.boot)
 
 
+class UiViewContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+
+    def test_summary_opens_with_archive_welcome(self):
+        self.assertIn("archive-welcome", self.app)
+        self.assertIn("함께 나눈 이야기를", self.app)
+
+    def test_core_views_share_a_kind_empty_state(self):
+        self.assertIn("function emptyState(", self.app)
+        self.assertGreaterEqual(self.app.count("emptyState("), 5)
+
+
 if __name__ == "__main__":
     unittest.main()
