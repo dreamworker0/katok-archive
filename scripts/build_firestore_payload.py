@@ -249,11 +249,26 @@ def build_payload() -> dict:
     # 소유권을 확인한 뒤에 반영한다 — 보안 규칙만으로는 남의 글을 지우려는 요청을
     # 막을 수 없다. member_requests 모듈 설명 참고.
     exclusions = load_exclusions()
+
+    # 관리자가 뺀 주제는 그 주제의 메시지를 전부 제외하는 것과 같다. 기존 제외
+    # machinery 를 그대로 태우면 통계·그래프·요지까지 일관되게 빠진다.
+    hidden_threads = set(member_requests.load_hidden_threads())
+    if hidden_threads:
+        hidden_ids = [
+            mid for t in topics["threads"] if t["id"] in hidden_threads
+            for mid in t["message_ids"]
+        ]
+        exclusions = dict(exclusions)
+        exclusions["exclude_message_ids"] = list(
+            set(exclusions.get("exclude_message_ids") or []) | set(hidden_ids)
+        )
+
     requests = member_requests.load_requests()
     resolved = member_requests.verify_ownership(requests, messages_raw)
     exclusions = member_requests.merge_into_exclusions(exclusions, resolved)
 
     kept, report = apply_exclusions(messages_raw, exclusions)
+    report["hidden_threads"] = sorted(hidden_threads)
     report["member_requests"] = {
         "applied_people": resolved["exclude_people"],
         "applied_message_ids": len(resolved["exclude_message_ids"]),
@@ -388,6 +403,9 @@ def main() -> None:
     else:
         print("제외 규칙 적용 결과: 제외된 메시지 없음")
 
+    if r["hidden_threads"]:
+        print("발행 제외 주제 %d개: %s"
+              % (len(r["hidden_threads"]), ", ".join(r["hidden_threads"][:5])))
     mr = r["member_requests"]
     if mr["applied_people"] or mr["applied_message_ids"]:
         print("멤버 요청 반영: 발행 제외 %d명, 개별 메시지 %d건"

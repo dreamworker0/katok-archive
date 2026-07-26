@@ -261,8 +261,13 @@
       load: function () {
         return Promise.all([
           rows("claims"), rows("members"), rows("preferences"), rows("deletionRequests"),
+          db.collection("settings").doc("threads").get(),
         ]).then(function (r) {
-          return { claims: r[0], members: r[1], preferences: r[2], deletions: r[3] };
+          var st = r[4].exists ? (r[4].data().hidden || []) : [];
+          return {
+            claims: r[0], members: r[1], preferences: r[2], deletions: r[3],
+            hiddenThreads: st,
+          };
         });
       },
       approve: function (email, nicknames, role) {
@@ -272,6 +277,16 @@
         return call("setMemberNicknames", { email: email, nicknames: nicknames });
       },
       removeMember: function (email) { return call("removeMember", { email: email }); },
+      setThreadHidden: function (threadId, title, hidden) {
+        return call("setThreadHidden",
+          { threadId: threadId, title: title, hidden: hidden });
+      },
+      /** 발행에서 뺀 주제 목록. 발행본에 없으니 여기서만 확인·복구할 수 있다. */
+      hiddenThreads: function () {
+        return db.collection("settings").doc("threads").get().then(function (d) {
+          return d.exists ? (d.data().hidden || []) : [];
+        });
+      },
       reject: function (email) { return call("rejectClaim", { email: email }); },
       setRole: function (email, role) {
         return call("setMemberRole", { email: email, role: role });

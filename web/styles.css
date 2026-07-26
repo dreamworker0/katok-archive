@@ -252,6 +252,9 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .tc-link { font-size: 12.5px; margin: 2px 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
 .tc-more { font-size: 12px; color: var(--ink-faint); margin-top: 4px; }
+/* 관리자에게만 보이는 주제 제외 버튼 */
+.tc-admin { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.tc-admin .btn { padding: 4px 10px; font-size: 12px; }
 
 /* ---------- 첨부파일 탭 ---------- */
 .files { display: grid; gap: 8px; }

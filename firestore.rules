@@ -9,8 +9,8 @@ rules_version = '2';
 //     제외된 메시지는 애초에 발행본에 들어가지 않는다 — "숨김"이 아니라 "미발행".
 //  4. 본인이 쓴 글은 본인만 원문으로 본다(myMessages). 무엇을 지울지 고르려면
 //     봐야 하고, 자기 글을 보는 건 개인정보 문제가 아니다.
-//  5. 원본 전체(messagesSource)는 관리자만 읽는다.
-//  5. 열람 신청(claims)은 아직 멤버가 아닌 사람이 쓸 수 있는 유일한 경로다.
+//  5. 원본 전체(messagesSource)와 운영 설정(settings)은 관리자만 읽는다.
+//  6. 열람 신청(claims)은 아직 멤버가 아닌 사람이 쓸 수 있는 유일한 경로다.
 //     본인 이메일 문서 한 장만, 정해진 필드만 쓸 수 있다.
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -57,6 +57,15 @@ service cloud.firestore {
     match /myMessages/{ownerEmail} {
       allow get:  if signedIn() && (callerEmail() == ownerEmail || isAdmin());
       allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    // ── 운영 설정: 관리자만 본다 ──
+    //
+    // 발행에서 뺀 주제 목록. 뺀 주제는 발행본에 없으므로 이 목록이 없으면
+    // 되돌릴 방법이 사라진다. 쓰기는 setThreadHidden Function 으로만.
+    match /settings/{docId} {
+      allow read: if isAdmin();
       allow write: if false;
     }
 

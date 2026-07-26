@@ -268,6 +268,11 @@
       '<p class="tc-summary">' + highlightText(esc(t.summary || ""), state.q) + "</p>" +
       (people ? '<div class="tc-people">' + people + "</div>" : "") +
       (links ? '<div class="tc-links">' + links + more + "</div>" : "") +
+      // 관리자에게만 보인다. 잡담 주제를 보다가 그 자리에서 뺄 수 있어야 한다.
+      (isAdmin()
+        ? '<div class="tc-admin"><button class="btn ghost tc-hide" data-tid="' +
+          esc(t.id) + '" data-title="' + esc(t.title) + '">발행 제외</button></div>'
+        : "") +
       "</article>";
   }
 
@@ -277,6 +282,26 @@
         el.filter.value = b.getAttribute("data-nick");
         state.nick = el.filter.value;
         render();
+      };
+    });
+    Array.prototype.forEach.call(scope.querySelectorAll(".tc-hide"), function (b) {
+      b.onclick = function () {
+        var tid = b.getAttribute("data-tid"), title = b.getAttribute("data-title");
+        if (!window.confirm(
+              "'" + title + "' 을 발행에서 뺍니다.\n\n" +
+              "오늘 밤 갱신부터 아무에게도 보이지 않습니다.\n" +
+              "원본은 남아 있고, 관리 탭에서 되돌릴 수 있습니다.\n\n" +
+              "계속할까요?")) return;
+        b.disabled = true;
+        b.textContent = "처리 중…";
+        state.session.admin.setThreadHidden(tid, title, true).then(
+          function () { b.textContent = "제외됨 (오늘 밤 반영)"; },
+          function (e) {
+            b.disabled = false;
+            b.textContent = "발행 제외";
+            window.alert("실패: " + (e.message || String(e)));
+          }
+        );
       };
     });
   }
@@ -848,6 +873,23 @@
         : '<p class="mine-note">모두 공개 설정입니다.</p>') +
       "</div>" +
 
+      '<div class="mine-card"><h3>발행에서 뺀 주제 ' +
+      (d.hiddenThreads || []).length + "개</h3>" +
+      ((d.hiddenThreads || []).length
+        ? d.hiddenThreads.map(function (t) {
+            return '<div class="adm-member" data-tid="' + esc(t.id) + '">' +
+              '<div class="adm-main"><b>' + esc(t.title || t.id) + "</b> " +
+              '<span class="adm-mail">' + esc(t.id) +
+              (t.hiddenAt ? " · " + esc(String(t.hiddenAt).slice(0, 10)) : "") +
+              "</span></div>" +
+              '<div class="adm-act"><button class="btn ghost adm-unhide">되돌리기</button></div>' +
+              "</div>";
+          }).join("")
+        : '<p class="mine-note">뺀 주제가 없습니다. 주제 흐름 탭의 카드에서 뺄 수 있습니다.</p>') +
+      '<p class="mine-note">뺀 주제는 발행본에서 사라져 아무에게도 보이지 않습니다. ' +
+      "원본은 남아 있어 되돌리면 다시 나옵니다. 반영은 오늘 밤 갱신 때입니다.</p>" +
+      '<p class="adm-msg" id="hideMsg"></p></div>' +
+
       '<div class="mine-card"><h3>멤버 ' + d.members.length + "명</h3>" +
       d.members.map(function (m) {
         var names = (m.nicknames && m.nicknames.length)
@@ -894,7 +936,20 @@
     var msg = document.getElementById("admMsg");
     var say = function (t) { if (msg) msg.textContent = t || ""; };
 
-    Array.prototype.forEach.call(el.view.querySelectorAll(".adm-member"), function (row) {
+    Array.prototype.forEach.call(el.view.querySelectorAll("[data-tid] .adm-unhide"), function (b) {
+      var row = b.closest("[data-tid]");
+      b.onclick = function () {
+        var tid = row.getAttribute("data-tid");
+        var m = document.getElementById("hideMsg");
+        if (m) m.textContent = "되돌리는 중…";
+        state.session.admin.setThreadHidden(tid, "", false).then(
+          function () { state.admin = null; renderAdmin(); },
+          function (e) { if (m) m.textContent = "실패: " + (e.message || String(e)); }
+        );
+      };
+    });
+
+    Array.prototype.forEach.call(el.view.querySelectorAll(".adm-member[data-email]"), function (row) {
       var email = row.getAttribute("data-email");
       var panel = row.querySelector(".adm-link-panel");
       row.querySelector(".adm-link").onclick = function () { panel.hidden = !panel.hidden; };

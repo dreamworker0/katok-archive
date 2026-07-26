@@ -72,10 +72,17 @@ async function main() {
   const db = admin.firestore();
   const nicknames = nicknamesByEmail();
 
-  const [prefSnap, delSnap] = await Promise.all([
+  const [prefSnap, delSnap, settingsSnap] = await Promise.all([
     db.collection("preferences").get(),
     db.collection("deletionRequests").get(),
+    db.collection("settings").doc("threads").get(),
   ]);
+
+  // 관리자가 발행에서 뺀 주제. 멤버 요청과 함께 내려받아야 '조용한 날에도 발행'
+  // 판정이 한 번에 이뤄진다 — 주제를 뺐는데 그날 대화가 없으면 반영이 밀린다.
+  const hiddenThreads = (settingsSnap.exists && Array.isArray(settingsSnap.data().hidden)
+    ? settingsSnap.data().hidden : [])
+    .map((t) => String((t && t.id) || "")).filter(Boolean).sort();
 
   const rows = new Map();
   const ensure = (email) => {
@@ -126,9 +133,11 @@ async function main() {
   const payload = {
     generated_at: new Date().toISOString(),
     requests: requests,
+    hidden_threads: hiddenThreads,
   };
 
-  console.log(`수집 동의 ${prefSnap.size}건 / 삭제 요청 ${delSnap.size}건`);
+  console.log(`수집 동의 ${prefSnap.size}건 / 삭제 요청 ${delSnap.size}건 ` +
+    `/ 발행 제외 주제 ${hiddenThreads.length}개`);
   for (const r of requests) {
     const bits = [];
     if (r.collection !== "public") bits.push(`동의=${r.collection}`);
@@ -149,8 +158,10 @@ async function main() {
 
   // 일일 자동화는 "새 메시지 0건이면 발행 생략"으로 동작한다. 그대로 두면 조용한
   // 날에 들어온 삭제 요청이 영영 반영되지 않으므로, 요청이 바뀌었는지 알려준다.
-  const changed = !fs.existsSync(OUT) ||
-    canonical(readRequests(OUT)) !== canonical(requests);
+  const prev = readPayload(OUT);
+  const changed = !prev ||
+    canonical(prev.requests) !== canonical(requests) ||
+    JSON.stringify(prev.hidden_threads || []) !== JSON.stringify(hiddenThreads);
   console.log(`요청 변경: ${changed ? "있음" : "없음"}`);
 
   if (DRY) {
@@ -161,9 +172,9 @@ async function main() {
   console.log(`output/member-requests.json 갱신 (${requests.length}명)`);
 }
 
-function readRequests(p) {
+function readPayload(p) {
   try {
-    return JSON.parse(fs.readFileSync(p, "utf8")).requests || [];
+    return JSON.parse(fs.readFileSync(p, "utf8"));
   } catch (e) {
     return null;
   }

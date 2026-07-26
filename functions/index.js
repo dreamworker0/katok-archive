@@ -285,6 +285,40 @@ exports.removeMember = onCall(async (request) => {
   };
 });
 
+/** 주제(스레드) 하나를 발행에서 빼거나 되돌린다.
+ *
+ *  뺀 주제는 발행본에서 사라지므로 관리자에게도 안 보인다 — 목록을 따로 들고
+ *  있지 않으면 되돌릴 방법이 없어진다. 그래서 제목까지 함께 적어둔다.
+ */
+exports.setThreadHidden = onCall(async (request) => {
+  const caller = await requireAdmin(request);
+  const threadId = String((request.data && request.data.threadId) || "").trim();
+  const hidden = !(request.data && request.data.hidden === false);
+  if (!/^[A-Za-z0-9_-]{1,60}$/.test(threadId)) {
+    throw new HttpsError("invalid-argument", "주제 ID 가 올바르지 않습니다.");
+  }
+
+  const ref = db().collection("settings").doc("threads");
+  const snap = await ref.get();
+  const list = (snap.exists && Array.isArray(snap.data().hidden))
+    ? snap.data().hidden : [];
+  const rest = list.filter((t) => t && t.id !== threadId);
+
+  if (hidden) {
+    if (rest.length >= 500) {
+      throw new HttpsError("failed-precondition", "발행 제외 주제가 너무 많습니다.");
+    }
+    rest.push({
+      id: threadId,
+      title: String((request.data && request.data.title) || "").slice(0, 120),
+      hiddenBy: caller,
+      hiddenAt: new Date().toISOString(),
+    });
+  }
+  await ref.set({ hidden: rest, updatedAt: new Date().toISOString() }, { merge: true });
+  return { ok: true, threadId, hidden, count: rest.length };
+});
+
 exports.ensureClaim = onCall(async (request) => {
   const email = callerEmail(request);
   const snap = await db().collection("members").doc(email).get();

@@ -61,6 +61,18 @@ def load_requests() -> list[dict]:
     return rows
 
 
+def load_hidden_threads() -> list[str]:
+    """관리자가 발행에서 뺀 주제 ID.
+
+    주제 단위 제외는 '발행 제외'와 같은 층이다 — 원본은 남고 발행본에서만 빠지며
+    되돌릴 수 있다. 순수 잡담 스레드를 골라 빼는 용도다.
+    """
+    if not REQUESTS_PATH.exists():
+        return []
+    raw = build_site._read_json(REQUESTS_PATH)
+    return sorted({str(t) for t in (raw.get("hidden_threads") or []) if t})
+
+
 def collection_opt_outs(requests: list[dict]) -> list[str]:
     """수집 자체를 거부한 사람의 대화방 표시명(쓰던 이름 전부)."""
     out = set()
