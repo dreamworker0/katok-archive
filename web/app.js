@@ -32,7 +32,13 @@
     lightboxClose: document.getElementById("lightboxClose"),
   };
   var state = { view: "summary", q: "", nick: "", graph: null, session: null,
-                mine: null, admin: null };
+                mine: null, admin: null, gview: "grid", tsort: "desc" };
+  try {
+    var savedG = localStorage.getItem("gallery-view");
+    if (savedG === "list" || savedG === "grid") state.gview = savedG;
+    var savedS = localStorage.getItem("thread-sort");
+    if (savedS === "asc" || savedS === "desc") state.tsort = savedS;
+  } catch (e) { /* 프라이빗 모드 등 — 기본값으로 간다 */ }
 
   // ---------- 유틸 ----------
   function esc(s) {
@@ -217,7 +223,8 @@
     if (state.nick && (t.participants || []).indexOf(state.nick) === -1) return false;
     if (state.q) {
       var q = state.q.toLowerCase();
-      var hay = (t.title + " " + t.summary + " " + (t.participants || []).join(" ") +
+      var hay = (t.title + " " + t.summary + " " + (t.detail || "") + " " +
+                 (t.points || []).join(" ") + " " + (t.participants || []).join(" ") +
                  " " + t.start_date + " " + (t.links || []).map(function (l) {
                    return l.url; }).join(" ")).toLowerCase();
       if (hay.indexOf(q) === -1) return false;
@@ -225,13 +232,31 @@
     return true;
   }
 
+  /** 주제 정렬 키 — 같은 날 주제가 여럿이라 시각까지 봐야 순서가 맞는다. */
+  function threadKey(t) {
+    return (t.start_date || "") + " " + (t.start_time || "");
+  }
+
   function renderTimeline() {
     var rows = THREADS.filter(threadMatches);
     if (!rows.length) { el.view.innerHTML = '<p class="hint">검색 결과가 없어요.</p>'; return; }
 
-    var html = ['<p class="room-sub" style="margin:0 0 12px">주제 ' + rows.length +
+    // 최신 것부터 보는 게 기본이다 — 어제 무슨 얘기가 오갔는지가 가장 궁금하다.
+    var desc = state.tsort !== "asc";
+    rows = rows.slice().sort(function (a, b) {
+      var ka = threadKey(a), kb = threadKey(b);
+      if (ka === kb) return 0;
+      return (ka < kb ? -1 : 1) * (desc ? -1 : 1);
+    });
+
+    var html = ['<div class="gal-head">',
+      '<p class="room-sub">주제 ' + rows.length +
       "개" + (rows.length !== THREADS.length ? " / 전체 " + THREADS.length : "") +
-      " · 대화 원문은 보관만 하고 공개하지 않습니다</p>"];
+      " · 대화 원문은 보관만 하고 공개하지 않습니다</p>",
+      '<div class="gal-modes">',
+      '<button class="gal-mode' + (desc ? " on" : "") + '" data-tsort="desc">↓ 최신순</button>',
+      '<button class="gal-mode' + (desc ? "" : " on") + '" data-tsort="asc">↑ 오래된순</button>',
+      "</div></div>"];
     var lastDate = null;
     rows.forEach(function (t) {
       if (t.start_date !== lastDate) {
@@ -241,7 +266,35 @@
       html.push(renderThreadCard(t));
     });
     el.view.innerHTML = html.join("");
+    Array.prototype.forEach.call(el.view.querySelectorAll("[data-tsort]"), function (b) {
+      b.onclick = function () {
+        state.tsort = b.getAttribute("data-tsort");
+        try { localStorage.setItem("thread-sort", state.tsort); } catch (e) { /* 무시 */ }
+        renderTimeline();
+      };
+    });
     bindThreadCards(el.view);
+  }
+
+  /* 상세 요약.
+   *
+   * 원문을 발행하지 않기로 한 이상 요약이 원문을 대신해야 한다. 한 줄로는
+   * 무슨 얘기였는지 알 수가 없다는 지적에서 나왔다. 목록을 훑을 때는 방해가
+   * 되므로 접어 두고, 검색 중이면 어디가 걸렸는지 보이도록 펼쳐 둔다.
+   */
+  function detailBlock(t) {
+    if (!t.detail && !(t.points && t.points.length)) return "";
+    var open = !!state.q;
+    var pts = (t.points || []).map(function (p) {
+      return "<li>" + highlightText(esc(p), state.q) + "</li>";
+    }).join("");
+    return '<div class="tc-detail' + (open ? " on" : "") + '">' +
+      '<button class="tc-toggle" type="button">' +
+      (open ? "간단히" : "자세히 보기") + "</button>" +
+      '<div class="tc-detail-body">' +
+      (t.detail ? "<p>" + highlightText(esc(t.detail), state.q) + "</p>" : "") +
+      (pts ? "<ul>" + pts + "</ul>" : "") +
+      "</div></div>";
   }
 
   function renderThreadCard(t) {
@@ -266,6 +319,7 @@
       (t.media_count ? " · 사진·첨부 " + t.media_count : "") + "</span></div>" +
       '<h3 class="tc-title">' + highlightText(esc(t.title), state.q) + "</h3>" +
       '<p class="tc-summary">' + highlightText(esc(t.summary || ""), state.q) + "</p>" +
+      detailBlock(t) +
       (people ? '<div class="tc-people">' + people + "</div>" : "") +
       (links ? '<div class="tc-links">' + links + more + "</div>" : "") +
       // 관리자에게만 보인다. 잡담 주제를 보다가 그 자리에서 뺄 수 있어야 한다.
@@ -277,6 +331,13 @@
   }
 
   function bindThreadCards(scope) {
+    Array.prototype.forEach.call(scope.querySelectorAll(".tc-toggle"), function (b) {
+      b.onclick = function () {
+        var box = b.parentNode;
+        var on = box.classList.toggle("on");
+        b.textContent = on ? "간단히" : "자세히 보기";
+      };
+    });
     Array.prototype.forEach.call(scope.querySelectorAll("[data-nick]"), function (b) {
       b.onclick = function () {
         el.filter.value = b.getAttribute("data-nick");
@@ -331,13 +392,27 @@
       });
     });
     if (!items.length) { el.view.innerHTML = '<p class="hint">표시할 이미지가 없어요.</p>'; return; }
-    var html = ['<p class="room-sub" style="margin:0 0 12px">보관된 사진 ' + items.length + "장</p>", '<div class="gallery">'];
+    var list = state.gview === "list";
+    var html = ['<div class="gal-head">',
+      '<p class="room-sub">보관된 사진 ' + items.length + "장</p>",
+      '<div class="gal-modes">',
+      '<button class="gal-mode' + (list ? "" : " on") + '" data-gview="grid" title="바둑판">▦ 그리드</button>',
+      '<button class="gal-mode' + (list ? " on" : "") + '" data-gview="list" title="목록">☰ 리스트</button>',
+      "</div></div>",
+      '<div class="gallery' + (list ? " as-list" : "") + '">'];
     items.forEach(function (it) {
       html.push('<figure data-jump="t-' + esc(it.tid || "") + '"><img data-img="' + esc(it.src) +
         '" alt="" /><figcaption>' + esc(it.date) + " · " + esc(it.nick) + "</figcaption></figure>");
     });
     html.push("</div>");
     el.view.innerHTML = html.join("");
+    Array.prototype.forEach.call(el.view.querySelectorAll(".gal-mode"), function (b) {
+      b.onclick = function () {
+        state.gview = b.getAttribute("data-gview");
+        try { localStorage.setItem("gallery-view", state.gview); } catch (e) { /* 무시 */ }
+        renderGallery();
+      };
+    });
     Array.prototype.forEach.call(el.view.querySelectorAll("figure"), function (fig) {
       fig.querySelector("img").onclick = function () { openLightbox(this); };
       fig.querySelector("figcaption").onclick = function () { jumpToTimeline(fig.getAttribute("data-jump")); };
@@ -537,17 +612,30 @@
 
     if (kind === "image") {
       // 썸네일 없이 '사진'이라고만 쓰면 무엇을 지울지 고를 수가 없다.
+      // 작은 썸네일만으로도 부족해서 — 클릭하면 원본 크기로 띄운다.
       body = m.images && m.images.length
         ? '<span class="mine-thumbs">' +
           m.images.map(function (src) {
-            return '<img data-img="' + esc(src) + '" alt="" />';
-          }).join("") + "</span>"
+            return '<img class="mine-thumb" data-img="' + esc(src) +
+              '" alt="" title="클릭하면 크게 봅니다" />';
+          }).join("") +
+          '<span class="mine-zoom">클릭하면 크게 보기</span></span>'
         : '<span class="mine-muted">🖼 사진' +
           (m.image_count > 1 ? " " + m.image_count + "장" : "") + " (수집 대기)</span>";
     } else if (kind === "file") {
+      // 파일은 이름만으로 내용을 알 수 없다. 열어보고 지울 수 있어야 한다.
       var fname = m.file ? m.file.name : (m.text || "").replace(/^파일:\s*/, "");
-      body = "📎 " + esc(fname) +
-        (m.file ? ' <span class="file-size">' + fmtSize(m.file.size) + "</span>" : "");
+      body = '<span class="mine-file">' +
+        '<span class="mf-icon">' + fileIcon(fname) + "</span>" +
+        '<span class="mf-body"><span class="mf-name">' + esc(fname) + "</span>" +
+        '<span class="mf-meta">' +
+        (m.file ? fmtSize(m.file.size) + " · 원본 보관 중" : "원본을 구하지 못한 파일") +
+        "</span></span>" +
+        (m.file
+          ? '<button type="button" class="btn ghost mf-open" data-file="' + esc(m.file.path) +
+            '" data-name="' + esc(m.file.name) + '">열어보기</button>'
+          : "") +
+        "</span>";
     } else {
       body = esc(m.text || "");
     }
@@ -622,12 +710,13 @@
       "</div>" +
 
       '<div class="mine-card">' +
-      "<h3>이미 올린 글 내리기</h3>" +
+      "<h3>이미 올린 글·사진·첨부 내리기</h3>" +
       (pendingCount
         ? '<p class="mine-note">현재 <b>' + pendingCount + "개</b>를 내려달라고 요청해 두셨습니다. " +
           "아직 반영 전이라 철회할 수 있습니다.</p>"
-        : '<p class="mine-note">내릴 글을 고르세요. 발행본에서 빠지며, ' +
-          "되돌리려면 관리자에게 요청해야 합니다.</p>") +
+        : '<p class="mine-note">아래 <b>사진</b>·<b>첨부</b> 탭에서 내가 올린 사진과 파일도 ' +
+          "고를 수 있습니다. 사진은 눌러서 크게 보고, 첨부는 열어본 뒤 정하세요. " +
+          "발행본에서 빠지며, 되돌리려면 관리자에게 요청해야 합니다.</p>") +
       '<div class="mine-tabs">' +
       [["all", "전체", all.length], ["text", "글", counts.text],
        ["image", "사진", counts.image], ["file", "첨부", counts.file]]
@@ -670,6 +759,21 @@
     });
     // 썸네일도 Storage 에서 인증 요청으로 받아온다
     bindImages(el.view);
+
+    /* 행 전체가 <label> 이라 그냥 두면 사진을 눌러도 체크박스만 토글된다.
+     * 무엇을 지울지 고르려면 먼저 봐야 하므로, 확대가 체크보다 우선이다. */
+    Array.prototype.forEach.call(el.view.querySelectorAll(".mine-thumb"), function (img) {
+      img.onclick = function (ev) {
+        ev.preventDefault(); ev.stopPropagation();
+        openLightbox(img);
+      };
+    });
+    Array.prototype.forEach.call(el.view.querySelectorAll(".mf-open"), function (b) {
+      b.addEventListener("click", function (ev) {
+        ev.preventDefault(); ev.stopPropagation();
+      });
+    });
+    bindFiles(el.view);
     var boxes = function () {
       return Array.prototype.slice.call(el.view.querySelectorAll("input[data-mid]"));
     };

@@ -197,6 +197,28 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .gallery figcaption { font-size: 11px; color: var(--ink-faint); margin-top: 3px; cursor: pointer; }
 .gallery figcaption:hover { color: var(--accent); }
 
+/* 보기 전환 — 그리드는 훑기 좋고, 리스트는 언제 누가 올렸는지 읽기 좋다 */
+.gal-head { display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin: 0 0 12px; }
+.gal-head .room-sub { margin: 0; }
+.gal-modes { display: flex; gap: 4px; background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: 9px; padding: 3px; }
+.gal-mode { border: 0; background: none; cursor: pointer; font: inherit; font-size: 12px;
+  color: var(--ink-faint); padding: 5px 11px; border-radius: 7px; }
+.gal-mode:hover { color: var(--ink); }
+.gal-mode.on { background: var(--surface); color: var(--ink); font-weight: 700;
+  box-shadow: var(--shadow-sm); }
+
+.gallery.as-list { display: flex; flex-direction: column; gap: 0;
+  border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+  background: var(--surface); }
+.gallery.as-list figure { display: flex; align-items: center; gap: 12px;
+  padding: 8px 12px; border-top: 1px solid var(--line); }
+.gallery.as-list figure:first-child { border-top: 0; }
+.gallery.as-list figure:hover { background: var(--surface-2); }
+.gallery.as-list img { width: 64px; height: 64px; flex: 0 0 64px; }  /* 최소 크기 해제는 아래 참고 */
+.gallery.as-list figcaption { margin: 0; font-size: 13px; color: var(--ink); }
+
 /* ---------- 통계 ---------- */
 .stat-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin-bottom: 18px; }
 .stat-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px; text-align: center; box-shadow: var(--shadow-sm); }
@@ -246,6 +268,20 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .tc-meta { font-size: 12px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
 .tc-title { margin: 0 0 5px; font-size: 15.5px; font-weight: 700; line-height: 1.45; }
 .tc-summary { margin: 0 0 10px; font-size: 14px; color: var(--ink-soft); line-height: 1.7; }
+/* 상세 요약 — 목록을 훑을 때는 접혀 있고, 눌러야 펴진다 */
+.tc-detail { margin: 0 0 10px; }
+.tc-toggle { border: 0; background: none; padding: 0; cursor: pointer; font: inherit;
+  font-size: 12.5px; font-weight: 700; color: var(--accent); }
+.tc-toggle:hover { text-decoration: underline; }
+.tc-detail-body { display: none; margin-top: 8px; padding: 12px 14px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; }
+.tc-detail.on .tc-detail-body { display: block; }
+.tc-detail-body p { margin: 0; font-size: 14px; line-height: 1.85; color: var(--ink); }
+.tc-detail-body ul { margin: 10px 0 0; padding-left: 18px; }
+.tc-detail-body li { font-size: 13.5px; line-height: 1.7; color: var(--ink-soft);
+  margin-bottom: 3px; }
+.tc-detail-body li:last-child { margin-bottom: 0; }
+
 .tc-people { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
 .tc-people .chip { cursor: pointer; font-size: 12px; }
 .tc-links { border-top: 1px dashed var(--line); padding-top: 8px; }
@@ -310,12 +346,27 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 
 .mine-list { max-height: 460px; overflow-y: auto; border: 1px solid var(--line);
   border-radius: 10px; }
-/* 사진 줄은 썸네일이 들어가 높이가 다르다 */
-.mine-row.mine-image { align-items: center; }
-.mine-thumbs { display: flex; gap: 4px; }
-.mine-thumbs img { width: 52px; height: 52px; object-fit: cover; border-radius: 6px;
-  background: var(--surface-2); }
+/* 사진·첨부 줄은 내용이 들어가 높이가 다르다 */
+.mine-row.mine-image, .mine-row.mine-file { align-items: center; }
+/* 이 줄에서는 잘라내지 않는다 — 무엇인지 보여야 지울지 정한다 */
+.mine-row.mine-image .mine-text, .mine-row.mine-file .mine-text {
+  overflow: visible; white-space: normal; text-overflow: clip; }
+
+.mine-thumbs { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.mine-thumbs img { width: 96px; height: 96px; object-fit: cover; border-radius: 8px;
+  background: var(--surface-2); border: 1px solid var(--line); cursor: zoom-in;
+  transition: transform .12s ease, box-shadow .12s ease; }
+.mine-thumbs img:hover { transform: scale(1.03); box-shadow: var(--shadow-sm); }
+.mine-zoom { font-size: 11.5px; color: var(--ink-faint); }
 .mine-muted { color: var(--ink-faint); }
+
+/* 첨부 — 이름만 보고는 무슨 파일인지 모른다. 형식·크기와 열어보기를 함께 준다 */
+.mine-file { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.mine-file .mf-icon { font-size: 22px; line-height: 1; flex: 0 0 auto; }
+.mine-file .mf-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.mine-file .mf-name { font-weight: 600; overflow-wrap: anywhere; }
+.mine-file .mf-meta { font-size: 11.5px; color: var(--ink-faint); }
+.mine-file .mf-open { flex: 0 0 auto; margin-left: auto; }
 .mine-row { display: grid; grid-template-columns: auto auto 1fr auto; gap: 10px; align-items: baseline;
   padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 13.5px; }
 .mine-row:last-child { border-bottom: none; }
@@ -368,6 +419,11 @@ select.adm-pick { padding: 6px 9px; font: inherit; font-size: 13.5px; color: var
 .imgs img:not([src]), .gallery img:not([src]) {
   min-width: 120px; min-height: 120px;
   background: var(--surface-2);
+}
+/* 리스트 보기의 썸네일은 작아야 한 줄에 들어간다. 아직 안 받아온 사진에도
+   그리드용 최소 크기를 물리면 줄이 통째로 밀린다. */
+.gallery.as-list img, .gallery.as-list img:not([src]) {
+  min-width: 0; min-height: 0; width: 64px; height: 64px; flex: 0 0 64px;
 }
 .imgs.single img:not([src]) { width: 200px; height: 200px; }
 

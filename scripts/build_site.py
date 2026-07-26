@@ -16,6 +16,8 @@ import shutil
 from collections import Counter, OrderedDict
 from pathlib import Path
 
+from scripts.topic_details import apply_details, load_details
+
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
 ASSETS_IMAGES = ROOT / "assets" / "images"
@@ -320,6 +322,14 @@ def build_data(
         tmeta["participants"] = nicks
         tmeta["start_date"] = msg_index[ids[0]]["date"]
         tmeta["end_date"] = msg_index[ids[-1]]["date"]
+        # 화면에서 최신순/오래된순을 뒤집으려면 날짜만으로는 부족하다.
+        # 같은 날 주제가 여럿이면 시각까지 봐야 순서가 맞는다.
+        tmeta["start_time"] = msg_index[ids[0]].get("time", "")
+        tmeta["end_time"] = msg_index[ids[-1]].get("time", "")
+
+    # 원문을 발행하지 않으므로 요약이 원문을 대신해야 한다. 사람이 원문을 읽고 쓴
+    # 서술형 요약을 얹는다. 없는 스레드는 한 줄 요약만 남는다.
+    apply_details(threads_meta, load_details())
 
     knowledge = knowledge or {"nodes": [], "edges": [], "node_types": [], "edge_types": []}
     digests = build_digests(

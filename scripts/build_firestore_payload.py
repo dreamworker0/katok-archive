@@ -148,6 +148,12 @@ def prune_knowledge(knowledge: dict, messages: list[dict], exclusions: dict) -> 
 
 MY_MESSAGES_LIMIT = 700_000   # Firestore 문서 1MiB 한도 아래로 여유
 
+# threads·media 는 항목 전체가 문서 한 장(threads/all, media/all)에 들어간다.
+# 매일 새 주제가 붙으므로 언젠가는 한도에 닿는다. 넘으면 업로드가 실패하는데
+# 그때 원인을 찾기 어려우므로 미리 알린다. 요약을 서술형으로 늘리면서
+# 스레드 문서가 한 번에 10배 가까이 커진 적이 있다.
+BUNDLE_LIMIT = 700_000
+
 
 def build_my_messages(messages: list[dict], members: list[dict]) -> dict[str, list[dict]]:
     """멤버별로 '본인이 쓴 글'만 모은다.
@@ -396,6 +402,14 @@ def main() -> None:
     if payload["my_messages"]:
         print("내 글 문서 %d명분 (최대 %dKB)"
               % (len(big), max(s for _, s in big) // 1024))
+    for name in ("threads", "media"):
+        size = len(json.dumps({"items": payload[name]},
+                              ensure_ascii=False).encode("utf-8"))
+        if size > BUNDLE_LIMIT:
+            print("[주의] %s/all 문서가 %dKB — Firestore 1MiB 한도에 근접합니다. "
+                  "나눠 담아야 합니다." % (name, size // 1024))
+        else:
+            print("%s/all %dKB" % (name, size // 1024))
     for w in payload["member_warnings"]:
         print("[닉네임 확인] %s" % w)
     if r["dropped_count"]:
