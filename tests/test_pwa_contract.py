@@ -335,6 +335,20 @@ class HostingHeaderTests(unittest.TestCase):
                     "no-cache", self._headers_for(hosting, "/sw.js").get("Cache-Control")
                 )
 
+    def test_the_entry_point_itself_is_never_cached(self):
+        """맨 "/" 도 no-cache 여야 한다.
+
+        `**/*.@(js|css|html)` 는 경로가 .html 로 끝날 때만 맞는다. 사람들이 실제로
+        여는 주소는 "/" 라서 그 규칙에 걸리지 않고 Firebase 기본값(1시간)을 받았다.
+        그러면 배포 후 최대 한 시간 동안 예전 화면이 보인다 — 서비스 워커를
+        네트워크 우선으로 짠 뜻도 그만큼 무력해진다.
+        """
+        for hosting in self.config["hosting"]:
+            with self.subTest(site=hosting["site"]):
+                self.assertEqual(
+                    "no-cache", self._headers_for(hosting, "/").get("Cache-Control")
+                )
+
     def test_manifest_is_served_as_a_manifest_and_stays_fresh(self):
         for hosting in self.config["hosting"]:
             with self.subTest(site=hosting["site"]):
