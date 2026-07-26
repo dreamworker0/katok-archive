@@ -30,7 +30,8 @@
     lightboxImg: document.getElementById("lightboxImg"),
     lightboxClose: document.getElementById("lightboxClose"),
   };
-  var state = { view: "summary", q: "", nick: "", graph: null, session: null, mine: null };
+  var state = { view: "summary", q: "", nick: "", graph: null, session: null,
+                mine: null, admin: null };
 
   // ---------- 유틸 ----------
   function esc(s) {
@@ -528,6 +529,141 @@
     };
   }
 
+  /* ---------- 관리자 ----------
+   *
+   * 승인은 Cloud Function 이 한다. 클라이언트가 members 문서를 직접 못 쓰게 막아
+   * 두었고(규칙에서 write: false), 이미지 권한인 Custom Claims 는 Admin SDK 로만
+   * 붙일 수 있기 때문이다. 화면은 요청하고 결과를 보여주는 일만 한다.
+   */
+  function isAdmin() {
+    return !!(state.session && state.session.admin);
+  }
+
+  function participantIndex() {
+    var idx = {};
+    (STATS.participants || []).forEach(function (p) { idx[p.nickname] = p; });
+    return idx;
+  }
+
+  function adminClaimRow(c, parts) {
+    var hit = parts[c.nickname];
+    var match = hit
+      ? '<span class="ok">○ 참여자 ' + esc(c.nickname) + " · " + hit.message_count + "건</span>"
+      : '<span class="bad">× 명단에 없음</span>';
+    return '<div class="adm-row" data-email="' + esc(c.id) + '">' +
+      '<div class="adm-main"><b>' + esc(c.nickname || "(이름 없음)") + "</b> " +
+      '<span class="adm-mail">' + esc(c.id) + "</span></div>" +
+      '<div class="adm-meta">' + match +
+      (c.displayName ? ' · 구글 계정명 ' + esc(c.displayName) : "") + "</div>" +
+      '<div class="adm-act">' +
+      '<input class="adm-nick" value="' + esc(c.nickname || "") + '" title="승인할 표시명" />' +
+      '<button class="btn" data-act="approve">승인</button> ' +
+      '<button class="btn ghost" data-act="reject">반려</button>' +
+      "</div></div>";
+  }
+
+  function renderAdmin() {
+    if (!isAdmin()) {
+      el.view.innerHTML = '<p class="hint">관리자만 볼 수 있습니다.</p>';
+      return;
+    }
+    if (!state.admin) {
+      el.view.innerHTML = '<p class="hint">불러오는 중…</p>';
+      state.session.admin.load().then(
+        function (d) { state.admin = d; if (state.view === "admin") renderAdmin(); },
+        function (e) {
+          el.view.innerHTML = '<p class="hint">불러오지 못했습니다: ' +
+            esc(e.message || String(e)) + "</p>";
+        }
+      );
+      return;
+    }
+
+    var d = state.admin;
+    var parts = participantIndex();
+    var MODE_LABEL = { public: "공개", unpublished: "발행 제외", none: "수집 거부" };
+
+    var pending = d.preferences.filter(function (p) {
+      return p.collection && p.collection !== "public";
+    });
+
+    el.view.innerHTML =
+      '<section class="adm">' +
+      '<h2 class="mine-title">관리</h2>' +
+
+      '<div class="mine-card"><h3>열람 신청 ' + d.claims.length + "건</h3>" +
+      (d.claims.length
+        ? d.claims.map(function (c) { return adminClaimRow(c, parts); }).join("")
+        : '<p class="mine-note">대기 중인 신청이 없습니다.</p>') +
+      '<p class="adm-msg" id="admMsg"></p></div>' +
+
+      '<div class="mine-card"><h3>삭제 요청 ' + d.deletions.length + "건</h3>" +
+      (d.deletions.length
+        ? d.deletions.map(function (r) {
+            var n = r.allMessages ? "본인 글 전체" : ((r.messageIds || []).length + "건");
+            return '<div class="adm-line"><b>' + esc(r.id) + "</b> — " + esc(n) + "</div>";
+          }).join("")
+        : '<p class="mine-note">요청이 없습니다.</p>') +
+      '<p class="mine-note">반영은 매일 23:40 자동 갱신 때 이뤄집니다. ' +
+      "남의 글을 지우려는 요청은 반영 단계에서 걸러지고 로그에 남습니다.</p></div>" +
+
+      '<div class="mine-card"><h3>수집 동의 — 기본값이 아닌 ' + pending.length + "명</h3>" +
+      (pending.length
+        ? pending.map(function (p) {
+            return '<div class="adm-line"><b>' + esc(p.id) + "</b> — " +
+              esc(MODE_LABEL[p.collection] || p.collection) + "</div>";
+          }).join("")
+        : '<p class="mine-note">모두 공개 설정입니다.</p>') +
+      "</div>" +
+
+      '<div class="mine-card"><h3>멤버 ' + d.members.length + "명</h3>" +
+      d.members.map(function (m) {
+        var linked = m.nickname && parts[m.nickname];
+        return '<div class="adm-line"><b>' + esc(m.nickname || "(표시명 없음)") + "</b> " +
+          '<span class="adm-mail">' + esc(m.id) + "</span>" +
+          (m.role === "admin" ? ' <span class="adm-tag">관리자</span>' : "") +
+          (linked ? "" : ' <span class="bad">· 참여자 명단과 연결 안 됨</span>') +
+          "</div>";
+      }).join("") + "</div>" +
+      "</section>";
+
+    bindAdminActions();
+  }
+
+  function bindAdminActions() {
+    var msg = document.getElementById("admMsg");
+    var say = function (t) { if (msg) msg.textContent = t || ""; };
+
+    Array.prototype.forEach.call(el.view.querySelectorAll(".adm-row"), function (row) {
+      var email = row.getAttribute("data-email");
+      var nickInput = row.querySelector(".adm-nick");
+
+      var finish = function (verb) {
+        return function () {
+          say(email + " " + verb + " 완료. 목록을 새로 불러옵니다…");
+          state.admin = null;
+          renderAdmin();
+        };
+      };
+      var fail = function (e) { say("실패: " + (e.message || String(e))); };
+
+      row.querySelector('[data-act="approve"]').onclick = function () {
+        var nickname = (nickInput.value || "").trim();
+        if (nickname.length < 2) { say("표시명을 확인해 주세요."); return; }
+        if (!participantIndex()[nickname] &&
+            !window.confirm("'" + nickname + "' 은 참여자 명단에 없습니다.\n" +
+                            "그대로 승인하면 '내 글 관리'에 글이 하나도 안 보입니다. 계속할까요?")) return;
+        say("승인 중…");
+        state.session.admin.approve(email, nickname, "user").then(finish("승인"), fail);
+      };
+      row.querySelector('[data-act="reject"]').onclick = function () {
+        if (!window.confirm(email + " 의 신청을 반려합니다. 계속할까요?")) return;
+        say("반려 중…");
+        state.session.admin.reject(email).then(finish("반려"), fail);
+      };
+    });
+  }
+
   // ---------- 검색·라우팅 ----------
   function runSearch(q) {
     state.q = q || ""; el.search.value = state.q;
@@ -548,6 +684,7 @@
     else if (state.view === "gallery") renderGallery();
     else if (state.view === "stats") renderStats();
     else if (state.view === "mine") renderMine();
+    else if (state.view === "admin") renderAdmin();
   }
 
   // 로그인한 사용자 표시 + 로그아웃 (보호모드에서만 세션이 주어진다)
@@ -582,6 +719,8 @@
     // 로컬 미리보기(site/)에는 세션이 없으므로 탭 자체를 감춘다.
     var mineTab = el.tabs.querySelector('[data-view="mine"]');
     if (mineTab && !canManageMine()) mineTab.remove();
+    var adminTab = el.tabs.querySelector('[data-view="admin"]');
+    if (adminTab && !isAdmin()) adminTab.remove();
     el.roomTitle.textContent = A.chat_room || "아카이브";
     var t = STATS.totals || {};
     el.roomSub.textContent = (t.messages || 0) + "개 메시지 · " + (t.participants || 0) + "명 · " +

@@ -236,6 +236,61 @@
     };
   }
 
+  /** 관리자 화면이 쓰는 API. 관리자가 아니면 만들지 않는다. */
+  function makeAdminApi(db, user) {
+    // Functions 는 배포 리전과 맞춰야 한다 (functions/index.js 의 setGlobalOptions)
+    var fns = firebase.app().functions("asia-northeast3");
+    var call = function (name, data) {
+      return fns.httpsCallable(name)(data || {}).then(function (r) { return r.data; });
+    };
+    var rows = function (name) {
+      return db.collection(name).get().then(function (snap) {
+        var out = [];
+        snap.forEach(function (d) { out.push(Object.assign({ id: d.id }, d.data())); });
+        return out;
+      });
+    };
+
+    return {
+      load: function () {
+        return Promise.all([
+          rows("claims"), rows("members"), rows("preferences"), rows("deletionRequests"),
+        ]).then(function (r) {
+          return { claims: r[0], members: r[1], preferences: r[2], deletions: r[3] };
+        });
+      },
+      approve: function (email, nickname, role) {
+        return call("approveClaim", { email: email, nickname: nickname, role: role });
+      },
+      reject: function (email) { return call("rejectClaim", { email: email }); },
+    };
+  }
+
+  /** members 에는 있는데 토큰에 클레임이 없으면 받아온다.
+   *
+   *  멤버는 관리자 페이지 말고도 여러 경로로 생긴다 — members.json 을 손으로 고치고
+   *  업로더를 돌리는 기존 방식이 그대로 남아 있다. 그렇게 들어온 사람은 클레임이 없어
+   *  이미지가 403 이 된다. 로그인할 때마다 확인해 "어느 경로로 멤버가 됐든 결국
+   *  열린다"를 보장한다. 실패해도 대화는 볼 수 있으므로 진행을 막지 않는다.
+   */
+  function ensureClaim(user) {
+    return user.getIdTokenResult().then(function (res) {
+      if (res.claims && res.claims.member === true) return res.claims;
+      var fns = firebase.app().functions("asia-northeast3");
+      return fns.httpsCallable("ensureClaim")({}).then(function (r) {
+        if (!r.data || !r.data.refreshed) return res.claims || {};
+        // 새 클레임은 토큰을 강제로 다시 받아야 반영된다
+        return user.getIdToken(true).then(function () {
+          return user.getIdTokenResult().then(function (fresh) { return fresh.claims; });
+        });
+      });
+    }).catch(function (e) {
+      // 이미지가 안 열릴 수는 있어도 대화는 봐야 한다
+      if (window.console) console.warn("클레임 확인 실패:", e && e.message);
+      return {};
+    });
+  }
+
   function start(user, member) {
     // 이미지는 Storage 보호 모드로 (로그인 토큰 첨부 요청)
     window.ArchiveImages.useStorage({
@@ -256,6 +311,9 @@
       role: member.role || "user",
       signOut: function () { firebase.auth().signOut(); },
       requests: makeRequestApi(firebase.firestore(), user),
+      admin: member.role === "admin"
+        ? makeAdminApi(firebase.firestore(), user)
+        : null,
     });
   }
 
@@ -285,7 +343,8 @@
           return;
         }
         var member = snap.data();
-        loadArchive(db).then(
+        // 이미지 권한(Custom Claims)을 먼저 확인한 뒤 아카이브를 연다
+        ensureClaim(user).then(function () { return loadArchive(db); }).then(
           function () { start(user, member); },
           function (e) {
             gateError("아카이브를 불러오지 못했습니다", escapeHtml(e.message || String(e)),

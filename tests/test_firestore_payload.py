@@ -92,39 +92,21 @@ class PayloadShapeTest(unittest.TestCase):
         for m in self.payload["members"]:
             self.assertIn(m["role"], ("admin", "user"))
 
-    def test_storage_rules_contain_every_member(self):
-        rules = bfp.render_storage_rules(self.payload["members"])
-        for m in self.payload["members"]:
-            self.assertIn('"%s"' % m["email"], rules)
-        self.assertNotIn("__MEMBER_EMAILS__", rules)
-
-    def test_storage_rules_deny_all_when_no_members(self):
-        """멤버가 비어 있으면 아무도 통과하지 못해야 한다(실수로 전체 공개 방지)."""
-        rules = bfp.render_storage_rules([])
-        self.assertIn("__no_member_configured__", rules)
-        self.assertNotIn("__MEMBER_EMAILS__", rules)
-
     def test_members_carry_nickname_field(self):
         for m in self.payload["members"]:
             self.assertIn("nickname", m)
 
-    def test_storage_rules_survive_multiple_members(self):
-        """멤버 2명 이상에서 목록이 주석 밖으로 새어 나가면 규칙이 컴파일되지 않는다.
+    def test_storage_rules_hold_no_member_emails(self):
+        """Custom Claims 로 옮긴 뒤로 규칙에 이메일이 들어가면 안 된다.
 
-        치환을 통짜 문자열로 하면 설명 주석의 같은 토큰까지 바뀌어, 멤버가 1명일 때는
-        멀쩡하다가 2명째부터 깨진다. 실제로 배포에서 터진 회귀라 고정해 둔다.
+        예전에는 멤버 목록을 규칙에 생성해 박아 넣었고, 그 치환이 설명 주석까지
+        건드려 멤버 2명째부터 배포가 깨졌다. 이제 규칙은 고정 파일이므로 다시
+        생성물로 되돌아가지 않았는지만 지킨다.
         """
-        members = [{"email": "a@x.com"}, {"email": "b@x.com"}, {"email": "c@x.com"}]
-        rules = bfp.render_storage_rules(members)
-        for line in rules.splitlines():
-            stripped = line.strip()
-            if stripped.startswith("//"):
-                self.assertNotIn("@x.com", stripped, "이메일이 주석 줄에 들어갔다: " + line)
-            elif "@x.com" in stripped:
-                # 목록 항목은 반드시 따옴표로 감싼 한 줄이어야 한다
-                self.assertRegex(stripped, r'^"[^"]+@x\.com",?$')
-        for m in members:
-            self.assertIn('"%s"' % m["email"], rules)
+        rules = (Path(__file__).resolve().parent.parent / "storage.rules").read_text(
+            encoding="utf-8")
+        self.assertIn("request.auth.token.member == true", rules)
+        self.assertNotIn("@", rules.split("service firebase.storage")[1])
 
 
 class MemberNicknameTest(unittest.TestCase):

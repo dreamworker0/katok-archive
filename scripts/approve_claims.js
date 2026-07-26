@@ -2,12 +2,11 @@
 /**
  * 열람 신청(claims/) 조회·승인·반려 — 관리자 로컬 도구.
  *
- * 왜 웹 관리자 페이지가 아니라 로컬 스크립트인가
- *   Storage 규칙은 Firestore 를 읽을 수 없어 멤버 이메일이 storage.rules 에
- *   하드코딩돼 있다(P1 구조). 그래서 "승인"은 Firestore 쓰기만으로 끝나지 않고
- *   규칙 재생성 + 재배포까지 가야 이미지가 열린다. 그 전체를 한 번에 하려면
- *   Admin SDK 와 firebase CLI 를 함께 쓸 수 있는 로컬이 가장 단순하다.
- *   (P2 에서 Custom Claims 로 옮기면 이 스크립트는 승인 UI 로 대체된다.)
+ * 승인은 관리자 페이지에서도 할 수 있다. 이 스크립트는 그 대체가 아니라 보조다 —
+ * 웹이 막혔을 때, 여러 건을 한 번에 처리할 때, 명단 대조를 자세히 보고 싶을 때 쓴다.
+ *
+ * Custom Claims 로 옮긴 뒤로 storage.rules 재배포는 필요 없다. 클레임만 붙이면
+ * 이미지까지 곧바로 열린다.
  *
  * 사용
  *   node scripts/approve_claims.js                          신청 목록 (명단 대조 포함)
@@ -191,21 +190,28 @@ function run(cmd, args) {
   }
 }
 
-/** firebase CLI 가 전역 PATH 에 없을 수 있다(이 프로젝트는 node_modules 에만 있다).
- *  전역을 먼저 보고, 없으면 로컬 설치본을 npx 로 부른다. */
-function firebaseCmd() {
-  const probe = spawnSync("firebase", ["--version"], { cwd: ROOT, shell: true, stdio: "ignore" });
-  if (probe.status === 0) return { cmd: "firebase", prefix: [] };
-  return { cmd: "npx", prefix: ["--no-install", "firebase"] };
-}
-
-/** 승인이 실제로 효력을 가지려면 여기까지 와야 한다.
- *  Firestore 만 갱신하면 대화는 열리지만 이미지는 계속 403 이다. */
+/** 발행본에 멤버 문서를 반영한다.
+ *  이미지 권한은 Custom Claims 가 담당하므로 규칙 재배포는 필요 없다. */
 function publish() {
   run("python", ["-m", "scripts.build_firestore_payload"]);
   run("node", ["scripts/upload_firestore.js", "--skip-images"]);
-  const fb = firebaseCmd();
-  run(fb.cmd, [...fb.prefix, "deploy", "--only", "storage", "--non-interactive"]);
+}
+
+/** Auth 계정에 클레임을 붙인다 — 이게 있어야 이미지가 열린다.
+ *  한 번도 로그인한 적 없으면 계정이 없다. 그 경우 첫 로그인 때
+ *  ensureClaim Function 이 대신 붙여주므로 실패로 보지 않는다. */
+async function applyClaim(email, isAdmin) {
+  try {
+    const user = await admin.auth().getUserByEmail(email);
+    await admin.auth().setCustomUserClaims(user.uid, { member: true, admin: !!isAdmin });
+    console.log(`  클레임 부여: ${email} (${isAdmin ? "admin" : "user"})`);
+  } catch (e) {
+    if (e.code === "auth/user-not-found") {
+      console.log(`  ${email}: 로그인 이력 없음 — 첫 로그인 때 자동 부여됩니다.`);
+      return;
+    }
+    throw e;
+  }
 }
 
 // ────────────────────────── 승인·반려 ──────────────────────────
@@ -305,6 +311,9 @@ async function main() {
   if (args.approve.length) {
     const changed = approve(args, claims, byNick);
     if (changed && !args.dry) {
+      for (const email of args.approve) {
+        await applyClaim(email, args.role === "admin");
+      }
       if (args.publish) {
         publish();
         // 발행이 끝난 뒤에 신청서를 지운다 — 중간에 실패하면 재시도할 수 있도록
@@ -313,10 +322,9 @@ async function main() {
         }
         console.log("\n승인 완료. 신청자에게 새로고침을 안내하세요.");
       } else {
-        console.log("\n--no-publish: 아래를 직접 실행해야 실제로 열립니다.");
+        console.log("\n--no-publish: 아래를 직접 실행해야 발행본에 반영됩니다.");
         console.log("  python -m scripts.build_firestore_payload");
         console.log("  node scripts/upload_firestore.js --skip-images");
-        console.log("  firebase deploy --only storage");
       }
     }
   }

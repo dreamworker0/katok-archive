@@ -270,6 +270,25 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .mine-flag { font-size: 11.5px; font-weight: 700; color: var(--accent); white-space: nowrap; }
 .mine-foot { font-size: 12.5px; color: var(--ink-faint); text-align: center; margin: 0; }
 
+/* ---------- 관리 ---------- */
+.adm { max-width: 760px; margin: 0 auto; }
+.adm-row { display: grid; gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.adm-row:last-of-type { border-bottom: none; }
+.adm-main { font-size: 14.5px; }
+.adm-mail { color: var(--ink-faint); font-size: 12.5px; }
+.adm-meta { font-size: 12.5px; color: var(--ink-soft); }
+.adm-meta .ok { color: #16a34a; font-weight: 600; }
+.adm-meta .bad, .adm-line .bad { color: #dc2626; font-weight: 600; }
+.adm-act { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+.adm-nick { padding: 6px 9px; font: inherit; font-size: 13.5px; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; min-width: 160px; }
+.adm-nick:focus { outline: none; border-color: var(--accent); }
+.adm-line { padding: 6px 0; font-size: 13.5px; border-bottom: 1px solid var(--line); }
+.adm-line:last-child { border-bottom: none; }
+.adm-tag { font-size: 11px; font-weight: 700; color: var(--accent-ink);
+  background: var(--accent); border-radius: 6px; padding: 1px 6px; }
+.adm-msg { font-size: 13px; color: var(--ink-soft); margin: 10px 0 0; }
+
 /* 로그인 사용자 칩 */
 .session { display: inline-flex; align-items: center; gap: 6px; }
 .session .chip { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

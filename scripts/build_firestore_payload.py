@@ -15,9 +15,6 @@
   images.json          업로드할 이미지 경로 목록
   exclusion-report.json 무엇이 왜 제외됐는지
 
-부수 효과
-  storage.rules        config/storage.rules.template + 멤버 목록으로 생성
-
 제외 규칙(`output/exclusions.json`)은 build_data 이전에 적용해, 통계·주제·그래프·
 요지의 파생 데이터가 모두 '제외된 뒤'의 사실만 반영하게 한다.
 """
@@ -219,37 +216,6 @@ def check_member_nicknames(members: list[dict], participants: dict) -> list[str]
     return warnings
 
 
-PLACEHOLDER = "__MEMBER_EMAILS__"
-
-
-def render_storage_rules(members: list[dict]) -> str:
-    """멤버 목록을 박아 넣은 storage.rules 텍스트를 만든다.
-
-    자리표시자 '줄 전체'가 일치할 때만 바꾼다. 통짜 문자열 치환을 쓰면 설명 주석에
-    같은 토큰이 있을 때 거기까지 바뀌고, 멤버가 2명 이상이면 목록 둘째 줄이 주석
-    밖으로 나가 규칙 컴파일이 깨진다(실제로 겪은 버그).
-    """
-    template = (CONFIG / "storage.rules.template").read_text(encoding="utf-8")
-    if members:
-        block = ",\n".join('          "%s"' % m["email"] for m in members)
-    else:
-        # 멤버가 없으면 아무도 통과하지 못하는 목록(빈 허용목록)을 넣는다.
-        block = '          "__no_member_configured__"'
-
-    out, replaced = [], 0
-    for line in template.splitlines():
-        if line.strip() == PLACEHOLDER:
-            out.append(block)
-            replaced += 1
-        else:
-            out.append(line)
-    if replaced != 1:
-        raise SystemExit(
-            "storage.rules.template 의 자리표시자 줄이 %d개입니다 (정확히 1개여야 함)." % replaced
-        )
-    return "\n".join(out) + "\n"
-
-
 def build_payload() -> dict:
     messages_raw = build_site._read_jsonl(OUTPUT / "messages.jsonl")
     images = build_site._read_jsonl(OUTPUT / "images.jsonl")
@@ -348,11 +314,6 @@ def write_payload(payload: dict) -> None:
         encoding="utf-8",
     )
 
-    # storage.rules 생성 (멤버 허용목록 주입)
-    (ROOT / "storage.rules").write_text(
-        render_storage_rules(payload["members"]), encoding="utf-8"
-    )
-
 
 def main() -> None:
     payload = build_payload()
@@ -365,7 +326,7 @@ def main() -> None:
            len(payload["graph"]["nodes"]), len(payload["graph"]["edges"]),
            m["image_count"])
     )
-    print("멤버 %d명, storage.rules 생성" % len(payload["members"]))
+    print("멤버 %d명" % len(payload["members"]))
     for w in payload["member_warnings"]:
         print("[닉네임 확인] %s" % w)
     if r["dropped_count"]:

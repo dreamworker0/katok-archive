@@ -1,0 +1,11 @@
+{
+  "name": "katok-archive-functions",
+  "private": true,
+  "description": "카톡 아카이브 - 멤버 승인·권한 부여 (P2)",
+  "main": "index.js",
+  "engines": { "node": "22" },
+  "dependencies": {
+    "firebase-admin": "^13.0.0",
+    "firebase-functions": "^6.1.0"
+  }
+}

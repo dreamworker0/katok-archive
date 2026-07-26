@@ -1,0 +1,35 @@
+rules_version = '2';
+
+// 카톡 아카이브 이미지 — 회원 전용
+//
+// P1 에서는 Storage 규칙이 Firestore 를 읽을 수 없다는 제약 때문에 멤버 이메일을
+// config/members.json 으로부터 생성해 이 파일에 박아 넣었다. 멤버가 바뀔 때마다
+// 규칙을 재배포해야 했고, 브라우저는 재배포를 못 하니 승인이 늘 로컬 터미널 일이었다.
+// (게다가 멤버가 2명이 되는 순간 생성이 깨지는 버그도 거기서 나왔다.)
+//
+// 이제는 Custom Claims 를 쓴다. 클레임은 Cloud Functions(approveClaim/ensureClaim)가
+// 붙이므로 이 파일은 멤버가 바뀌어도 그대로다 — 더 이상 생성물이 아니고, 이메일이
+// 없으니 개인정보도 아니다(그래서 .gitignore 에서 뺐다).
+//
+// 클레임이 어긋났는지 보려면:  node scripts/sync_claims.js --dry-run
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isMember() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.member == true;
+    }
+
+    // 아카이브 이미지: 멤버 읽기 전용. 업로드는 Admin SDK로만.
+    match /images/{allPaths=**} {
+      allow read: if isMember();
+      allow write: if false;
+    }
+
+    // 그 밖의 모든 경로 차단
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
