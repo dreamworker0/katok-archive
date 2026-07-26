@@ -25,6 +25,7 @@ REQUIRED_IDS = {
     "sessionBox",
     "signOutTop",
     "themeBtn",
+    "fontBtn",
     "view",
     "lightbox",
     "confirmDialog",
@@ -94,12 +95,14 @@ class UiShellContractTests(unittest.TestCase):
                 session = source.index('id="sessionBox"', footer)
                 actions = source.index('class="sidebar-actions"', session)
                 signout = source.index('id="signOutTop"', actions)
-                theme = source.index('id="themeBtn"', signout)
+                font = source.index('id="fontBtn"', signout)
+                theme = source.index('id="themeBtn"', font)
                 aside_end = source.index("</aside>", theme)
                 self.assertLess(footer, session)
                 self.assertLess(session, actions)
                 self.assertLess(actions, signout)
-                self.assertLess(signout, theme)
+                self.assertLess(signout, font)
+                self.assertLess(font, theme)
                 self.assertLess(theme, aside_end)
 
 
@@ -139,13 +142,43 @@ class UiStyleContractTests(unittest.TestCase):
         self.assertIn("width: 40px", self.css)
 
     def test_sidebar_account_footer_has_equal_height_actions(self):
+        # 로그아웃 | 글자 크기 | 테마 — 아이콘 두 개는 자리를 못 박아 둔다.
+        # 로그아웃이 hidden 일 때(로그인 전) 왼쪽으로 밀려가지 않게 하려는 것이다.
         self.assertIn(
-            ".sidebar-actions { display: grid; grid-template-columns: minmax(0, 1fr) 40px",
+            ".sidebar-actions { display: grid; "
+            "grid-template-columns: minmax(0, 1fr) 40px 40px",
             self.css,
         )
-        self.assertIn(".sidebar-signout, .theme-toggle { height: 40px", self.css)
+        self.assertIn(
+            ".sidebar-signout, .theme-toggle, .font-toggle { height: 40px", self.css
+        )
+        self.assertIn(".font-toggle { display: grid; place-items: center; grid-column: 2", self.css)
+        self.assertIn(".theme-toggle { display: grid; place-items: center; grid-column: 3", self.css)
         self.assertIn(".sidebar-name", self.css)
         self.assertIn("text-overflow: ellipsis", self.css)
+
+    def test_reading_text_scales_but_the_chrome_stays_put(self):
+        # 본문만 커져야 한다. 사이드바·버튼까지 커지면 읽을 자리가 좁아진다.
+        self.assertIn("--reading-scale: 1;", self.css)
+        self.assertIn(':root[data-font="large"]', self.css)
+        self.assertIn(':root[data-font="xlarge"]', self.css)
+        for rule in (
+            ".md p { margin: 0 0 10px; font-size: calc(14px * var(--reading-scale))",
+            ".md li { font-size: calc(13.5px * var(--reading-scale))",
+            ".tc-summary { margin: 0 0 10px; font-size: calc(14px * var(--reading-scale))",
+        ):
+            with self.subTest(rule=rule):
+                self.assertIn(rule, self.css)
+        # 사이드바·내비게이션 치수는 배율을 타지 않는다.
+        for chrome in (".sidebar-name", ".sidebar-role", ".mobile-nav"):
+            start = self.css.index(chrome)
+            self.assertNotIn("--reading-scale", self.css[start:start + 160])
+
+    def test_font_toggle_previews_the_size_it_will_switch_to(self):
+        self.assertIn(".font-toggle__mark", self.css)
+        for step in ("normal", "large", "xlarge"):
+            with self.subTest(step=step):
+                self.assertIn('[data-font-next="%s"] .font-toggle__mark' % step, self.css)
 
     def test_every_interface_uses_noto_sans_korean_without_serif_overrides(self):
         self.assertIn('font-family: "Noto Sans KR", sans-serif;', self.css)
@@ -185,6 +218,20 @@ class UiJavascriptContractTests(unittest.TestCase):
     def test_mobile_more_has_explicit_open_state(self):
         self.assertIn("setMobileMore", self.app)
         self.assertIn("mobileMoreButton", self.app)
+
+    def test_font_size_cycles_through_named_steps_with_correct_particles(self):
+        self.assertIn("var FONT_STEPS", self.app)
+        self.assertIn("function cycleFont(", self.app)
+        self.assertIn("function updateFontControls(", self.app)
+        self.assertIn('localStorage.setItem("kakao-archive-font"', self.app)
+        self.assertIn('data-mobile-action="font"', self.app)
+        self.assertIn('setAttribute("data-font-next"', self.app)
+        # 조사가 어긋나지 않게 갈 곳의 표기를 그대로 적어 둔다.
+        for particle in ("보통으로", "크게로", "아주 크게로"):
+            with self.subTest(particle=particle):
+                self.assertIn(particle, self.app)
+        # 라벨은 반드시 to 에서 만든다 — label 을 쓰면 받침에 따라 조사가 틀어진다.
+        self.assertIn('next.to + " 전환', self.app)
 
     def test_theme_controls_render_accessible_destination_icons(self):
         self.assertIn("function updateThemeControls(", self.app)

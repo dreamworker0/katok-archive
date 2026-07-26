@@ -32,6 +32,7 @@
     roomSub: document.getElementById("roomSub"),
     signOut: document.getElementById("signOutTop"),
     themeBtn: document.getElementById("themeBtn"),
+    fontBtn: document.getElementById("fontBtn"),
     lightbox: document.getElementById("lightbox"),
     lightboxImg: document.getElementById("lightboxImg"),
     lightboxClose: document.getElementById("lightboxClose"),
@@ -2190,6 +2191,58 @@
     updateThemeControls();
   }
 
+  /* ---------- 글자 크기 ----------
+   *  읽는 사람 중에 작은 글씨가 힘든 분이 있다. 테마 토글과 같은 자리·같은 조작
+   *  (누를 때마다 다음 단계)으로 두어 따로 배우지 않아도 되게 한다.
+   *
+   *  키우는 대상은 본문(보고서·주제 요약)뿐이다. 사이드바·버튼·통계까지 같이
+   *  커지면 화면이 무너지고, 정작 읽을 자리는 좁아진다. 배율은 styles.css 의
+   *  --reading-scale 이 맡는다.
+   *
+   *  `to` 를 label 과 따로 둔 이유: 라벨을 label 로 만들면 받침에 따라 조사가
+   *  어긋난다("보통" + "로"). 갈 곳의 표기를 아예 적어 둔다. */
+  var FONT_STEPS = [
+    { id: "normal", label: "보통", to: "보통으로" },
+    { id: "large", label: "크게", to: "크게로" },
+    { id: "xlarge", label: "아주 크게", to: "아주 크게로" }
+  ];
+
+  function currentFontIndex() {
+    var cur = document.documentElement.getAttribute("data-font");
+    for (var i = 0; i < FONT_STEPS.length; i += 1) {
+      if (FONT_STEPS[i].id === cur) return i;
+    }
+    return 0;
+  }
+
+  function updateFontControls() {
+    var next = FONT_STEPS[(currentFontIndex() + 1) % FONT_STEPS.length];
+    var now = FONT_STEPS[currentFontIndex()];
+    // 테마 토글처럼 "누르면 어디로 가는지"를 알린다. 지금 크기도 같이 읽어 준다.
+    var label = "글자 크기 " + next.to + " 전환 (지금 " + now.label + ")";
+    var mark = '<span class="font-toggle__mark" aria-hidden="true">가</span>';
+    [el.fontBtn, document.querySelector('[data-mobile-action="font"]')].forEach(
+      function (btn) {
+        if (!btn) return;
+        btn.innerHTML = mark;
+        btn.setAttribute("data-font-next", next.id);
+        btn.setAttribute("aria-label", label);
+        btn.setAttribute("title", label);
+      }
+    );
+  }
+
+  function applyFont(id) {
+    document.documentElement.setAttribute("data-font", id);
+    updateFontControls();
+  }
+
+  function cycleFont() {
+    var next = FONT_STEPS[(currentFontIndex() + 1) % FONT_STEPS.length];
+    applyFont(next.id);
+    try { localStorage.setItem("kakao-archive-font", next.id); } catch (e) {}
+  }
+
   function removeViewControls(view) {
     Array.prototype.forEach.call(
       document.querySelectorAll('[data-view="' + view + '"]'),
@@ -2205,9 +2258,11 @@
       '<button type="button" data-view="stats">통계</button>',
     ];
     if (isAdmin()) html.push('<button type="button" data-view="admin">관리자</button>');
+    html.push('<button type="button" data-mobile-action="font"></button>');
     html.push('<button type="button" data-mobile-action="theme"></button>');
     if (state.session) html.push('<button type="button" data-mobile-action="signout">로그아웃</button>');
     el.mobileMore.innerHTML = html.join("");
+    updateFontControls();
     updateThemeControls();
   }
 
@@ -2300,11 +2355,14 @@
       }
       var action = e.target.closest("[data-mobile-action]");
       if (action) {
-        if (action.getAttribute("data-mobile-action") === "theme") toggleTheme();
-        else if (action.getAttribute("data-mobile-action") === "signout" && state.session) {
+        var kind = action.getAttribute("data-mobile-action");
+        if (kind === "theme") toggleTheme();
+        else if (kind === "font") cycleFont();
+        else if (kind === "signout" && state.session) {
           state.session.signOut();
         }
-        setMobileMore(false);
+        // 글자 크기는 결과를 바로 보고 더 키울지 정하게 열어 둔다.
+        if (kind !== "font") setMobileMore(false);
         return;
       }
       if (!el.mobileMore.hidden && !e.target.closest("#mobileMore")) setMobileMore(false);
@@ -2347,6 +2405,13 @@
     if (saved) document.documentElement.setAttribute("data-theme", saved);
     updateThemeControls();
     el.themeBtn.addEventListener("click", toggleTheme);
+
+    var savedFont = null;
+    try { savedFont = localStorage.getItem("kakao-archive-font"); } catch (e) {}
+    // 저장된 값이 아는 단계일 때만 쓴다 — 예전 값이 남아 있어도 화면이 깨지지 않는다.
+    applyFont(FONT_STEPS.some(function (s) { return s.id === savedFont; })
+      ? savedFont : FONT_STEPS[0].id);
+    if (el.fontBtn) el.fontBtn.addEventListener("click", cycleFont);
 
     setNavigationState(state.view);
     render();
