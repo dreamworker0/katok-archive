@@ -96,6 +96,20 @@ class BuildDataTest(unittest.TestCase):
             self.assertTrue(t["end_date"])
             self.assertGreaterEqual(t["count"], 1)
 
+    def test_contextual_resources_are_published_without_source_text(self):
+        enriched = build_site.enrich_threads(self.data["threads"], self.data["messages"])
+        thread = next(t for t in enriched if t["id"] == "t-162")
+        target = next(link for link in thread["links"] if "youtu.be/HDfr8PvfoOw" in link["url"])
+
+        self.assertIn("![[link:msg-001480]]", thread["report"])
+        self.assertEqual(target["id"], "msg-001480")
+        self.assertEqual(target["time"], "13:33")
+        self.assertNotIn("text", target)
+        self.assertNotIn(
+            "일반적으로 AI가 공리주의적 사고에 기반한 응답",
+            json.dumps(thread["links"], ensure_ascii=False),
+        )
+
     def test_data_js_is_valid_json_payload(self):
         """write_site 가 만든 data.js 가 유효한 JSON을 담는지 검증."""
         build_site.write_site(self.data)

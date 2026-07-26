@@ -16,7 +16,12 @@ import shutil
 from collections import Counter, OrderedDict
 from pathlib import Path
 
-from scripts.topic_reports import apply_reports, load_reports, thin_reports
+from scripts.topic_reports import (
+    apply_reports,
+    load_reports,
+    place_context_anchors,
+    thin_reports,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
@@ -191,10 +196,20 @@ def enrich_threads(threads: list[dict], messages: list[dict]) -> list[dict]:
             for u in m.get("urls") or []:
                 if u not in seen:
                     seen.add(u)
-                    links.append({"url": u, "nickname": m["nickname"], "date": m["date"]})
+                    links.append({
+                        "id": m["id"],
+                        "url": u,
+                        "nickname": m["nickname"],
+                        "date": m["date"],
+                        "time": m.get("time") or "",
+                    })
             if m.get("images") or m.get("file"):
                 media += 1
         nt = {k: v for k, v in t.items() if k != "message_ids"}
+        if nt.get("report"):
+            nt["report"] = place_context_anchors(
+                nt["report"], by_thread.get(t["id"], [])
+            )
         nt["links"] = links
         nt["media_count"] = media
         out.append(nt)
