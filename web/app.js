@@ -147,7 +147,11 @@
     Array.prototype.forEach.call(el.view.querySelectorAll("[data-goto]"), function (b) {
       b.onclick = function () {
         var t = document.getElementById(b.getAttribute("data-goto"));
-        if (t) t.scrollIntoView({ behavior: "smooth", block: "start" });
+        if (!t) return;
+        // 모바일에서는 카드가 접혀 있다. 찾아간 주제를 닫힌 채로 두면 "눌렀는데
+        // 아무것도 없네"가 된다 — 골라서 온 것이니 열어 준다.
+        setDocOpen(t, true);
+        t.scrollIntoView({ behavior: "smooth", block: "start" });
       };
     });
     bindDocActions(el.view);
@@ -198,22 +202,59 @@
         threadRest.map(tl).join("") + "</details>";
     }
 
+    /* 모바일에서는 이 아래를 접는다. 12개 주제가 전부 펼쳐지면 첫 화면이 25화면
+     * 분량(20,375px)이 되어 아무도 끝까지 보지 않는다. 무엇이 들어 있는지 세어
+     * 버튼에 적어 둔다 — 열어봐야 아는 상자는 안 열어보게 된다. */
+    var counts = [];
+    if ((d.apps || []).length) counts.push("결과물 " + d.apps.length);
+    if (links.length) counts.push("링크 " + links.length);
+    if (threadList.length) counts.push("주제 " + threadList.length);
+
+    var body =
+      (kw ? '<div class="doc-kw">' + kw + "</div>" : "") +
+      (apps ? '<div class="doc-section"><h4>🧩 주요 결과물</h4><div class="app-list">' + apps + "</div></div>" : "") +
+      (people ? '<div class="doc-section"><h4>👥 활발한 참여자</h4><div class="people-row">' + people + "</div></div>" : "") +
+      (linkHtml ? '<div class="doc-section"><h4>🔗 공유 링크</h4><div class="link-list">' + linkHtml + "</div></div>" : "") +
+      (threads ? '<div class="doc-section thread-list"><h4>🧵 소속 대화 주제 ' + threadList.length +
+        "개</h4>" + threads + "</div>" : "");
+
     return '<article class="doc" id="doc-' + cid + '" style="--c:' + col + '">' +
       '<div class="doc-head"><span class="doc-bar"></span>' +
       '<h2 class="doc-title">' + esc(d.label) + "</h2>" +
       '<span class="doc-meta">' + (d.message_count || 0) + "개 메시지 · " + (d.threads || []).length + "개 주제</span></div>" +
       (d.headline ? '<p class="doc-headline">' + esc(d.headline) + "</p>" : "") +
       '<p class="doc-overview">' + esc(d.overview || "") + "</p>" +
-      (kw ? '<div class="doc-kw">' + kw + "</div>" : "") +
-      (apps ? '<div class="doc-section"><h4>🧩 주요 결과물</h4><div class="app-list">' + apps + "</div></div>" : "") +
-      (people ? '<div class="doc-section"><h4>👥 활발한 참여자</h4><div class="people-row">' + people + "</div></div>" : "") +
-      (linkHtml ? '<div class="doc-section"><h4>🔗 공유 링크</h4><div class="link-list">' + linkHtml + "</div></div>" : "") +
-      (threads ? '<div class="doc-section thread-list"><h4>🧵 소속 대화 주제 ' + threadList.length +
-        "개</h4>" + threads + "</div>" : "") +
+      (body
+        ? '<button class="doc-toggle" type="button" aria-expanded="false" ' +
+          'aria-controls="docbody-' + cid + '">' +
+          '<span class="doc-toggle-icon" aria-hidden="true"></span>' +
+          '<span class="doc-toggle-label">자세히 보기</span>' +
+          (counts.length ? '<span class="doc-toggle-hint">' + counts.join(" · ") + "</span>" : "") +
+          "</button>" +
+          '<div class="doc-body" id="docbody-' + cid + '">' + body + "</div>"
+        : "") +
       "</article>";
   }
 
+  /** 주제 카드를 펼치거나 접는다. 데스크톱은 CSS 가 항상 펼쳐 두므로 여기 상태는
+   *  모바일에서만 눈에 보인다. */
+  function setDocOpen(doc, open) {
+    if (!doc) return;
+    doc.classList.toggle("open", open);
+    var btn = doc.querySelector(".doc-toggle");
+    if (!btn) return;
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+    var label = btn.querySelector(".doc-toggle-label");
+    if (label) label.textContent = open ? "접기" : "자세히 보기";
+  }
+
   function bindDocActions(scope) {
+    Array.prototype.forEach.call(scope.querySelectorAll(".doc-toggle"), function (b) {
+      b.onclick = function () {
+        var doc = b.parentNode;
+        setDocOpen(doc, !doc.classList.contains("open"));
+      };
+    });
     Array.prototype.forEach.call(scope.querySelectorAll(".app-item"), function (b) {
       b.onclick = function () {
         // 예전에는 결과물 이름으로 원문을 검색했는데, 원문 발행을 멈추면서

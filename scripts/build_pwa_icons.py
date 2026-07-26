@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """앱 아이콘을 코드로 그린다 — 탭 파비콘(SVG)과 홈 화면 아이콘(PNG).
 
-색은 화면의 따뜻한 팔레트(--accent #CA7154, --surface #FFFDF8)에 맞춘다. 예전
-파비콘은 파란색(#3b6fe0)이라 크림색 배경과 겉돌았다.
+색은 화면의 따뜻한 팔레트 안에서 고른다. 예전 파비콘은 파란색(#3b6fe0)이라 크림색
+배경과 겉돌았다. 바탕은 강조색(--accent)보다 한 단계 진한 갈색을 쓴다 — 아래 ICON_BG
+주석에 이유를 적었다.
 
 파비콘까지 여기서 만드는 이유: 손으로 쓴 SVG 를 따로 두면 색이 또 어긋난다.
 탭 아이콘과 홈 화면 아이콘은 같은 그림이어야 하므로 한 곳에서 굽는다.
@@ -23,8 +24,10 @@ from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parent.parent
 ICONS = ROOT / "web" / "icons"
 
-ACCENT = "#CA7154"  # --accent
-PAPER = "#FFFDF8"  # --surface
+# 아이콘 바탕. 화면 강조색(--accent #CA7154)보다 한 단계 진한 갈색이다 — 탭에서
+# 16px 로 줄면 옅은 적갈색은 주황으로 읽힌다. 종이색은 --surface 를 그대로 쓴다.
+ICON_BG = "#A96A4C"
+ICON_MARK = "#FFFDF8"  # --surface
 
 # 계단 현상을 없애려고 4배로 그린 뒤 줄인다.
 SUPERSAMPLE = 4
@@ -60,9 +63,9 @@ def draw_icon(size: int, *, corner_ratio: float, glyph_ratio: float) -> Image.Im
 
     corner = corner_ratio * canvas
     if corner > 0:
-        draw.rounded_rectangle((0, 0, canvas - 1, canvas - 1), radius=corner, fill=ACCENT)
+        draw.rounded_rectangle((0, 0, canvas - 1, canvas - 1), radius=corner, fill=ICON_BG)
     else:
-        draw.rectangle((0, 0, canvas - 1, canvas - 1), fill=ACCENT)
+        draw.rectangle((0, 0, canvas - 1, canvas - 1), fill=ICON_BG)
 
     # 문서 마크: 높이를 glyph_ratio 에 맞춰 재고, 가로세로 비율은 유지한 채 중앙에 둔다.
     _, _, doc_w, doc_h = DOC
@@ -72,7 +75,7 @@ def draw_icon(size: int, *, corner_ratio: float, glyph_ratio: float) -> Image.Im
     draw.rounded_rectangle(
         (left, top, left + doc_w * scale, top + doc_h * scale),
         radius=DOC_RADIUS * scale,
-        fill=PAPER,
+        fill=ICON_MARK,
     )
     for lx, ly, lw, lh in LINES:
         x0 = left + lx * scale
@@ -80,7 +83,7 @@ def draw_icon(size: int, *, corner_ratio: float, glyph_ratio: float) -> Image.Im
         draw.rounded_rectangle(
             (x0, y0, x0 + lw * scale, y0 + lh * scale),
             radius=LINE_RADIUS * scale,
-            fill=ACCENT,
+            fill=ICON_BG,
         )
 
     return image.resize((size, size), Image.Resampling.LANCZOS)
@@ -107,7 +110,7 @@ def favicon_svg() -> str:
     x, y, w, h = DOC
     lines = "\n".join(
         '<rect x="%g" y="%g" width="%g" height="%g" rx="%g" fill="%s"/>'
-        % (x + lx, y + ly, lw, lh, LINE_RADIUS, ACCENT)
+        % (x + lx, y + ly, lw, lh, LINE_RADIUS, ICON_BG)
         for lx, ly, lw, lh in LINES
     )
     return (
@@ -116,7 +119,7 @@ def favicon_svg() -> str:
         '<rect width="64" height="64" rx="14" fill="%s"/>\n'
         '<rect x="%g" y="%g" width="%g" height="%g" rx="%g" fill="%s"/>\n'
         "%s\n</svg>\n"
-        % (ACCENT, x, y, w, h, DOC_RADIUS, PAPER, lines)
+        % (ICON_BG, x, y, w, h, DOC_RADIUS, ICON_MARK, lines)
     )
 
 

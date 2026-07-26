@@ -109,16 +109,29 @@ class FaviconMatchesTheAppTests(unittest.TestCase):
     def test_favicon_uses_the_same_colours_as_the_home_screen_icons(self):
         from scripts import build_pwa_icons
 
-        self.assertIn(build_pwa_icons.ACCENT.lower(), self.svg.lower())
-        self.assertIn(build_pwa_icons.PAPER.lower(), self.svg.lower())
+        self.assertIn(build_pwa_icons.ICON_BG.lower(), self.svg.lower())
+        self.assertIn(build_pwa_icons.ICON_MARK.lower(), self.svg.lower())
 
-    def test_icon_colour_lives_in_the_warm_palette(self):
+    def test_icon_paper_is_the_stylesheet_surface_colour(self):
         from scripts import build_pwa_icons
 
         css = (WEB / "styles.css").read_text(encoding="utf-8").lower()
-        # 아이콘 색은 스타일시트에 실제로 쓰이는 색이어야 한다 — 임의의 갈색이 아니라.
-        self.assertIn(build_pwa_icons.ACCENT.lower(), css)
-        self.assertIn(build_pwa_icons.PAPER.lower(), css)
+        self.assertIn(build_pwa_icons.ICON_MARK.lower(), css)
+
+    def test_icon_background_is_a_warm_brown(self):
+        """바탕색은 따뜻한 갈색이어야 한다 — 파란색으로 되돌아가지 않게.
+
+        팔레트 토큰과 똑같을 필요는 없다(강조색보다 진한 갈색을 일부러 골랐다).
+        대신 색조로 확인한다: 갈색은 빨강 > 초록 > 파랑 이다.
+        """
+        from scripts import build_pwa_icons
+
+        raw = build_pwa_icons.ICON_BG.lstrip("#")
+        r, g, b = (int(raw[i:i + 2], 16) for i in (0, 2, 4))
+        self.assertGreater(r, g, "빨강이 초록보다 커야 따뜻한 색이다")
+        self.assertGreater(g, b, "초록이 파랑보다 커야 갈색 계열이다")
+        # 탭에서 크림색 배경과 구분되게 충분히 어두워야 한다.
+        self.assertLess((r + g + b) / 3, 190)
 
 
 class ServiceWorkerPrivacyContractTests(unittest.TestCase):

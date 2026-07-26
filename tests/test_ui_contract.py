@@ -314,6 +314,58 @@ class UiJavascriptContractTests(unittest.TestCase):
         self.assertNotIn("'<button class=\"icon-btn\" id=\"signOutTop\"", self.app)
 
 
+class MobileDensityContractTests(unittest.TestCase):
+    """모바일에서 첫 화면이 읽을 만한 길이로 유지되는지.
+
+    12개 주제 카드가 전부 펼쳐졌을 때 첫 화면이 20,375px(25화면 분량)였다. 접기를
+    넣어 4,647px(5.7화면)로 줄였다. 개수를 줄여 정보를 버리는 대신 접었다 —
+    발행에서 빼면 "그 앱 어디 갔지" 를 되찾을 방법이 없다.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.css = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
+        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        cls.mobile = cls.css[cls.css.index("@media (max-width: 760px)"):]
+
+    def test_desktop_never_shows_the_toggle_and_never_collapses(self):
+        # 데스크톱은 넓어서 견딜 만하다. 기본값이 '펼침' 이어야 자바스크립트 없이도
+        # 온전히 읽힌다.
+        self.assertIn(".doc-toggle { display: none;", self.css)
+        before_mobile = self.css[:self.css.index("@media (max-width: 760px)")]
+        self.assertNotIn(".doc:not(.open) .doc-body", before_mobile)
+
+    def test_mobile_collapses_the_card_body_and_clamps_the_overview(self):
+        self.assertIn(".doc-toggle { display: flex; }", self.mobile)
+        self.assertIn(".doc:not(.open) .doc-body { display: none; }", self.mobile)
+        # 개요만 12개여도 8화면이라 세 줄로 줄인다.
+        self.assertIn("-webkit-line-clamp: 3", self.mobile)
+
+    def test_toggle_says_what_is_inside_before_you_open_it(self):
+        # 열어봐야 아는 상자는 안 열어보게 된다.
+        self.assertIn('class="doc-toggle-hint"', self.app)
+        for label in ("결과물 ", "링크 ", "주제 "):
+            with self.subTest(label=label):
+                self.assertIn('counts.push("%s"' % label, self.app)
+
+    def test_toggle_is_an_accessible_disclosure(self):
+        self.assertIn('aria-expanded="false"', self.app)
+        self.assertIn('aria-controls="docbody-', self.app)
+        self.assertIn('class="doc-body" id="docbody-', self.app)
+        self.assertIn("function setDocOpen(", self.app)
+        self.assertIn('btn.setAttribute("aria-expanded", open ? "true" : "false")', self.app)
+        self.assertIn('open ? "접기" : "자세히 보기"', self.app)
+
+    def test_category_shortcut_opens_the_card_it_jumps_to(self):
+        # 골라서 찾아간 주제가 닫힌 채면 "눌렀는데 아무것도 없네" 가 된다.
+        goto = self.app.index('data-goto"))')
+        self.assertIn("setDocOpen(t, true)", self.app[goto:goto + 400])
+
+    def test_tap_target_stays_reachable(self):
+        block = self.css[self.css.index(".doc-toggle {"):]
+        self.assertIn("min-height: 44px", block[:400])
+
+
 class UiGateContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
