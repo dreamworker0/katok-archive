@@ -90,6 +90,37 @@ class ManifestContractTests(unittest.TestCase):
         self.assertEqual((180, 180), png_size(path))
 
 
+class FaviconMatchesTheAppTests(unittest.TestCase):
+    """탭 파비콘이 화면 팔레트 안에 있고, 홈 화면 아이콘과 같은 그림인지."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.svg = (WEB / "favicon.svg").read_text(encoding="utf-8")
+
+    def test_favicon_is_generated_not_hand_edited(self):
+        # 손으로 고치면 홈 화면 아이콘과 색이 어긋난다. 예전에 파비콘만 파란색으로
+        # 남아 크림색 배경과 겉돌았다.
+        self.assertIn("build_pwa_icons.py", self.svg)
+        self.assertIn("직접 고치지 말 것", self.svg)
+
+    def test_favicon_dropped_the_old_blue(self):
+        self.assertNotIn("3b6fe0", self.svg.lower())
+
+    def test_favicon_uses_the_same_colours_as_the_home_screen_icons(self):
+        from scripts import build_pwa_icons
+
+        self.assertIn(build_pwa_icons.ACCENT.lower(), self.svg.lower())
+        self.assertIn(build_pwa_icons.PAPER.lower(), self.svg.lower())
+
+    def test_icon_colour_lives_in_the_warm_palette(self):
+        from scripts import build_pwa_icons
+
+        css = (WEB / "styles.css").read_text(encoding="utf-8").lower()
+        # 아이콘 색은 스타일시트에 실제로 쓰이는 색이어야 한다 — 임의의 갈색이 아니라.
+        self.assertIn(build_pwa_icons.ACCENT.lower(), css)
+        self.assertIn(build_pwa_icons.PAPER.lower(), css)
+
+
 class ServiceWorkerPrivacyContractTests(unittest.TestCase):
     """서비스 워커가 대화·사진·인증을 저장하지 않는지 본다."""
 

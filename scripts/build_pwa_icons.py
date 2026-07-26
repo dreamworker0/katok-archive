@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
-"""홈 화면에 설치될 PWA 아이콘(PNG)을 코드로 그린다.
+"""앱 아이콘을 코드로 그린다 — 탭 파비콘(SVG)과 홈 화면 아이콘(PNG).
 
-favicon.svg 와 같은 형태(줄이 쓰인 문서)를 쓰지만 색은 화면의 따뜻한 팔레트
-(--accent #CA7154, --surface #FFFDF8)에 맞춘다. 설치하면 홈 화면에 남는 그림이므로
-앱을 열었을 때와 같은 색이어야 한다. (favicon.svg 는 예전 파란색을 그대로 둔다 —
-브라우저 탭에만 쓰이고, 바꾸면 별개의 판단이 필요하다.)
+색은 화면의 따뜻한 팔레트(--accent #CA7154, --surface #FFFDF8)에 맞춘다. 예전
+파비콘은 파란색(#3b6fe0)이라 크림색 배경과 겉돌았다.
 
-PNG 로 굽는 이유: 매니페스트의 SVG 아이콘은 플랫폼마다 지원이 고르지 않아
-설치 자격 판정에서 떨어질 수 있다.
+파비콘까지 여기서 만드는 이유: 손으로 쓴 SVG 를 따로 두면 색이 또 어긋난다.
+탭 아이콘과 홈 화면 아이콘은 같은 그림이어야 하므로 한 곳에서 굽는다.
+
+홈 화면 아이콘을 PNG 로 굽는 이유: 매니페스트의 SVG 아이콘은 플랫폼마다 지원이
+고르지 않아 설치 자격 판정에서 떨어질 수 있다. 파비콘은 SVG 가 낫다 — 탭에서
+어떤 크기로 줄어도 선명하다.
 
 손으로 만든 바이너리를 저장소에 두면 왜 이 색·이 여백인지 나중에 알 수 없다.
 그래서 그림 자체를 스크립트로 남긴다: `python -m scripts.build_pwa_icons`
@@ -96,8 +98,33 @@ SPECS = (
 )
 
 
+def favicon_svg() -> str:
+    """탭 파비콘. PNG 아이콘과 같은 좌표·같은 색을 쓴다.
+
+    모서리 반지름 14/64 는 예전 파비콘 그대로다 — 탭에서 보이는 실루엣을 바꾸지
+    않으려는 것이고, 색만 팔레트로 맞춘다.
+    """
+    x, y, w, h = DOC
+    lines = "\n".join(
+        '<rect x="%g" y="%g" width="%g" height="%g" rx="%g" fill="%s"/>'
+        % (x + lx, y + ly, lw, lh, LINE_RADIUS, ACCENT)
+        for lx, ly, lw, lh in LINES
+    )
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">\n'
+        '<!-- scripts/build_pwa_icons.py 가 만든다. 직접 고치지 말 것. -->\n'
+        '<rect width="64" height="64" rx="14" fill="%s"/>\n'
+        '<rect x="%g" y="%g" width="%g" height="%g" rx="%g" fill="%s"/>\n'
+        "%s\n</svg>\n"
+        % (ACCENT, x, y, w, h, DOC_RADIUS, PAPER, lines)
+    )
+
+
 def main() -> None:
     ICONS.mkdir(parents=True, exist_ok=True)
+    favicon = ROOT / "web" / "favicon.svg"
+    favicon.write_text(favicon_svg(), encoding="utf-8")
+    print("%-24s %s" % ("favicon.svg", "탭 아이콘 (SVG)"))
     for name, size, corner_ratio, glyph_ratio in SPECS:
         icon = draw_icon(size, corner_ratio=corner_ratio, glyph_ratio=glyph_ratio)
         path = ICONS / name
