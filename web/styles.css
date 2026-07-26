@@ -777,9 +777,11 @@ img.img-error {
   .mobile-more[hidden] { display: none; }
   .mobile-more button { width: 100%; border: 0; border-radius: 11px; padding: 11px 13px;
     color: var(--ink); background: var(--surface-2); cursor: pointer; text-align: left; }
-  .mobile-more button[data-mobile-action="theme"],
-  .mobile-more button[data-mobile-action="font"] {
-    display: grid; place-items: center; justify-self: end; width: 44px; height: 44px; padding: 0;
+  /* 글자 크기·테마는 목록 항목이 아니라 도구라서 한 줄에 나란히 오른쪽으로 붙인다.
+     예전에는 각자 한 행을 차지해(justify-self: end) 빈 줄이 두 개 생겼다. */
+  .mobile-more__icons { display: flex; justify-content: flex-end; gap: 8px; }
+  .mobile-more__icons button {
+    display: grid; place-items: center; width: 44px; height: 44px; padding: 0;
   }
   .mobile-more button.active { color: var(--accent); background: var(--accent-soft); font-weight: 800; }
 }

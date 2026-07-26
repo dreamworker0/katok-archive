@@ -2270,8 +2270,12 @@
       '<button type="button" data-view="stats">통계</button>',
     ];
     if (isAdmin()) html.push('<button type="button" data-view="admin">관리자</button>');
-    html.push('<button type="button" data-mobile-action="font"></button>');
-    html.push('<button type="button" data-mobile-action="theme"></button>');
+    // 아이콘 하나짜리 두 개는 한 줄에 묶는다. 각자 한 행을 차지하면 빈 자리만
+    // 늘고 목록이 끊겨 보인다. 순서는 사이드바와 같게 둔다(글자 크기 다음 테마).
+    html.push('<div class="mobile-more__icons">' +
+      '<button type="button" data-mobile-action="font"></button>' +
+      '<button type="button" data-mobile-action="theme"></button>' +
+      "</div>");
     if (state.session) html.push('<button type="button" data-mobile-action="signout">로그아웃</button>');
     el.mobileMore.innerHTML = html.join("");
     updateFontControls();

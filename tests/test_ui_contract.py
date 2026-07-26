@@ -193,6 +193,25 @@ class UiStyleContractTests(unittest.TestCase):
                 self.assertLess(source.index("</main>", view),
                                 source.index('id="mobileNav"'))
 
+    def test_mobile_more_lays_icon_actions_out_in_one_row(self):
+        """모바일 '더보기'의 아이콘 두 개는 한 줄에 나란히 둔다.
+
+        .mobile-more 는 단일 컬럼 그리드다. 아이콘 버튼에 justify-self: end 를 주면
+        각자 한 행을 차지해, 오른쪽에 작은 버튼 하나씩 뜬 빈 줄이 두 개 생긴다.
+        """
+        self.assertIn(
+            ".mobile-more__icons { display: flex; justify-content: flex-end; gap: 8px; }",
+            self.css,
+        )
+        # 옛 규칙(각 버튼을 제 행에 오른쪽 정렬)이 남아 있으면 안 된다. 주석에
+        # 그 형태를 설명해 두었으므로 속성이 아니라 선택자로 확인한다.
+        self.assertNotIn(".mobile-more button[data-mobile-action=", self.css)
+        app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('class="mobile-more__icons"', app)
+        # 탭 영역은 44px 를 지킨다.
+        block = self.css[self.css.index(".mobile-more__icons button"):]
+        self.assertIn("width: 44px; height: 44px", block[:160])
+
     def test_font_toggle_previews_the_size_it_will_switch_to(self):
         self.assertIn(".font-toggle__mark", self.css)
         for step in ("normal", "large", "xlarge"):
