@@ -238,6 +238,25 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
   border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ---------- 첨부파일 탭 ---------- */
+.files { display: grid; gap: 8px; }
+.file-card { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 14px; box-shadow: var(--shadow-sm); }
+.file-card.no-src { background: var(--surface-2); border-style: dashed; }
+.fc-icon { font-size: 22px; line-height: 1; }
+.fc-body { min-width: 0; }
+.fc-name { font-size: 14px; font-weight: 600; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.fc-meta { font-size: 12.5px; color: var(--ink-soft); margin-top: 2px; }
+.fc-act { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+.fc-act .btn { padding: 6px 12px; font-size: 13px; }
+.fc-none { font-size: 12.5px; color: var(--ink-faint); }
+@media (max-width: 560px) {
+  .file-card { grid-template-columns: auto 1fr; }
+  .fc-act { grid-column: 2; justify-content: flex-start; }
+}
+
 /* 원본을 구한 첨부는 눌러서 내려받는다 */
 .file-badge.has-file { font: inherit; cursor: pointer; text-align: left;
   border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--ink); }

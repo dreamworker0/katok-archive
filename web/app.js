@@ -306,6 +306,76 @@
     bindFiles(el.view);
   }
 
+  /* ---------- 첨부 파일 ----------
+   *
+   * 원본을 못 구한 것도 함께 보여준다. 목록에서 빠뜨리면 "누가 무엇을 올렸는데
+   * 지금은 없다"는 사실 자체가 사라져, 다시 구해달라고 부탁할 근거도 없어진다.
+   */
+  var FILE_ICONS = {
+    pdf: "📕", zip: "🗜", docx: "📘", xlsx: "📗", pptx: "📙",
+    html: "🌐", md: "📝", txt: "📝", hwp: "📄", hwpx: "📄",
+  };
+  function fileIcon(name) {
+    var ext = (name.split(".").pop() || "").toLowerCase();
+    return FILE_ICONS[ext] || "📄";
+  }
+
+  function renderFiles() {
+    var rows = MSGS.filter(function (m) { return m.is_file_share; });
+    if (!rows.length) {
+      el.view.innerHTML = '<p class="hint">공유된 파일이 없어요.</p>';
+      return;
+    }
+    var have = rows.filter(function (m) { return m.file; });
+    var q = state.q.toLowerCase();
+    var shown = rows.filter(function (m) {
+      if (state.nick && m.nickname !== state.nick) return false;
+      if (!q) return true;
+      var name = m.file ? m.file.name : (m.text || "");
+      return (name + " " + m.nickname + " " + m.date).toLowerCase().indexOf(q) !== -1;
+    });
+
+    var html = ['<p class="room-sub" style="margin:0 0 12px">공유된 파일 ' + rows.length +
+      "개 · 원본 보관 " + have.length + "개" +
+      (shown.length !== rows.length ? " · 표시 " + shown.length + "개" : "") + "</p>"];
+
+    if (!shown.length) {
+      html.push('<p class="hint">조건에 맞는 파일이 없어요.</p>');
+    } else {
+      html.push('<div class="files">');
+      shown.forEach(function (m) {
+        var name = m.file ? m.file.name : (m.text || "").replace(/^파일:\s*/, "");
+        html.push(
+          '<div class="file-card' + (m.file ? "" : " no-src") + '">' +
+          '<span class="fc-icon">' + fileIcon(name) + "</span>" +
+          '<div class="fc-body">' +
+          '<div class="fc-name" title="' + esc(name) + '">' + esc(name) + "</div>" +
+          '<div class="fc-meta">' + esc(m.nickname) + " · " + esc(m.date) +
+          (m.file ? " · " + fmtSize(m.file.size) : "") + "</div></div>" +
+          '<div class="fc-act">' +
+          (m.file
+            ? '<button class="btn ghost fc-dl" data-file="' + esc(m.file.path) +
+              '" data-name="' + esc(m.file.name) + '">받기</button>'
+            : '<span class="fc-none" title="원본을 구하지 못했습니다">원본 없음</span>') +
+          '<button class="btn ghost fc-jump" data-jump="m-' + m.id + '">대화</button>' +
+          "</div></div>"
+        );
+      });
+      html.push("</div>");
+      if (have.length < rows.length) {
+        html.push('<p class="hint" style="margin-top:14px">' +
+          "‘원본 없음’은 카톡 내보내기에 파일이 들어 있지 않아 이름만 남은 것입니다. " +
+          "가지고 계신 분이 관리자에게 보내주시면 연결됩니다.</p>");
+      }
+    }
+
+    el.view.innerHTML = html.join("");
+    Array.prototype.forEach.call(el.view.querySelectorAll(".fc-jump"), function (b) {
+      b.onclick = function () { jumpToTimeline(b.getAttribute("data-jump")); };
+    });
+    bindFiles(el.view);
+  }
+
   // ---------- 통계 ----------
   function bar(label, value, max, color) {
     var pct = max ? Math.round((value / max) * 100) : 0;
@@ -718,6 +788,7 @@
     else if (state.view === "graph") renderGraph();
     else if (state.view === "timeline") renderTimeline();
     else if (state.view === "gallery") renderGallery();
+    else if (state.view === "files") renderFiles();
     else if (state.view === "stats") renderStats();
     else if (state.view === "mine") renderMine();
     else if (state.view === "admin") renderAdmin();
@@ -776,6 +847,8 @@
       timer = setTimeout(function () {
         state.q = el.search.value.trim();
         if (state.view === "graph" && state.graph) { state.graph.search(state.q); return; }
+        // 첨부 탭은 자체 검색을 하므로 타임라인으로 튕기지 않는다
+        if (state.view === "files") { render(); return; }
         if (state.view !== "timeline") setView("timeline"); else render();
       }, 180);
     });
