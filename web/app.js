@@ -32,7 +32,7 @@
     lightboxClose: document.getElementById("lightboxClose"),
   };
   var state = { view: "summary", q: "", nick: "", graph: null, session: null,
-                mine: null, admin: null, gview: "grid", tsort: "desc" };
+                mine: null, admin: null, gview: "grid", tsort: "desc", pick: null };
   try {
     var savedG = localStorage.getItem("gallery-view");
     if (savedG === "list" || savedG === "grid") state.gview = savedG;
@@ -100,9 +100,14 @@
   function renderDoc(cid, d) {
     var col = colorFor(cid);
     var apps = (d.apps || []).map(function (a) {
-      return '<button class="app-item" data-q="' + esc(a.query || a.label) + '">' +
+      var ids = (a.thread_ids || []).join(",");
+      return '<button class="app-item" data-pick="' + esc(ids) + '" data-label="' +
+        esc(a.label) + '" data-q="' + esc(a.query || a.label) + '">' +
         '<span class="an">' + esc(a.label) + "</span>" +
-        (a.maker ? '<span class="am">' + esc(a.maker) + "</span>" : "") + "</button>";
+        (a.maker ? '<span class="am">' + esc(a.maker) + "</span>" : "") +
+        (a.thread_ids && a.thread_ids.length
+          ? '<span class="an-n">주제 ' + a.thread_ids.length + "개</span>" : "") +
+        "</button>";
     }).join("");
     var links = (d.links || []);
     var linkTop = links.slice(0, 10), linkRest = links.slice(10);
@@ -122,7 +127,7 @@
     var kw = (d.keywords || []).map(function (k) { return '<span class="chip">' + esc(k) + "</span>"; }).join("");
     var threads = (d.threads || []).map(function (t) {
       var range = t.start_date === t.end_date ? t.start_date : t.start_date + " ~ " + t.end_date;
-      return '<div class="thread-line" data-start="m-' + t.start_msg + '"><b>' + esc(t.title) +
+      return '<div class="thread-line" data-start="t-' + esc(t.id) + '"><b>' + esc(t.title) +
         '</b><span class="tl-date">' + esc(range) + '</span><span class="tl-n">💬 ' + t.count + "</span></div>";
     }).join("");
 
@@ -143,7 +148,14 @@
 
   function bindDocActions(scope) {
     Array.prototype.forEach.call(scope.querySelectorAll(".app-item"), function (b) {
-      b.onclick = function () { runSearch(b.getAttribute("data-q")); };
+      b.onclick = function () {
+        // 예전에는 결과물 이름으로 원문을 검색했는데, 원문 발행을 멈추면서
+        // 검색 대상이 사라져 빈 목록으로 갔다. 지금은 빌드 때 이어 둔 주제로
+        // 바로 간다. 이어진 주제가 없을 때만 옛 방식으로 물러선다.
+        var ids = (b.getAttribute("data-pick") || "").split(",").filter(Boolean);
+        if (ids.length) pickThreads(ids, b.getAttribute("data-label"));
+        else runSearch(b.getAttribute("data-q"));
+      };
     });
     Array.prototype.forEach.call(scope.querySelectorAll("[data-nick]"), function (b) {
       b.onclick = function () {
@@ -220,16 +232,26 @@
    * 시간순으로 보여주고, 결과물(링크·사진·첨부)은 그대로 붙인다.
    */
   function threadMatches(t) {
+    if (state.pick && state.pick.ids.indexOf(t.id) === -1) return false;
     if (state.nick && (t.participants || []).indexOf(state.nick) === -1) return false;
     if (state.q) {
       var q = state.q.toLowerCase();
-      var hay = (t.title + " " + t.summary + " " + (t.detail || "") + " " +
-                 (t.points || []).join(" ") + " " + (t.participants || []).join(" ") +
+      var hay = (t.title + " " + t.summary + " " + (t.report || "") + " " +
+                 (t.keywords || []).join(" ") + " " + (t.participants || []).join(" ") +
                  " " + t.start_date + " " + (t.links || []).map(function (l) {
                    return l.url; }).join(" ")).toLowerCase();
       if (hay.indexOf(q) === -1) return false;
     }
     return true;
+  }
+
+  /** 결과물 하나에 딸린 주제만 추린다. 검색어가 아니라 ID 로 고르므로
+   *  보고서를 어떻게 고쳐 쓰든 결과가 흔들리지 않는다. */
+  function pickThreads(ids, label) {
+    state.pick = { ids: ids, label: label };
+    state.q = ""; state.nick = "";
+    el.search.value = ""; el.filter.value = "";
+    setView("timeline");
   }
 
   /** 주제 정렬 키 — 같은 날 주제가 여럿이라 시각까지 봐야 순서가 맞는다. */
@@ -239,7 +261,16 @@
 
   function renderTimeline() {
     var rows = THREADS.filter(threadMatches);
-    if (!rows.length) { el.view.innerHTML = '<p class="hint">검색 결과가 없어요.</p>'; return; }
+    var pickBar = state.pick
+      ? '<div class="pick-bar">🧩 <b>' + esc(state.pick.label) + "</b> 이(가) 나온 주제 " +
+        rows.length + '개만 보고 있습니다 <button class="btn ghost" id="pickClear">' +
+        "전체 보기</button></div>"
+      : "";
+    if (!rows.length) {
+      el.view.innerHTML = pickBar + '<p class="hint">해당하는 주제가 없어요.</p>';
+      bindPickClear();
+      return;
+    }
 
     // 최신 것부터 보는 게 기본이다 — 어제 무슨 얘기가 오갔는지가 가장 궁금하다.
     var desc = state.tsort !== "asc";
@@ -249,7 +280,7 @@
       return (ka < kb ? -1 : 1) * (desc ? -1 : 1);
     });
 
-    var html = ['<div class="gal-head">',
+    var html = [pickBar, '<div class="gal-head">',
       '<p class="room-sub">주제 ' + rows.length +
       "개" + (rows.length !== THREADS.length ? " / 전체 " + THREADS.length : "") +
       " · 대화 원문은 보관만 하고 공개하지 않습니다</p>",
@@ -266,6 +297,7 @@
       html.push(renderThreadCard(t));
     });
     el.view.innerHTML = html.join("");
+    bindPickClear();
     Array.prototype.forEach.call(el.view.querySelectorAll("[data-tsort]"), function (b) {
       b.onclick = function () {
         state.tsort = b.getAttribute("data-tsort");
@@ -274,27 +306,188 @@
       };
     });
     bindThreadCards(el.view);
+    // 검색 중이면 카드가 펼쳐진 채로 그려지므로 사진·첨부도 함께 채운다
+    Array.prototype.forEach.call(el.view.querySelectorAll(".tc-detail.on"), fillMedia);
   }
 
-  /* 상세 요약.
+  /* ---------- 마크다운 ----------
    *
-   * 원문을 발행하지 않기로 한 이상 요약이 원문을 대신해야 한다. 한 줄로는
-   * 무슨 얘기였는지 알 수가 없다는 지적에서 나왔다. 목록을 훑을 때는 방해가
-   * 되므로 접어 두고, 검색 중이면 어디가 걸렸는지 보이도록 펼쳐 둔다.
+   * 보고서 원본이 .md 라서 화면에서도 마크다운을 그린다. 라이브러리를 쓰지
+   * 않는 이유는 두 가지다. 필요한 문법이 소제목·목록·표·인용·강조뿐이고,
+   * 무엇보다 남이 쓴 파서에 원문을 통과시키면 어디서 HTML 이 새는지 알기
+   * 어렵다. 여기서는 **가장 먼저 전부 이스케이프**하고 그 위에 규칙을
+   * 얹으므로, 본문에 <script> 가 들어 있어도 글자로만 나온다.
+   */
+  function mdInline(s) {
+    var h = esc(s);
+    h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
+    h = h.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    h = h.replace(/==([^=]+)==/g, '<mark class="key">$1</mark>');
+    // 링크는 http/https 만 통과시킨다. javascript: 를 막기 위함이다.
+    h = h.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    return h;
+  }
+
+  function mdRow(line) {
+    var cells = line.replace(/^\||\|$/g, "").split("|");
+    return cells.map(function (c) { return c.trim(); });
+  }
+
+  function renderMarkdown(src) {
+    var lines = String(src || "").replace(/\r\n/g, "\n").split("\n");
+    var out = [], i = 0;
+    function flushPara(buf) {
+      if (buf.length) out.push("<p>" + mdInline(buf.join(" ")) + "</p>");
+      buf.length = 0;
+    }
+    var para = [];
+    while (i < lines.length) {
+      var ln = lines[i];
+
+      if (!ln.trim()) { flushPara(para); i++; continue; }
+
+      var h = /^(#{1,6})\s+(.*)$/.exec(ln);
+      if (h) {
+        flushPara(para);
+        var lv = Math.min(6, h[1].length + 2);   // ## → h4, 카드 안이므로 낮춘다
+        out.push("<h" + lv + ">" + mdInline(h[2]) + "</h" + lv + ">");
+        i++; continue;
+      }
+
+      if (/^(---|\*\*\*)\s*$/.test(ln)) { flushPara(para); out.push("<hr />"); i++; continue; }
+
+      // 표 — 두 번째 줄이 구분선이어야 표로 본다
+      if (ln.indexOf("|") !== -1 && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1] || "")) {
+        flushPara(para);
+        var head = mdRow(ln), body = [];
+        i += 2;
+        while (i < lines.length && lines[i].indexOf("|") !== -1 && lines[i].trim()) {
+          body.push(mdRow(lines[i])); i++;
+        }
+        out.push('<div class="md-table"><table><thead><tr>' +
+          head.map(function (c) { return "<th>" + mdInline(c) + "</th>"; }).join("") +
+          "</tr></thead><tbody>" +
+          body.map(function (r) {
+            return "<tr>" + r.map(function (c) {
+              return "<td>" + mdInline(c) + "</td>"; }).join("") + "</tr>";
+          }).join("") + "</tbody></table></div>");
+        continue;
+      }
+
+      var b = /^\s*([-*]|\d+\.)\s+(.*)$/.exec(ln);
+      if (b) {
+        flushPara(para);
+        var ordered = /\d/.test(b[1]), items = [];
+        while (i < lines.length) {
+          var m2 = /^\s*([-*]|\d+\.)\s+(.*)$/.exec(lines[i]);
+          if (!m2) break;
+          items.push("<li>" + mdInline(m2[2]) + "</li>");
+          i++;
+        }
+        out.push((ordered ? "<ol>" : "<ul>") + items.join("") + (ordered ? "</ol>" : "</ul>"));
+        continue;
+      }
+
+      if (/^>\s?/.test(ln)) {
+        flushPara(para);
+        var q = [];
+        while (i < lines.length && /^>\s?/.test(lines[i])) {
+          q.push(lines[i].replace(/^>\s?/, "")); i++;
+        }
+        out.push("<blockquote>" + mdInline(q.join(" ")) + "</blockquote>");
+        continue;
+      }
+
+      para.push(ln.trim());
+      i++;
+    }
+    flushPara(para);
+    return out.join("");
+  }
+
+  /* 대화 보고서.
+   *
+   * 원문을 발행하지 않기로 한 이상 보고서가 원문을 대신해야 한다. 목록을
+   * 훑을 때는 방해가 되므로 접어 두고, 검색 중이면 어디가 걸렸는지 보이도록
+   * 펼쳐 둔다. 사진·첨부는 media 발행본에서 thread_id 로 찾아 붙인다.
    */
   function detailBlock(t) {
-    if (!t.detail && !(t.points && t.points.length)) return "";
+    if (!t.report) return "";
     var open = !!state.q;
-    var pts = (t.points || []).map(function (p) {
-      return "<li>" + highlightText(esc(p), state.q) + "</li>";
-    }).join("");
-    return '<div class="tc-detail' + (open ? " on" : "") + '">' +
+    var n = mediaOf(t.id).length;
+    return '<div class="tc-detail' + (open ? " on" : "") + '" data-tid="' + esc(t.id) + '">' +
+      '<div class="tc-detail-bar">' +
       '<button class="tc-toggle" type="button">' +
-      (open ? "간단히" : "자세히 보기") + "</button>" +
-      '<div class="tc-detail-body">' +
-      (t.detail ? "<p>" + highlightText(esc(t.detail), state.q) + "</p>" : "") +
-      (pts ? "<ul>" + pts + "</ul>" : "") +
+      (open ? "간단히" : "보고서 읽기") + "</button>" +
+      '<button class="tc-dl" type="button" title="이 보고서를 .md 파일로 저장합니다">' +
+      "⬇ .md</button></div>" +
+      '<div class="tc-detail-body md">' +
+      highlightText(renderMarkdown(t.report), state.q) +
+      (n ? '<div class="tc-media" data-media="' + esc(t.id) + '"></div>' : "") +
       "</div></div>";
+  }
+
+  /** 이 주제에서 오간 사진·첨부. 보고서에 손으로 적지 않고 여기서 찾는다. */
+  function mediaOf(tid) {
+    return MEDIA.filter(function (m) { return m.thread_id === tid; });
+  }
+
+  /* 보고서에 그날 오간 사진·첨부를 붙인다.
+   *
+   * 펼칠 때 채운다. 165개 카드의 이미지를 미리 다 걸어 두면 Storage 인증
+   * 요청이 한꺼번에 나간다. data-filled 로 두 번 채우는 것을 막는다.
+   */
+  function fillMedia(box) {
+    var host = box.querySelector(".tc-media");
+    if (!host || host.getAttribute("data-filled")) return;
+    var rows = mediaOf(host.getAttribute("data-media"));
+    if (!rows.length) return;
+    host.setAttribute("data-filled", "1");
+
+    var imgs = [], files = [];
+    rows.forEach(function (m) {
+      if (m.kind === "image" && m.images) {
+        m.images.forEach(function (src) {
+          imgs.push('<img data-img="' + esc(src) + '" alt="" title="' +
+            esc(m.nickname + " · " + m.date) + '" />');
+        });
+      } else if (m.kind === "file") {
+        var nm = m.file ? m.file.name : (m.name || "");
+        files.push('<div class="tcf">' + fileIcon(nm) +
+          ' <span class="tcf-n">' + esc(nm) + "</span>" +
+          '<span class="tcf-m">' + esc(m.nickname) + " · " + esc(m.date) + "</span>" +
+          (m.file
+            ? '<button class="btn ghost" data-file="' + esc(m.file.path) +
+              '" data-name="' + esc(m.file.name) + '">받기</button>'
+            : '<span class="fc-none">원본 없음</span>') + "</div>");
+      }
+    });
+    host.innerHTML = "<h4>이 주제에서 오간 사진·첨부</h4>" +
+      (imgs.length ? '<div class="imgs">' + imgs.join("") + "</div>" : "") +
+      (files.length ? '<div class="tcf-list">' + files.join("") + "</div>" : "");
+    bindImages(host);
+    bindFiles(host);
+  }
+
+  /** 보고서를 .md 로 내려받는다. 화면에 보이는 것이 곧 파일이다. */
+  function downloadReport(t) {
+    var head = ["---",
+      "title: " + t.title,
+      "summary: " + (t.summary || ""),
+      "keywords: " + (t.keywords || []).join(", "),
+      "date: " + t.start_date + (t.end_date !== t.start_date ? " ~ " + t.end_date : ""),
+      "participants: " + (t.participants || []).join(", "),
+      "messages: " + (t.count || 0),
+      "---", ""].join("\n");
+    var blob = new Blob([head + t.report + "\n"], { type: "text/markdown;charset=utf-8" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = t.id + "-" + String(t.title).replace(/[\\/:*?"<>|]/g, "") + ".md";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
   }
 
   function renderThreadCard(t) {
@@ -319,6 +512,11 @@
       (t.media_count ? " · 사진·첨부 " + t.media_count : "") + "</span></div>" +
       '<h3 class="tc-title">' + highlightText(esc(t.title), state.q) + "</h3>" +
       '<p class="tc-summary">' + highlightText(esc(t.summary || ""), state.q) + "</p>" +
+      ((t.keywords || []).length
+        ? '<div class="tc-kw">' + t.keywords.map(function (k) {
+            return '<button class="chip kw" data-kw="' + esc(k) + '">' +
+              esc(k) + "</button>"; }).join("") + "</div>"
+        : "") +
       detailBlock(t) +
       (people ? '<div class="tc-people">' + people + "</div>" : "") +
       (links ? '<div class="tc-links">' + links + more + "</div>" : "") +
@@ -330,12 +528,28 @@
       "</article>";
   }
 
+  function bindPickClear() {
+    var b = document.getElementById("pickClear");
+    if (b) b.onclick = function () { state.pick = null; render(); };
+  }
+
   function bindThreadCards(scope) {
+    Array.prototype.forEach.call(scope.querySelectorAll(".kw"), function (b) {
+      b.onclick = function () { runSearch(b.getAttribute("data-kw")); };
+    });
+    Array.prototype.forEach.call(scope.querySelectorAll(".tc-dl"), function (b) {
+      b.onclick = function () {
+        var tid = b.parentNode.parentNode.getAttribute("data-tid");
+        var t = THREADS.filter(function (x) { return x.id === tid; })[0];
+        if (t) downloadReport(t);
+      };
+    });
     Array.prototype.forEach.call(scope.querySelectorAll(".tc-toggle"), function (b) {
       b.onclick = function () {
-        var box = b.parentNode;
+        var box = b.parentNode.parentNode;
         var on = box.classList.toggle("on");
-        b.textContent = on ? "간단히" : "자세히 보기";
+        b.textContent = on ? "간단히" : "보고서 읽기";
+        if (on) fillMedia(box);
       };
     });
     Array.prototype.forEach.call(scope.querySelectorAll("[data-nick]"), function (b) {
@@ -369,7 +583,9 @@
 
   /** 스레드 카드로 이동. 원문이 없으므로 메시지가 아니라 주제 단위로 간다. */
   function jumpToTimeline(anchor) {
-    state.q = ""; state.nick = ""; el.search.value = ""; el.filter.value = "";
+    // 필터가 남아 있으면 목적지가 걸러져 아무 데도 못 간다. 전부 푼다.
+    state.q = ""; state.nick = ""; state.pick = null;
+    el.search.value = ""; el.filter.value = "";
     setView("timeline");
     requestAnimationFrame(function () {
       var t = document.getElementById(anchor);
@@ -1227,6 +1443,9 @@
       clearTimeout(timer);
       timer = setTimeout(function () {
         state.q = el.search.value.trim();
+        // 결과물로 추려 둔 상태에서 검색하면 결과가 없어 당황한다. 검색은
+        // 전체에서 하는 게 자연스러우므로 추림을 푼다.
+        if (state.q) state.pick = null;
         if (state.view === "graph" && state.graph) { state.graph.search(state.q); return; }
         // 첨부 탭은 자체 검색을 하므로 타임라인으로 튕기지 않는다
         if (state.view === "files") { render(); return; }
@@ -1235,6 +1454,7 @@
     });
     el.filter.addEventListener("change", function () {
       state.nick = el.filter.value;
+      if (state.nick) state.pick = null;
       if (state.view === "graph") setView("timeline"); else render();
     });
     el.lightbox.addEventListener("click", function (e) {

@@ -16,7 +16,7 @@ import shutil
 from collections import Counter, OrderedDict
 from pathlib import Path
 
-from scripts.topic_details import apply_details, load_details
+from scripts.topic_reports import apply_reports, load_reports, thin_reports
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
@@ -57,13 +57,39 @@ def build_digests(
     """카테고리별 지식 문서를 조립한다: 요지 산문(digest_prose) + 파생 리소스
     (주요 앱·공유 링크·활발한 참여자·소속 스레드)."""
     prose = digest_prose.get("digests", {})
+
+    # 앱 → 그 앱이 나온 주제. 예전에는 화면에서 query 로 원문을 검색했는데,
+    # 원문 발행을 멈추면서 검색할 대상이 사라져 버튼이 빈 목록으로 갔다.
+    # 여기서 원문을 보고 미리 이어 둔다 — 보고서를 어떻게 쓰든 흔들리지 않는다.
+    thread_of_msg = {}
+    for t in topics["threads"]:
+        for mid in t["message_ids"]:
+            thread_of_msg[mid] = t["id"]
+
+    def threads_matching(query: str, label: str) -> list[str]:
+        needles = [x.lower() for x in (query, label) if x]
+        found, seen = [], set()
+        for m in out_messages:
+            hay = ((m.get("text") or "") + " " +
+                   " ".join(m.get("urls") or [])).lower()
+            if not any(nd in hay for nd in needles):
+                continue
+            tid = thread_of_msg.get(m["id"])
+            if tid and tid not in seen:
+                seen.add(tid)
+                found.append(tid)
+        return found
+
     # 카테고리별 앱 노드
     apps_by_cat: dict[str, list] = {}
     for n in knowledge.get("nodes", []):
         if n.get("type") == "app":
-            apps_by_cat.setdefault(n["category"], []).append(
-                {"label": n["label"], "maker": n.get("maker"), "query": n.get("query")}
-            )
+            apps_by_cat.setdefault(n["category"], []).append({
+                "label": n["label"],
+                "maker": n.get("maker"),
+                "query": n.get("query"),
+                "thread_ids": threads_matching(n.get("query") or "", n["label"]),
+            })
     # 카테고리별 링크·참여자
     links_by_cat: dict[str, list] = {}
     seen_url: dict[str, set] = {}
@@ -327,9 +353,17 @@ def build_data(
         tmeta["start_time"] = msg_index[ids[0]].get("time", "")
         tmeta["end_time"] = msg_index[ids[-1]].get("time", "")
 
-    # 원문을 발행하지 않으므로 요약이 원문을 대신해야 한다. 사람이 원문을 읽고 쓴
-    # 서술형 요약을 얹는다. 없는 스레드는 한 줄 요약만 남는다.
-    apply_details(threads_meta, load_details())
+    # 원문을 발행하지 않으므로 보고서가 원문을 대신해야 한다. 사람이 원문을 읽고
+    # 쓴 마크다운을 얹는다. 없는 스레드는 한 줄 요약만 남는다.
+    apply_reports(threads_meta, load_reports())
+    raw_chars = {
+        t["id"]: sum(len(msg_index[m]["text"] or "") for m in t["message_ids"])
+        for t in topics["threads"]
+    }
+    thin = thin_reports(threads_meta, raw_chars)
+    if thin:
+        print("[주의] 대화량에 비해 보고서가 얇은 주제 %d개 (앞 5개): %s"
+              % (len(thin), ", ".join("%s(%d건 %d자<%d)" % x for x in thin[:5])))
 
     knowledge = knowledge or {"nodes": [], "edges": [], "node_types": [], "edge_types": []}
     digests = build_digests(
