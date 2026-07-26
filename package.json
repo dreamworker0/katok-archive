@@ -8,6 +8,7 @@
     "upload": "node scripts/upload_firestore.js",
     "upload:dry": "node scripts/upload_firestore.js --dry-run",
     "upload:full": "node scripts/upload_firestore.js --full",
+    "restore:reports": "node scripts/restore_reports.js",
     "test": "node --test tests/*.test.js",
     "hosting": "python -m scripts.build_hosting",
     "claims": "node scripts/approve_claims.js",

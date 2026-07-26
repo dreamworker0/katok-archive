@@ -207,6 +207,29 @@ Unregister-ScheduledTask -TaskName '카톡아카이브-일일갱신' -Confirm:$f
 검증: `tests/upload_state.test.js` 10개 (`npm test`) — 대장 없음·깨짐·딴 프로젝트,
 변경분만 쓰기, 빠진 문서 삭제, 중간 실패 후 재실행, 원격 구문서 정리.
 
+## 데이터는 저장소에 없다 — 그래서 보고서 복구 수단을 둔다
+
+저장소는 코드만 백업한다(2026-07-26 결정). `output/`·`assets/images/`·
+`KakaoTalk_*.txt` 는 `.gitignore` 로 빠져 있고 이력에도 없다. 실명 대화와 사진은
+36명의 개인정보이고, 협업자를 한 명 초대하면 그 사람에게 방 전체가 열리기 때문이다.
+
+그래서 손으로 쓴 보고서(`output/reports/*.md`)의 원본이 로컬 디스크 한 곳에만
+남는다. 발행하면 본문이 `threads/all` 문서에 통째로 실리므로 Firestore 가 사실상
+원격 사본이다. 디스크를 잃으면 되살린다.
+
+```bash
+node scripts/restore_reports.js --dry-run   # 무엇이 없고 무엇이 다른지
+node scripts/restore_reports.js             # 없는 것만 만든다
+node scripts/restore_reports.js --force     # 다른 것까지 발행본으로 덮는다
+```
+
+확인(2026-07-26): 발행본 164개를 임시 폴더에 풀어 로컬 원본과 견주니 **전부
+바이트 단위로 동일**했고, 복구본을 `topic_reports.parse_report` 로 다시 읽어
+164개 모두 정상 파싱됐다(사진 자리표 포함).
+
+한계 — Firestore 에는 **마지막으로 발행한 판**만 있다. 고친 이력은 남지 않으므로
+발행 전에 날린 편집은 되살릴 수 없다.
+
 ## 갱신 후 할 일 — 주 1회 재분류
 
 '미분류' 스레드가 쌓이면 주제별 지식 뷰가 뒤처진다. **주 1회** 정리한다
