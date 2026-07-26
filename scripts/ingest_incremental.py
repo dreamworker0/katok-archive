@@ -32,7 +32,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from scripts import build_site
+from scripts import build_site, collection_policy
 from scripts.kakao_parser import parse_chat
 
 KST = timezone(timedelta(hours=9))
@@ -225,7 +225,9 @@ def ingest(paths: list[Path], dry_run: bool) -> dict:
 
     before_count = len(messages)
     total_new = 0
+    total_refused = 0
     handled: list[dict] = []
+    policy = collection_policy.load_policy()
 
     for path in paths:
         digest = sha256_of(path)
@@ -237,13 +239,28 @@ def ingest(paths: list[Path], dry_run: bool) -> dict:
         result = parse_chat(text)
         new_msgs, stats = find_new_messages(result.messages, messages)
 
+        # 수집 거부는 '신규 판정' 뒤에 적용한다. 순서를 바꿔도 결과는 같지만,
+        # 이래야 "몇 건이 새로 왔고 그중 몇 건을 거부했는지"가 따로 보인다.
+        new_msgs, refused, _ = collection_policy.filter_messages(new_msgs, policy)
+        refused_count = sum(refused.values())
+        total_refused += refused_count
+        if refused_count:
+            stats["신규"] = len(new_msgs)
+            stats["수집거부"] = refused_count
+
         print("%s: 파일 내 메시지 %d건 / 신규 %d건 %s"
               % (path.name, len(result.messages), len(new_msgs), stats))
+        if refused_count:
+            # 본문은 찍지 않는다 — 수집하지 않기로 한 글을 로그에 남기면 의미가 없다
+            print("  수집 거부 %d건 %s" % (refused_count, refused))
         if result.warnings:
             print("  파싱 경고 %d건" % len(result.warnings))
 
         if not new_msgs:
-            handled.append({"file": path.name, "sha256": digest, "added": 0})
+            entry = {"file": path.name, "sha256": digest, "added": 0}
+            if refused_count:
+                entry["refused"] = refused_count
+            handled.append(entry)
             continue
 
         start_no = next_message_number(messages)
@@ -257,14 +274,18 @@ def ingest(paths: list[Path], dry_run: bool) -> dict:
         topics = assign_to_topics(topics, [r["id"] for r in new_records], date_label)
 
         total_new += len(new_records)
-        handled.append({"file": path.name, "sha256": digest, "added": len(new_records),
-                        "first": new_records[0]["id"], "last": new_records[-1]["id"]})
+        entry = {"file": path.name, "sha256": digest, "added": len(new_records),
+                 "first": new_records[0]["id"], "last": new_records[-1]["id"]}
+        if refused_count:
+            entry["refused"] = refused_count
+        handled.append(entry)
 
     summary = {
         "files": handled,
         "before": before_count,
         "after": len(messages),
         "added": total_new,
+        "refused": total_refused,
     }
 
     if dry_run:
@@ -316,8 +337,9 @@ def main() -> int:
 
     print("대상 파일 %d개" % len(paths))
     summary = ingest(paths, args.dry_run)
-    print("\n메시지 %d건 -> %d건 (신규 %d건)"
-          % (summary["before"], summary["after"], summary["added"]))
+    print("\n메시지 %d건 -> %d건 (신규 %d건%s)"
+          % (summary["before"], summary["after"], summary["added"],
+             ", 수집 거부 %d건" % summary["refused"] if summary["refused"] else ""))
     if summary["added"] and not args.dry_run:
         print("다음: python -m scripts.build_firestore_payload"
               " && node scripts/upload_firestore.js")

@@ -3,11 +3,15 @@ rules_version = '2';
 // 카톡 아카이브 — 회원 전용 읽기 규칙
 //
 // 원칙
-//  1. 발행본(chunks·threads·digests·graph·meta)은 members/ 명부에 있는 사람만 읽는다.
+//  1. 발행본(threads·media·digests·graph·meta)은 members/ 명부에 있는 사람만 읽는다.
 //  2. 클라이언트 쓰기는 전면 금지한다. 적재는 Admin SDK(규칙 우회)로만 한다.
-//  3. 제외된 메시지는 애초에 발행본(chunks)에 들어가지 않는다 —
-//     "숨김"이 아니라 "미발행"이므로 devtools로도 볼 수 없다.
-//  4. 원본 전체(messagesSource)는 관리자만 읽는다. (P2 관리자 페이지용)
+//  3. 대화 원문은 발행하지 않는다. 멤버가 보는 것은 스레드 요약과 결과물이다.
+//     제외된 메시지는 애초에 발행본에 들어가지 않는다 — "숨김"이 아니라 "미발행".
+//  4. 본인이 쓴 글은 본인만 원문으로 본다(myMessages). 무엇을 지울지 고르려면
+//     봐야 하고, 자기 글을 보는 건 개인정보 문제가 아니다.
+//  5. 원본 전체(messagesSource)와 운영 설정(settings)은 관리자만 읽는다.
+//  6. 열람 신청(claims)은 아직 멤버가 아닌 사람이 쓸 수 있는 유일한 경로다.
+//     본인 이메일 문서 한 장만, 정해진 필드만 쓸 수 있다.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -33,11 +37,37 @@ service cloud.firestore {
     }
 
     // ── 아카이브 발행본: 멤버 읽기 전용 ──
+    //
+    // 원문은 발행하지 않는다. 멤버가 보는 것은 스레드 요약·주제별 지식·관계망과
+    // 결과물(사진·첨부)이다. 예전에는 chunks 문서에 본문이 실려 나가 화면에
+    // 안 보여도 devtools 로 전부 읽을 수 있었다.
     match /meta/{docId}       { allow read: if isMember(); allow write: if false; }
-    match /chunks/{chunkId}   { allow read: if isMember(); allow write: if false; }
     match /threads/{threadId} { allow read: if isMember(); allow write: if false; }
+    match /media/{docId}      { allow read: if isMember(); allow write: if false; }
     match /digests/{catId}    { allow read: if isMember(); allow write: if false; }
     match /graph/{docId}      { allow read: if isMember(); allow write: if false; }
+
+    // 옛 원문 청크 — 발행을 멈췄고 적재분도 지웠다. 되살아나도 못 읽게 막아둔다.
+    match /chunks/{chunkId}   { allow read, write: if false; }
+
+    // ── 내가 쓴 글: 본인만 ──
+    //
+    // 무엇을 지울지 고르려면 본인은 원문을 봐야 한다. 자기 글을 보는 건 개인정보
+    // 문제가 아니다. 사람별로 한 문서에 묶여 있어 읽기도 1회다.
+    match /myMessages/{ownerEmail} {
+      allow get:  if signedIn() && (callerEmail() == ownerEmail || isAdmin());
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    // ── 운영 설정: 관리자만 본다 ──
+    //
+    // 발행에서 뺀 주제 목록. 뺀 주제는 발행본에 없으므로 이 목록이 없으면
+    // 되돌릴 방법이 사라진다. 쓰기는 setThreadHidden Function 으로만.
+    match /settings/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
 
     // ── 원본 메시지: 관리자 전용 (P2에서 개별 숨김 처리에 사용) ──
     match /messagesSource/{msgId} { allow read: if isAdmin(); allow write: if false; }
@@ -46,6 +76,71 @@ service cloud.firestore {
     match /members/{memberEmail} {
       allow read: if signedIn() && (callerEmail() == memberEmail || isAdmin());
       allow write: if false;
+    }
+
+    // ── 열람 신청: 비멤버가 본인 것 한 장만 ──
+    //
+    // 참여자 명단(36명)을 화면에 뿌리지 않는 이유: 구글 계정만 있으면 누구나
+    // 로그인은 되므로, 목록을 보여주면 실명·소속이 그대로 노출된다. 그래서
+    // 본인이 대화방 표시명을 직접 적게 하고, 대조는 관리자가 로컬에서 한다.
+    match /claims/{claimEmail} {
+      allow get:  if signedIn() && (callerEmail() == claimEmail || isAdmin());
+      allow list: if isAdmin();
+
+      // 문서 ID를 본인 이메일로 고정해 1인 1건이 된다. 남의 신청서는 못 건드린다.
+      // requestedAt 은 서버 시각으로 못박아 위조를 막는다.
+      allow create, update: if signedIn()
+        && callerEmail() == claimEmail
+        && request.resource.data.keys().hasOnly(['nickname', 'displayName', 'requestedAt'])
+        && request.resource.data.nickname is string
+        && request.resource.data.nickname.size() >= 2
+        && request.resource.data.nickname.size() <= 40
+        && (!('displayName' in request.resource.data)
+            || (request.resource.data.displayName is string
+                && request.resource.data.displayName.size() <= 60))
+        && request.resource.data.requestedAt == request.time;
+
+      // 철회·승인 처리는 Admin SDK(scripts/approve_claims.js)로만
+      allow delete: if false;
+    }
+
+    // ── 수집 동의: 본인이 정하고 본인만 바꾼다 ──
+    //
+    // public       기본. 수집·발행 모두 한다.
+    // unpublished  수집은 하되 발행본에서 뺀다. 되돌리면 다시 보인다.
+    // none         수집 자체를 안 한다. 되돌려도 그 기간은 영영 비어 있다.
+    //
+    // 실제 반영은 매일 23:40 자동화가 파이프라인을 다시 돌리며 한다.
+    match /preferences/{prefEmail} {
+      allow get:  if signedIn() && (callerEmail() == prefEmail || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isMember()
+        && callerEmail() == prefEmail
+        && request.resource.data.keys().hasOnly(['collection', 'updatedAt'])
+        && request.resource.data.collection in ['public', 'unpublished', 'none']
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    // ── 삭제 요청: 본인 글만 ──
+    //
+    // 규칙은 "문서를 본인만 쓴다"까지만 보장한다. 목록에 남의 메시지 ID 를 섞어
+    // 넣는 것은 규칙으로 막을 수 없다(다른 문서를 조회해야 하므로). 그래서 소유권
+    // 검증은 반영 단계에서 messages.jsonl 과 대조해 한 번 더 한다.
+    // scripts/member_requests.py 의 verify_ownership 를 함께 볼 것.
+    match /deletionRequests/{reqEmail} {
+      allow get:  if signedIn() && (callerEmail() == reqEmail || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isMember()
+        && callerEmail() == reqEmail
+        && request.resource.data.keys().hasOnly(['messageIds', 'allMessages', 'requestedAt'])
+        && request.resource.data.messageIds is list
+        && request.resource.data.messageIds.size() <= 1000
+        && request.resource.data.allMessages is bool
+        && request.resource.data.requestedAt == request.time;
+      // 요청 철회는 본인이 할 수 있어야 한다 — 잘못 눌렀을 때 되돌릴 길이 필요하다.
+      // 반영이 끝난 뒤 정리하는 것은 Admin SDK 가 한다.
+      allow delete: if isMember() && callerEmail() == reqEmail;
     }
 
     // 그 밖의 모든 경로 차단

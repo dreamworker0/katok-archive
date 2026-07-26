@@ -25,6 +25,9 @@ const BUCKET = "katok-crawling-project.firebasestorage.app";
 
 // 아카이브를 서비스하는 출처만 허용한다. 커스텀 도메인을 붙이면 여기에 추가.
 const ORIGINS = [
+  // 주 주소
+  "https://sw-ai-archive.web.app",
+  // 예전 주소 — 공유된 링크가 남아 있어 계속 살려둔다
   "https://katok-crawling-project.web.app",
   "https://katok-crawling-project.firebaseapp.com",
   "http://localhost:5000",

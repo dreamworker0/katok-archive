@@ -4,10 +4,14 @@
     "members.json 은 개인 이메일이 담기므로 .gitignore 되어 있다.",
     "role 은 'admin' 또는 'user'. admin 은 원본 메시지 열람·(P2)관리자 페이지 권한.",
     "이메일은 대소문자 무관하게 소문자로 정규화되어 적재된다.",
-    "Google 계정으로 로그인 가능한 이메일이어야 한다."
+    "Google 계정으로 로그인 가능한 이메일이어야 한다.",
+    "nickname 은 카톡 대화방 표시명 — 로그인 계정과 아카이브 참여자를 잇는 고리다.",
+    "  구글 계정과 카톡 닉네임은 공유하는 식별자가 없어 자동 매칭이 불가능하므로 손으로 넣는다.",
+    "  발행할 때 output/participants.json 과 대조해 오타·미기입을 경고한다.",
+    "  보통은 직접 고칠 일 없이 scripts/approve_claims.js 가 승인하면서 채워 넣는다."
   ],
   "members": [
-    { "email": "you@example.org", "name": "본인 이름", "role": "admin" },
-    { "email": "member1@example.org", "name": "멤버1", "role": "user" }
+    { "email": "you@example.org", "name": "본인 이름", "nickname": "김종원", "role": "admin" },
+    { "email": "member1@example.org", "name": "멤버1", "nickname": "한도윤", "role": "user" }
   ]
 }

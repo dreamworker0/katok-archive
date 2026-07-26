@@ -1,13 +1,31 @@
 {
-  "hosting": {
-    "public": "hosting",
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
-    "headers": [
-      {
-        "source": "**/*.@(js|css|html)",
-        "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
-      }
-    ]
+  "hosting": [
+    {
+      "site": "sw-ai-archive",
+      "public": "hosting",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "headers": [
+        {
+          "source": "**/*.@(js|css|html)",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        }
+      ]
+    },
+    {
+      "site": "katok-crawling-project",
+      "public": "hosting",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "headers": [
+        {
+          "source": "**/*.@(js|css|html)",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        }
+      ]
+    }
+  ],
+  "functions": {
+    "source": "functions",
+    "ignore": ["node_modules", ".git", "*.log"]
   },
   "firestore": {
     "rules": "firestore.rules",
