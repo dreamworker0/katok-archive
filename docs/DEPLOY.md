@@ -15,7 +15,8 @@ Firebase 프로젝트: `katok-crawling-project`
 [공개] Hosting     hosting/  — 앱 껍데기 61KB. 대화 데이터·이미지 없음(공개돼도 안전)
 [인증] Auth        Google 로그인
 [보호] Firestore   대화 전문 — members/ 명부에 있는 사람만 읽기
-[보호] Storage     이미지 64장 — 멤버만 인증 요청으로 열람
+[보호] Storage     이미지 64장 + 첨부 11개 — 멤버만 인증 요청으로 열람
+[서버] Functions   승인·권한 부여 (asia-northeast3)
 ```
 
 핵심: **대화 데이터가 정적 파일로 배포되지 않는다.** 로그인하고 명부에 있는 사람에게만
@@ -76,8 +77,7 @@ firebase login
 ```bash
 python -m scripts.build_firestore_payload
 ```
-→ `firestore-payload/` 생성 + 멤버 목록이 박힌 `storage.rules` 생성.
-   제외 리포트(`firestore-payload/exclusion-report.json`)로 무엇이 빠졌는지 확인.
+→ `firestore-payload/` 생성. 제외 리포트(`firestore-payload/exclusion-report.json`)로 무엇이 빠졌는지 확인.
 
 ```bash
 node scripts/upload_firestore.js --dry-run
@@ -99,7 +99,8 @@ firebase deploy
 ```bash
 firebase deploy --only hosting     # 프런트만
 firebase deploy --only firestore   # Firestore 규칙만
-firebase deploy --only storage     # Storage 규칙만 (멤버 변경 시 필수)
+firebase deploy --only storage     # Storage 규칙만 (내용이 바뀔 때만)
+firebase deploy --only functions   # 승인·권한 Functions
 ```
 
 ---
@@ -122,7 +123,7 @@ node scripts/approve_claims.js
 ```bash
 node scripts/approve_claims.js --approve someone@gmail.com
 ```
-`config/members.json` 추가 → 페이로드 재생성 → Firestore 적재 → `firebase deploy --only storage`
+`config/members.json` 추가 → Custom Claims 부여 → 페이로드 재생성 → Firestore 적재
 까지 한 번에 하고 신청서를 지운다. 신청자는 새로고침하면 들어온다.
 
 | 옵션 | 쓰임 |
@@ -133,9 +134,15 @@ node scripts/approve_claims.js --approve someone@gmail.com
 | `--dry-run` | 파일·발행 없이 결과만 확인 |
 | `--no-publish` | `members.json` 만 고치고 발행은 직접 |
 
-**중요:** 승인은 Firestore 쓰기만으로 끝나지 않는다. `storage.rules` 에 멤버 이메일이
-하드코딩돼 있어 재배포하지 않으면 **대화는 열리는데 이미지만 403** 이 된다.
-위 명령은 그 재배포까지 포함한다.
+### 관리자 페이지에서 승인하기
+
+관리자로 로그인하면 **관리** 탭이 생긴다. 신청 목록을 참여자 명단과 대조해 보여주고
+승인·반려를 그 자리에서 처리한다. 삭제 요청 현황과 멤버 목록도 여기서 본다.
+승인은 Cloud Function 이 처리한다 — 클라이언트는 `members` 문서를 쓸 수 없고,
+이미지 권한인 Custom Claims 는 Admin SDK 로만 붙일 수 있기 때문이다.
+
+위 로컬 스크립트는 그 대체가 아니라 보조다. 웹이 막혔을 때, 여러 건을 한 번에
+처리할 때, 명단 대조를 자세히 보고 싶을 때 쓴다.
 
 신청 기능 자체는 Firestore 규칙에 의존하므로, 규칙을 먼저 배포해야 동작한다:
 ```bash
@@ -146,15 +153,18 @@ firebase deploy --only firestore
 
 ## 자주 하는 작업
 
-**멤버 추가/제거** (손으로 할 때 — 보통은 위의 `approve_claims.js` 를 쓴다)
+**멤버 추가/제거** (손으로 할 때 — 보통은 관리 탭이나 `approve_claims.js` 를 쓴다)
 ```bash
 # config/members.json 수정 후
 python -m scripts.build_firestore_payload
 node scripts/upload_firestore.js --skip-images
-firebase deploy --only storage      # ← Storage 규칙에 목록이 박혀 있어 반드시 필요
+node scripts/sync_claims.js         # ← 이미지 권한(Custom Claims) 맞추기
 ```
-> Storage 규칙은 Firestore를 읽을 수 없어 P1에서는 목록을 규칙에 넣는다.
-> P2에서 Custom Claims로 바꾸면 이 재배포가 없어진다.
+> 규칙 재배포는 더 이상 필요 없다. `storage.rules` 는 `token.member == true` 한 줄이라
+> 멤버가 바뀌어도 그대로다. 대신 클레임을 맞춰야 이미지가 열린다.
+>
+> 한 번도 로그인한 적 없는 사람은 Auth 계정이 없어 지금 붙일 수 없다. 그 사람이
+> 처음 로그인하면 `ensureClaim` Function 이 대신 붙여주므로 그냥 두면 된다.
 
 **대화 갱신 후 재발행**
 ```bash
@@ -292,9 +302,13 @@ P1 기준 무료 티어 내:
 **"접근 권한이 없습니다"**
 → 로그인한 이메일이 `config/members.json` 에 없다. 추가 후 재발행·재배포.
 
-**승인했는데 이미지만 안 보인다**
-→ `storage.rules` 재배포 누락. `firebase deploy --only storage`.
-   `approve_claims.js` 를 `--no-publish` 로 돌렸을 때 잘 생긴다.
+**승인했는데 이미지·첨부만 안 보인다**
+→ Custom Claims 가 없거나 토큰이 아직 옛것이다. 먼저 새로고침하게 한다
+   (`ensureClaim` 이 로그인할 때 스스로 붙인다). 그래도 안 되면 상태를 본다:
+```bash
+node scripts/sync_claims.js --dry-run   # 어긋난 것 확인
+node scripts/sync_claims.js             # 맞추기
+```
 
 **신청 화면에서 "신청을 보내지 못했습니다"**
 → `claims/` 규칙이 아직 배포되지 않았다. `firebase deploy --only firestore`.
