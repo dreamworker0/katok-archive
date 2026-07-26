@@ -92,9 +92,11 @@ button, input, select { font: inherit; }
   min-height: 36px; padding: 7px 10px; font-size: 12px; line-height: 1.2;
 }
 .sidebar-session .chip { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.theme-toggle { width: 100%; margin-top: 10px; border: 1px solid var(--line);
-  border-radius: 11px; padding: 9px 12px; color: var(--ink-soft); background: var(--surface-2);
-  cursor: pointer; text-align: left; }
+.theme-toggle { display: grid; place-items: center; width: 36px; height: 36px;
+  margin: 10px 0 0 auto; border: 1px solid var(--line); border-radius: 11px; padding: 0;
+  color: var(--ink-soft); background: var(--surface-2); cursor: pointer; }
+.theme-toggle:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.theme-toggle svg, [data-mobile-action="theme"] svg { width: 18px; height: 18px; }
 .app-main { min-width: 0; }
 .utility-bar { position: sticky; top: 0; z-index: 20; display: flex; gap: 12px;
   padding: 18px 32px; border-bottom: 1px solid var(--line);
@@ -441,12 +443,16 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 
 /* 대화 보고서 — 목록을 훑을 때는 접혀 있고, 눌러야 펴진다 */
 .tc-detail { margin: 0 0 10px; }
-.tc-detail-bar { display: flex; align-items: center; gap: 12px; }
-.tc-toggle, .tc-dl { border: 0; background: none; padding: 0; cursor: pointer; font: inherit;
-  font-size: 12.5px; font-weight: 700; color: var(--accent); }
-.tc-toggle:hover, .tc-dl:hover { text-decoration: underline; }
-.tc-dl { color: var(--ink-faint); font-weight: 600; }
-.tc-dl:hover { color: var(--accent); }
+.tc-detail-bar { display: flex; align-items: center; gap: 10px; }
+.tc-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  min-height: 40px; border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line));
+  border-radius: 10px; padding: 8px 14px; color: var(--accent); background: var(--accent-soft);
+  cursor: pointer; font: inherit; font-size: 14px; font-weight: 800; }
+.tc-toggle:hover { border-color: var(--accent); color: var(--ink); }
+.tc-toggle-icon { width: 17px; height: 17px; flex: 0 0 auto; }
+.tc-dl { min-height: 32px; border: 0; background: none; padding: 4px 6px; cursor: pointer;
+  font: inherit; color: var(--ink-faint); font-size: 12.5px; font-weight: 600; }
+.tc-dl:hover { color: var(--accent); text-decoration: underline; }
 .tc-detail-body { display: none; margin-top: 8px; padding: 16px 18px;
   background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; }
 .tc-detail.on .tc-detail-body { display: block; }
@@ -717,6 +723,9 @@ img.img-error {
   .mobile-more[hidden] { display: none; }
   .mobile-more button { width: 100%; border: 0; border-radius: 11px; padding: 11px 13px;
     color: var(--ink); background: var(--surface-2); cursor: pointer; text-align: left; }
+  .mobile-more button[data-mobile-action="theme"] {
+    display: grid; place-items: center; justify-self: end; width: 44px; height: 44px; padding: 0;
+  }
   .mobile-more button.active { color: var(--accent); background: var(--accent-soft); font-weight: 800; }
 }
 

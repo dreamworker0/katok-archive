@@ -95,3 +95,39 @@ git push origin main
 ```
 
 Verify both Firebase Hosting URLs return the updated icon markers in `app.js`.
+
+---
+
+### Task 2: Prominent Timeline Report Button
+
+**Files:**
+- Create: `docs/superpowers/specs/2026-07-26-timeline-report-button-design.md`
+- Modify: `tests/test_ui_contract.py`
+- Modify: `web/app.js`
+- Modify: `web/styles.css`
+
+**Interfaces:**
+- Consumes: existing `.tc-toggle` report disclosure button and `.tc-detail.on` state
+- Produces: `.tc-toggle-label`, `.tc-toggle-icon`, and synchronized `aria-expanded`
+
+- [ ] **Step 1: Write the failing contract tests**
+
+Assert that the report toggle contains a decorative document SVG, a dedicated label span, `aria-expanded`, `보고서 접기`, and CSS contracts for inline-flex layout, 40px minimum height, and 14px text.
+
+- [ ] **Step 2: Run the focused tests and verify RED**
+
+Run:
+
+```powershell
+python -m unittest tests.test_ui_contract.UiJavascriptContractTests.test_timeline_report_toggle_is_a_prominent_accessible_action tests.test_ui_contract.UiStyleContractTests.test_timeline_report_toggle_is_visually_prominent
+```
+
+Expected: FAIL because the existing control is a 12.5px text-only button without an expanded-state attribute.
+
+- [ ] **Step 3: Implement the prominent disclosure button**
+
+Render an inline document SVG with `aria-hidden="true"`, wrap the state text in `.tc-toggle-label`, set the initial `aria-expanded`, and update both the label and attribute whenever the report opens or closes. Style `.tc-toggle` as a 40px soft-accent pill button and leave `.tc-dl` secondary.
+
+- [ ] **Step 4: Run focused, full, visual, and build verification**
+
+Run the focused tests, all Python tests, Node tests, hosting build, and `git diff --check`. In a local browser, verify the control size, document icon, `보고서 읽기` → `보고서 접기` behavior, and absence of console errors.

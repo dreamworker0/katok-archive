@@ -118,6 +118,8 @@ class UiStyleContractTests(unittest.TestCase):
         self.assertIn("height: 50px", self.css)
         self.assertIn(".sidebar-session .chip", self.css)
         self.assertIn(".sidebar-session .icon-btn", self.css)
+        self.assertIn(".theme-toggle svg", self.css)
+        self.assertIn("width: 36px", self.css)
 
     def test_every_interface_uses_noto_sans_korean_without_serif_overrides(self):
         self.assertIn('font-family: "Noto Sans KR", sans-serif;', self.css)
@@ -130,6 +132,12 @@ class UiStyleContractTests(unittest.TestCase):
             "ui-monospace",
         ):
             self.assertNotIn(legacy_family, self.css)
+
+    def test_timeline_report_toggle_is_visually_prominent(self):
+        self.assertIn(".tc-toggle { display: inline-flex", self.css)
+        self.assertIn("min-height: 40px", self.css)
+        self.assertIn("font-size: 14px", self.css)
+        self.assertIn(".tc-toggle-icon", self.css)
 
 
 class UiJavascriptContractTests(unittest.TestCase):
@@ -146,16 +154,28 @@ class UiJavascriptContractTests(unittest.TestCase):
         self.assertIn("setMobileMore", self.app)
         self.assertIn("mobileMoreButton", self.app)
 
-    def test_theme_controls_name_the_mode_they_will_switch_to(self):
+    def test_theme_controls_render_accessible_destination_icons(self):
         self.assertIn("function updateThemeControls(", self.app)
-        self.assertIn('"라이트 모드"', self.app)
-        self.assertIn('"다크 모드"', self.app)
-        self.assertIn('setAttribute("aria-label", label + "로 전환")', self.app)
+        self.assertIn("function themeIcon(", self.app)
+        self.assertIn('data-theme-icon="moon"', self.app)
+        self.assertIn('data-theme-icon="sun"', self.app)
+        self.assertIn('aria-hidden="true"', self.app)
+        self.assertIn('setAttribute("aria-label", label)', self.app)
+        self.assertIn('setAttribute("title", label)', self.app)
+        self.assertIn("innerHTML = themeIcon(", self.app)
         self.assertIn('data-mobile-action="theme"', self.app)
 
     def test_room_summary_breaks_dates_onto_their_own_line(self):
         self.assertIn('class="room-sub__counts"', self.app)
         self.assertIn('class="room-sub__dates"', self.app)
+
+    def test_timeline_report_toggle_is_a_prominent_accessible_action(self):
+        self.assertIn('class="tc-toggle-icon"', self.app)
+        self.assertIn('class="tc-toggle-label"', self.app)
+        self.assertIn('aria-hidden="true"', self.app)
+        self.assertIn('aria-expanded="', self.app)
+        self.assertIn('"보고서 접기"', self.app)
+        self.assertIn('setAttribute("aria-expanded"', self.app)
 
 
 class UiGateContractTests(unittest.TestCase):
@@ -236,12 +256,13 @@ class FirebaseHostingContractTests(unittest.TestCase):
                     headers,
                 )
 
-    def test_shells_load_noto_sans_korean_and_name_the_default_theme_action(self):
+    def test_shells_load_noto_sans_korean_and_use_icon_only_theme_action(self):
         for name in ("index.html", "index.hosting.html"):
             with self.subTest(name=name):
                 source = (ROOT / "web" / name).read_text(encoding="utf-8")
                 self.assertIn("fonts.googleapis.com/css2?family=Noto+Sans+KR", source)
-                self.assertIn('aria-label="다크 모드로 전환">다크 모드</button>', source)
+                self.assertIn('aria-label="다크 모드로 전환"></button>', source)
+                self.assertNotIn(">다크 모드</button>", source)
 
 
 if __name__ == "__main__":

@@ -548,14 +548,22 @@
    * 훑을 때는 방해가 되므로 접어 두고, 검색 중이면 어디가 걸렸는지 보이도록
    * 펼쳐 둔다. 사진·첨부는 media 발행본에서 thread_id 로 찾아 붙인다.
    */
+  function reportToggleIcon() {
+    return '<svg class="tc-toggle-icon" aria-hidden="true" viewBox="0 0 24 24" ' +
+      'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" ' +
+      'stroke-linejoin="round"><path d="M6 3h9l3 3v15H6z"></path>' +
+      '<path d="M14 3v4h4M9 12h6M9 16h6"></path></svg>';
+  }
+
   function detailBlock(t, inlineLinks) {
     if (!t.report) return "";
     var open = !!state.q;
     var n = mediaOf(t.id).length;
     return '<div class="tc-detail' + (open ? " on" : "") + '" data-tid="' + esc(t.id) + '">' +
       '<div class="tc-detail-bar">' +
-      '<button class="tc-toggle" type="button">' +
-      (open ? "간단히" : "보고서 읽기") + "</button>" +
+      '<button class="tc-toggle" type="button" aria-expanded="' + (open ? "true" : "false") + '">' +
+      reportToggleIcon() + '<span class="tc-toggle-label">' +
+      (open ? "보고서 접기" : "보고서 읽기") + "</span></button>" +
       '<button class="tc-dl" type="button" title="이 보고서를 .md 파일로 저장합니다">' +
       "⬇ .md</button></div>" +
       '<div class="tc-detail-body md">' +
@@ -725,7 +733,9 @@
       b.onclick = function () {
         var box = b.parentNode.parentNode;
         var on = box.classList.toggle("on");
-        b.textContent = on ? "간단히" : "보고서 읽기";
+        var label = b.querySelector(".tc-toggle-label");
+        if (label) label.textContent = on ? "보고서 접기" : "보고서 읽기";
+        b.setAttribute("aria-expanded", on ? "true" : "false");
         if (on) fillMedia(box);
       };
     });
@@ -2084,16 +2094,33 @@
       ? "dark" : "light";
   }
 
+  function themeIcon(mode) {
+    if (mode === "dark") {
+      return '<svg data-theme-icon="moon" aria-hidden="true" viewBox="0 0 24 24" ' +
+        'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" ' +
+        'stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 ' +
+        '7 7 0 0 0 21 12.79z"></path></svg>';
+    }
+    return '<svg data-theme-icon="sun" aria-hidden="true" viewBox="0 0 24 24" ' +
+      'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" ' +
+      'stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle>' +
+      '<path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41' +
+      'M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"></path></svg>';
+  }
+
   function updateThemeControls() {
-    var label = currentTheme() === "dark" ? "라이트 모드" : "다크 모드";
+    var next = currentTheme() === "dark" ? "light" : "dark";
+    var label = next === "light" ? "라이트 모드로 전환" : "다크 모드로 전환";
     if (el.themeBtn) {
-      el.themeBtn.textContent = label;
-      el.themeBtn.setAttribute("aria-label", label + "로 전환");
+      el.themeBtn.innerHTML = themeIcon(next);
+      el.themeBtn.setAttribute("aria-label", label);
+      el.themeBtn.setAttribute("title", label);
     }
     var mobileTheme = document.querySelector('[data-mobile-action="theme"]');
     if (mobileTheme) {
-      mobileTheme.textContent = label;
-      mobileTheme.setAttribute("aria-label", label + "로 전환");
+      mobileTheme.innerHTML = themeIcon(next);
+      mobileTheme.setAttribute("aria-label", label);
+      mobileTheme.setAttribute("title", label);
     }
   }
 
