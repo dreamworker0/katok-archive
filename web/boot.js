@@ -26,8 +26,12 @@
   }
 
   function gateFrame(kind, body) {
+    var art = kind === "pending" ? "state-pending.webp"
+      : (kind === "signin" || kind === "claim" ? "archive-hero.webp" : "state-empty.webp");
     return '<section class="gate-state gate-state--' + kind + '">' +
-      '<div class="gate-visual" aria-hidden="true"></div>' +
+      '<img class="gate-visual" src="art/' + art + '" alt="" ' +
+      (art === "archive-hero.webp" ? 'width="1280" height="800"' : 'width="480" height="480"') +
+      ' />' +
       '<div class="gate-copy">' + body + "</div></section>";
   }
 

@@ -26,6 +26,7 @@ FILES = [
     ("firebase-config.js", "firebase-config.js"),
     ("favicon.svg", "favicon.svg"),
 ]
+STATIC_DIRS = ("art",)
 
 FORBIDDEN = ("data.js", "assets")
 
@@ -40,6 +41,8 @@ def main() -> None:
         if not s.exists():
             raise SystemExit("필요한 파일이 없습니다: %s" % s)
         shutil.copyfile(s, HOSTING / dest)
+    for name in STATIC_DIRS:
+        shutil.copytree(WEB / name, HOSTING / name)
 
     # 안전장치: 배포본에 데이터·이미지가 섞여 들어가지 않았는지 확인
     names = {p.name for p in HOSTING.rglob("*")}
@@ -48,8 +51,9 @@ def main() -> None:
             raise SystemExit("배포본에 민감 데이터가 포함되었습니다: %s" % bad)
 
     total = sum(p.stat().st_size for p in HOSTING.rglob("*") if p.is_file())
+    file_count = sum(1 for p in HOSTING.rglob("*") if p.is_file())
     print("hosting/ 생성 완료: 파일 %d개, %.1f KB (대화 데이터·이미지 미포함)"
-          % (len(FILES), total / 1024))
+          % (file_count, total / 1024))
     print("다음: firebase deploy --only hosting")
 
 

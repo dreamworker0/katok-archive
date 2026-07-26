@@ -5,6 +5,7 @@
 
 # 사진 수집 중간 스테이징 (원본 다운로드 덤프, 재수집 가능)
 /assets/staging/
+/assets/design-source/
 
 # 대화방에서 공유된 첨부 파일 원본.
 # 사진(assets/images)과 달리 커밋하지 않는다 — 문서·발표자료·zip 이라 용량이 크고

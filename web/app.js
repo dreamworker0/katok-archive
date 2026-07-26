@@ -83,8 +83,10 @@
   }
 
   function emptyState(kind, title, body, actionHtml) {
+    var art = kind === "search" ? "state-search.webp" : "state-empty.webp";
     return '<section class="empty-state empty-state--' + esc(kind) + '">' +
-      '<div class="empty-state__art" aria-hidden="true"></div>' +
+      '<img class="empty-state__art" src="art/' + art +
+      '" alt="" width="480" height="480" loading="lazy" />' +
       '<div class="empty-state__copy"><h2>' + esc(title) + "</h2>" +
       '<p>' + esc(body) + "</p>" +
       (actionHtml ? '<div class="empty-state__actions">' + actionHtml + "</div>" : "") +
@@ -119,7 +121,8 @@
       '<h1>함께 나눈 이야기를<br>천천히 다시 만나요</h1>' +
       '<p>' + esc(totals.messages || 0) + "개의 기록과 " +
       esc(totals.participants || 0) + "명의 이야기를 주제별로 모았습니다.</p>" +
-      '</div><div class="archive-welcome__art" aria-hidden="true"></div></section>',
+      '</div><img class="archive-welcome__art" src="art/archive-hero.webp" ' +
+      'alt="" width="1280" height="800" /></section>',
       '<div class="cat-nav">',
     ];
     var digestCount = 0;

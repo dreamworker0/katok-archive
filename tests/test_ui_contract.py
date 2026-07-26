@@ -141,5 +141,21 @@ class UiSafetyContractTests(unittest.TestCase):
         self.assertIn("관리자에게는 운영 원본이 남습니다", self.app)
 
 
+class UiArtworkContractTests(unittest.TestCase):
+    def test_production_art_exists_within_size_budgets(self):
+        art = ROOT / "web" / "art"
+        budgets = {
+            "archive-hero.webp": 250 * 1024,
+            "state-pending.webp": 80 * 1024,
+            "state-empty.webp": 80 * 1024,
+            "state-search.webp": 80 * 1024,
+        }
+        for name, budget in budgets.items():
+            with self.subTest(name=name):
+                path = art / name
+                self.assertTrue(path.is_file())
+                self.assertLessEqual(path.stat().st_size, budget)
+
+
 if __name__ == "__main__":
     unittest.main()

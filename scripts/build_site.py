@@ -25,6 +25,7 @@ WEB = ROOT / "web"
 SITE = ROOT / "site"
 
 STATIC_FILES = ("index.html", "app.js", "styles.css", "graph.js", "images.js", "favicon.svg")
+STATIC_DIRS = ("art",)
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -460,6 +461,8 @@ def write_site(data: dict) -> None:
     # 정적 파일 복사
     for name in STATIC_FILES:
         shutil.copyfile(WEB / name, SITE / name)
+    for name in STATIC_DIRS:
+        shutil.copytree(WEB / name, SITE / name)
 
     # 이미지 복사 (다운로드된 것만 존재)
     if ASSETS_IMAGES.exists():
