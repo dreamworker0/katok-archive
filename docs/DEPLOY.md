@@ -155,12 +155,54 @@ python -m scripts.build_firestore_payload
 node scripts/upload_firestore.js
 ```
 
-**특정 인물·키워드 제외**
+**특정 인물·키워드 제외 (발행 단계)**
 `output/exclusions.json` 작성 (`output/exclusions.example.json` 참고) 후 재발행.
 제외된 메시지는 발행본에 **애초에 들어가지 않으므로** 멤버도 devtools로 볼 수 없다.
 ```json
 { "exclude_people": ["홍길동"], "exclude_keywords": ["[제외]"], "exclude_message_ids": [] }
 ```
+
+---
+
+## 제외의 두 층
+
+되돌릴 수 있느냐가 다르다. 헷갈리면 사고가 난다.
+
+| | 수집 거부 | 발행 제외 |
+|---|---|---|
+| 설정 | `config/collection-policy.json` | `output/exclusions.json` |
+| 적용 시점 | 증분 수집 (`ingest_incremental`) | 발행 (`build_firestore_payload`) |
+| 원본(`messages.jsonl`) | **안 들어감** | 남음 |
+| 관리자 열람 | 불가 — 존재 자체가 없음 | 가능 (`messagesSource`) |
+| 되돌리기 | **불가** — 그 기간은 영영 빔 | 가능 — 설정만 되돌리면 다시 보임 |
+
+### 글 쓸 때 `[제외]` — 가장 손이 덜 가는 방법
+
+카톡에 글을 쓰면서 본문에 `[제외]` 를 넣으면 **그 메시지는 수집되지 않는다.**
+설정 파일이 없어도 기본으로 동작하며, 전각 대괄호 `［제외］` 도 함께 받는다.
+
+```
+[홍길동] [오전 9:02] 이건 남기지 말아주세요 [제외]     → 수집 안 됨
+[김철수] [오전 9:04] 그건 제외하고 봅시다              → 수집됨 (대괄호 없음)
+```
+
+수집 거부 건수는 실행 로그에 건수만 남는다. **본문은 로그에도 남기지 않는다** —
+수집하지 않기로 한 글이 로그로 새면 설정의 의미가 없다.
+
+알아둘 한계:
+- **사진에는 본문이 없어** 키워드를 붙일 수 없다. 사진은 사람 단위 설정으로 다룬다.
+- **소급 적용되지 않는다.** 이미 보낸 글을 내리려면 위의 '발행 제외'를 쓴다.
+- 키워드가 대화방에 그대로 보인다. 명시적이라는 게 장점이자 단점이다.
+
+사람 단위로 아예 수집하지 않으려면 `config/collection-policy.json` 을 만든다
+(`config/collection-policy.example.json` 참고):
+```json
+{ "keywords": ["[제외]", "［제외］"], "opt_out_people": ["홍길동"] }
+```
+> 과거에 이미 수집된 글은 그대로 남는다. 그것까지 내리려면 `exclusions.json` 의
+> `exclude_people` 에도 넣어야 한다.
+
+---
 
 **로컬 미리보기** (로그인 없이, 배포와 무관)
 ```bash
