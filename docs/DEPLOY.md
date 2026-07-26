@@ -370,6 +370,19 @@ node scripts/sync_member_requests.js --dry-run  # 내려받을 내용만 확인
 python scripts/build_site.py     # site/index.html 을 브라우저로 열기
 ```
 
+### UI 일러스트
+
+화면에 쓰는 최적화본은 `web/art/*.webp`에 있으며 로컬·Hosting 빌드에 함께 복사된다.
+생성 원본 PNG는 `assets/design-source/`에 두되 Git과 배포에서는 제외한다.
+
+```bash
+python -m scripts.optimize_ui_art assets/design-source/archive-hero.png web/art/archive-hero.webp --max-width 1280 --quality 78
+python -m scripts.optimize_ui_art assets/design-source/state-empty.png web/art/state-empty.webp --max-width 480 --quality 76
+```
+
+용량 상한은 히어로 250KB, 상태 이미지 각 80KB이며 테스트가 이를 검사한다.
+Hosting의 `assets` 금지 규칙은 그대로 유지하므로 대화 사진 원본과 디자인 소스는 섞이지 않는다.
+
 ---
 
 ## 검증 체크리스트

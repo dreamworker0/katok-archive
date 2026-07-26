@@ -37,6 +37,7 @@
       <header class="utility-bar">
         <label class="search">
           <span aria-hidden="true">⌕</span>
+          <span class="sr-only">아카이브 검색</span>
           <input id="searchInput" type="search" placeholder="대화·사람·주제 검색" autocomplete="off" />
         </label>
         <label class="filter">
@@ -52,7 +53,8 @@
       <button type="button" data-view="timeline">타임라인</button>
       <button type="button" data-view="gallery">사진</button>
       <button type="button" data-view="mine">내 기록</button>
-      <button type="button" id="mobileMoreButton" aria-controls="mobileMore" aria-expanded="false">더보기</button>
+      <button id="mobileMoreButton" aria-label="더 많은 화면 열기" type="button"
+        aria-controls="mobileMore" aria-expanded="false">더보기</button>
     </nav>
     <div class="mobile-more" id="mobileMore" hidden></div>
   </div>
@@ -70,7 +72,7 @@
   </dialog>
 
   <div class="lightbox" id="lightbox">
-    <span class="close" id="lightboxClose">×</span>
+    <button class="close" id="lightboxClose" type="button" aria-label="확대 이미지 닫기">×</button>
     <img id="lightboxImg" alt="" />
   </div>
 

@@ -25,6 +25,10 @@ REQUIRED_IDS = {
     "themeBtn",
     "view",
     "lightbox",
+    "confirmDialog",
+    "confirmTitle",
+    "confirmDesc",
+    "confirmSubmit",
 }
 
 
@@ -32,14 +36,24 @@ class Markup(HTMLParser):
     def __init__(self):
         super().__init__()
         self.ids = set()
+        self.id_counts = {}
         self.views = set()
+        self.buttons = []
+        self.images = []
+        self.tags_by_id = {}
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         if attrs.get("id"):
             self.ids.add(attrs["id"])
+            self.id_counts[attrs["id"]] = self.id_counts.get(attrs["id"], 0) + 1
+            self.tags_by_id[attrs["id"]] = tag
         if attrs.get("data-view"):
             self.views.add(attrs["data-view"])
+        if tag == "button":
+            self.buttons.append(attrs)
+        if tag == "img":
+            self.images.append(attrs)
 
 
 class UiShellContractTests(unittest.TestCase):
@@ -54,6 +68,21 @@ class UiShellContractTests(unittest.TestCase):
                 page = self.parse(name)
                 self.assertTrue(REQUIRED_IDS <= page.ids)
                 self.assertEqual(VIEWS, page.views)
+
+    def test_shell_markup_has_accessible_controls_and_unique_ids(self):
+        for name in ("index.html", "index.hosting.html"):
+            with self.subTest(name=name):
+                page = self.parse(name)
+                self.assertFalse(
+                    [item for item, count in page.id_counts.items() if count > 1]
+                )
+                self.assertTrue(all("alt" in image for image in page.images))
+                self.assertTrue(all(button.get("type") for button in page.buttons))
+                self.assertEqual("button", page.tags_by_id.get("lightboxClose"))
+                source = (ROOT / "web" / name).read_text(encoding="utf-8")
+                self.assertIn('<span class="sr-only">아카이브 검색</span>', source)
+                self.assertIn('id="mobileMoreButton" aria-label=', source)
+                self.assertIn('id="lightboxClose" type="button" aria-label=', source)
 
 
 class UiStyleContractTests(unittest.TestCase):
