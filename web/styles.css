@@ -600,6 +600,9 @@ img.img-error {
     border-radius: 20px; background: var(--surface); box-shadow: var(--shadow);
   }
   .mobile-more[hidden] { display: none; }
+  .mobile-more button { width: 100%; border: 0; border-radius: 11px; padding: 11px 13px;
+    color: var(--ink); background: var(--surface-2); cursor: pointer; text-align: left; }
+  .mobile-more button.active { color: var(--accent); background: var(--accent-soft); font-weight: 800; }
 }
 
 @media (prefers-reduced-motion: reduce) {

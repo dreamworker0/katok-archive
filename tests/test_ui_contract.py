@@ -82,5 +82,20 @@ class UiStyleContractTests(unittest.TestCase):
         self.assertIn("@media (max-width: 760px)", self.css)
 
 
+class UiJavascriptContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+
+    def test_navigation_updates_every_data_view_control(self):
+        self.assertIn('querySelectorAll("[data-view]")', self.app)
+        self.assertIn('setAttribute("aria-current", "page")', self.app)
+        self.assertIn("setNavigationState", self.app)
+
+    def test_mobile_more_has_explicit_open_state(self):
+        self.assertIn("setMobileMore", self.app)
+        self.assertIn("mobileMoreButton", self.app)
+
+
 if __name__ == "__main__":
     unittest.main()

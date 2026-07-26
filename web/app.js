@@ -20,8 +20,12 @@
   function colorFor(cid) { return CAT_COLORS[cid] || "#3b6fe0"; }
 
   var el = {
+    app: document.getElementById("appRoot"),
     view: document.getElementById("view"),
     tabs: document.getElementById("tabs"),
+    mobileNav: document.getElementById("mobileNav"),
+    mobileMore: document.getElementById("mobileMore"),
+    mobileMoreButton: document.getElementById("mobileMoreButton"),
     search: document.getElementById("searchInput"),
     filter: document.getElementById("participantFilter"),
     roomTitle: document.getElementById("roomTitle"),
@@ -1955,12 +1959,69 @@
     state.q = q || ""; el.search.value = state.q;
     setView("timeline");
   }
+
+  function setNavigationState(view) {
+    Array.prototype.forEach.call(document.querySelectorAll("[data-view]"), function (control) {
+      var active = control.getAttribute("data-view") === view;
+      control.classList.toggle("active", active);
+      if (active) control.setAttribute("aria-current", "page");
+      else control.removeAttribute("aria-current");
+    });
+  }
+
+  function setMobileMore(open) {
+    if (!el.mobileMore || !el.mobileMoreButton) return;
+    el.mobileMore.hidden = !open;
+    el.mobileMoreButton.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  function trapFocus(container, event) {
+    var controls = container.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled])'
+    );
+    if (!controls.length) return;
+    var first = controls[0], last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault(); last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault(); first.focus();
+    }
+  }
+
+  function toggleTheme() {
+    var cur = document.documentElement.getAttribute("data-theme");
+    var isDark = cur === "dark" ||
+      (!cur && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = isDark ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("kakao-archive-theme", next); } catch (e) {}
+  }
+
+  function removeViewControls(view) {
+    Array.prototype.forEach.call(
+      document.querySelectorAll('[data-view="' + view + '"]'),
+      function (control) { control.remove(); }
+    );
+  }
+
+  function renderMobileMore() {
+    if (!el.mobileMore) return;
+    var html = [
+      '<button type="button" data-view="graph">관계망</button>',
+      '<button type="button" data-view="files">첨부파일</button>',
+      '<button type="button" data-view="stats">통계</button>',
+    ];
+    if (isAdmin()) html.push('<button type="button" data-view="admin">관리자</button>');
+    html.push('<button type="button" data-mobile-action="theme">화면 테마 전환</button>');
+    if (state.session) html.push('<button type="button" data-mobile-action="signout">로그아웃</button>');
+    el.mobileMore.innerHTML = html.join("");
+  }
+
   function setView(v) {
     if (state.graph && v !== "graph") { state.graph.destroy(); state.graph = null; }
     state.view = v;
-    Array.prototype.forEach.call(el.tabs.children, function (tab) {
-      tab.classList.toggle("active", tab.getAttribute("data-view") === v);
-    });
+    setNavigationState(v);
+    setMobileMore(false);
     render();
   }
   function render() {
@@ -2005,10 +2066,9 @@
 
     // '내 글 관리' 는 표시명이 연결된 로그인 사용자에게만 의미가 있다.
     // 로컬 미리보기(site/)에는 세션이 없으므로 탭 자체를 감춘다.
-    var mineTab = el.tabs.querySelector('[data-view="mine"]');
-    if (mineTab && !canManageMine()) mineTab.remove();
-    var adminTab = el.tabs.querySelector('[data-view="admin"]');
-    if (adminTab && !isAdmin()) adminTab.remove();
+    if (!canManageMine()) removeViewControls("mine");
+    if (!isAdmin()) removeViewControls("admin");
+    renderMobileMore();
     el.roomTitle.textContent = A.chat_room || "아카이브";
     var t = STATS.totals || {};
     el.roomSub.textContent = (t.messages || 0) + "개 메시지 · " + (t.participants || 0) + "명 · " +
@@ -2019,8 +2079,26 @@
       el.filter.appendChild(o);
     });
 
-    el.tabs.addEventListener("click", function (e) {
-      var tab = e.target.closest(".tab"); if (tab) setView(tab.getAttribute("data-view"));
+    el.app.addEventListener("click", function (e) {
+      var viewControl = e.target.closest("[data-view]");
+      if (viewControl) {
+        setView(viewControl.getAttribute("data-view"));
+        return;
+      }
+      if (e.target.closest("#mobileMoreButton")) {
+        setMobileMore(el.mobileMore.hidden);
+        return;
+      }
+      var action = e.target.closest("[data-mobile-action]");
+      if (action) {
+        if (action.getAttribute("data-mobile-action") === "theme") toggleTheme();
+        else if (action.getAttribute("data-mobile-action") === "signout" && state.session) {
+          state.session.signOut();
+        }
+        setMobileMore(false);
+        return;
+      }
+      if (!el.mobileMore.hidden && !e.target.closest("#mobileMore")) setMobileMore(false);
     });
     var timer;
     el.search.addEventListener("input", function () {
@@ -2044,18 +2122,23 @@
     el.lightbox.addEventListener("click", function (e) {
       if (e.target === el.lightbox || e.target === el.lightboxClose) closeLightbox();
     });
-    document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeLightbox(); });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") {
+        closeLightbox();
+        if (!el.mobileMore.hidden) {
+          setMobileMore(false);
+          el.mobileMoreButton.focus();
+        }
+      } else if (e.key === "Tab" && !el.mobileMore.hidden) {
+        trapFocus(el.mobileMore, e);
+      }
+    });
 
     var saved = null; try { saved = localStorage.getItem("kakao-archive-theme"); } catch (e) {}
     if (saved) document.documentElement.setAttribute("data-theme", saved);
-    el.themeBtn.addEventListener("click", function () {
-      var cur = document.documentElement.getAttribute("data-theme");
-      var isDark = cur === "dark" || (!cur && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
-      var next = isDark ? "light" : "dark";
-      document.documentElement.setAttribute("data-theme", next);
-      try { localStorage.setItem("kakao-archive-theme", next); } catch (e) {}
-    });
+    el.themeBtn.addEventListener("click", toggleTheme);
 
+    setNavigationState(state.view);
     render();
   }
 
