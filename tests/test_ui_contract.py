@@ -1,6 +1,7 @@
 from html.parser import HTMLParser
 import json
 from pathlib import Path
+import re
 import unittest
 
 
@@ -313,6 +314,26 @@ class UiSafetyContractTests(unittest.TestCase):
     def test_risky_actions_use_the_shared_dialog(self):
         self.assertNotIn("window.confirm", self.app)
         self.assertIn("function confirmAction(", self.app)
+
+    def test_mine_explains_the_per_message_exclusion_keyword(self):
+        """'내 글 관리'가 [제외] 를 알려주고, 소급되지 않는다는 단서를 같이 준다.
+
+        단서가 빠지면 이미 보낸 글도 빠지는 줄 알게 된다 — 안 빠진 걸 나중에 알게
+        되는 쪽이 아예 모르는 것보다 나쁘다. 규칙은 scripts/collection_policy.py.
+        """
+        self.assertIn("[제외]", self.app)
+        self.assertIn("［제외］", self.app)  # 전각. 모바일 자판에서 섞여 들어온다
+        self.assertIn("앞으로 보내는 글에만", self.app)
+        self.assertIn("mine-keyword", self.app)
+
+    def test_exclusion_keyword_shown_matches_the_collector(self):
+        """화면에 적은 단어가 실제 수집 규칙과 같아야 한다."""
+        policy = (ROOT / "scripts" / "collection_policy.py").read_text(encoding="utf-8")
+        keywords = re.findall(r'"(\[?［?제외\]?］?)"', policy)
+        self.assertTrue(keywords)
+        for keyword in set(keywords):
+            with self.subTest(keyword=keyword):
+                self.assertIn(keyword, self.app)
 
     def test_collection_choices_use_plain_honest_labels(self):
         for label in ("함께 공개", "발행하지 않기", "수집 중단"):

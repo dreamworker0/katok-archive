@@ -1640,6 +1640,18 @@
       '<div class="mine-modes">' + modes + "</div>" +
       '<button class="btn" id="saveMode">이 설정으로 저장</button>' +
       '<span class="mine-msg" id="modeMsg"></span>' +
+      /* 한 글만 빼고 싶을 때 쓰는 방법. 이걸 안 알려주면 "수집 중단" 말고는 길이
+       * 없는 줄 알게 된다. 소급되지 않는다는 단서를 반드시 같이 적는다 —
+       * 이미 보낸 글도 빠지는 줄 알면 안 빠진 걸 나중에 알게 된다.
+       * (규칙: scripts/collection_policy.py) */
+      '<p class="mine-note mine-keyword">' +
+      "설정과 별개로, 카카오톡에서 <b>메시지 본문에 " +
+      '<code class="mine-kbd">[제외]</code> 를 넣으면</b> 그 글은 처음부터 ' +
+      "수집하지 않습니다. 전각 <code class=\"mine-kbd\">［제외］</code> 도 " +
+      "같이 인식합니다.<br />" +
+      "다만 <b>앞으로 보내는 글에만</b> 적용됩니다. 이미 보낸 글은 " +
+      "아래에서 골라 내려 주세요." +
+      "</p>" +
       "</div>" +
 
       '<div class="mine-card">' +
