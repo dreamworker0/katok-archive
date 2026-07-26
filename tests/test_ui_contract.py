@@ -158,22 +158,40 @@ class UiStyleContractTests(unittest.TestCase):
         self.assertIn(".sidebar-name", self.css)
         self.assertIn("text-overflow: ellipsis", self.css)
 
-    def test_reading_text_scales_but_the_chrome_stays_put(self):
-        # 본문만 커져야 한다. 사이드바·버튼까지 커지면 읽을 자리가 좁아진다.
+    def test_reading_area_scales_as_a_whole_not_class_by_class(self):
+        """배율은 읽는 영역(.view)에 한 번만 건다.
+
+        본문 클래스를 하나씩 골라 곱하던 때 첫 화면의 .doc-overview 를 빠뜨려,
+        버튼 속 '가' 만 커지고 읽는 글은 그대로였다. 화면마다 흩어진 px 규칙이
+        170개가 넘어 하나씩 세는 방식으로는 또 빠지고, 새 화면이 생기면 막을
+        방법도 없다. 그래서 .view(본문) 대 그 밖(chrome)이라는 경계를 쓴다.
+        """
         self.assertIn("--reading-scale: 1;", self.css)
-        self.assertIn(':root[data-font="large"]', self.css)
-        self.assertIn(':root[data-font="xlarge"]', self.css)
-        for rule in (
-            ".md p { margin: 0 0 10px; font-size: calc(14px * var(--reading-scale))",
-            ".md li { font-size: calc(13.5px * var(--reading-scale))",
-            ".tc-summary { margin: 0 0 10px; font-size: calc(14px * var(--reading-scale))",
-        ):
-            with self.subTest(rule=rule):
-                self.assertIn(rule, self.css)
-        # 사이드바·내비게이션 치수는 배율을 타지 않는다.
-        for chrome in (".sidebar-name", ".sidebar-role", ".mobile-nav"):
-            start = self.css.index(chrome)
-            self.assertNotIn("--reading-scale", self.css[start:start + 160])
+        self.assertIn(':root[data-font="large"] { --reading-scale: 1.12; }', self.css)
+        self.assertIn(':root[data-font="xlarge"] { --reading-scale: 1.26; }', self.css)
+        self.assertIn(".view { zoom: var(--reading-scale); }", self.css)
+
+    def test_no_class_also_multiplies_the_scale(self):
+        """개별 규칙에 배율이 남아 있으면 두 번 곱해진다(1.26 x 1.26)."""
+        self.assertNotIn("* var(--reading-scale)", self.css)
+
+    def test_graph_opts_out_because_it_maps_pointer_moves_to_coordinates(self):
+        # graph.js 는 포인터 이동량을 SVG 좌표에 그대로 더한다. 배율이 걸리면
+        # 끌기가 그만큼 빨라진다. 그림이라 글자 크기와도 상관이 없다.
+        self.assertIn(".graph-wrap { zoom: calc(1 / var(--reading-scale)); }", self.css)
+
+    def test_chrome_sits_outside_the_scaled_reading_area(self):
+        """사이드바·검색바·모바일 내비가 #view 밖에 있어야 배율을 타지 않는다."""
+        for name in ("index.html", "index.hosting.html"):
+            with self.subTest(name=name):
+                source = (ROOT / "web" / name).read_text(encoding="utf-8")
+                view = source.index('id="view"')
+                self.assertLess(source.index('class="sidebar"'), view)
+                self.assertLess(source.index('class="utility-bar"'), view)
+                self.assertLess(view, source.index('id="mobileNav"'))
+                # #view 는 홑 태그로 닫힌다 — 그 뒤에 오는 것은 배율 밖이다.
+                self.assertLess(source.index("</main>", view),
+                                source.index('id="mobileNav"'))
 
     def test_font_toggle_previews_the_size_it_will_switch_to(self):
         self.assertIn(".font-toggle__mark", self.css)
