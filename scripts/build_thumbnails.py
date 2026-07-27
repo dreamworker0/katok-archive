@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
@@ -78,6 +79,35 @@ def make_thumb(source: Path, dest: Path) -> int | None:
     return size
 
 
+def make_poster(source: Path, dest: Path) -> int | None:
+    """동영상 첫 장면을 뽑아 포스터로 만든다. 바이트 수, 실패하면 None.
+
+    갤러리에 동영상을 그대로 걸면 재생하려고 15MB 를 받는다. 포스터만 걸어 두고
+    누를 때 원본을 받게 하려면 그림 한 장이 필요하다.
+
+    1초 지점을 쓴다 — 0초는 검은 화면인 영상이 흔하다. 영상이 1초보다 짧으면
+    ffmpeg 이 아무것도 내놓지 않으므로 그때는 0초로 다시 시도한다.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    for offset in ("00:00:01", "00:00:00"):
+        cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-ss", offset, "-i", str(source),
+            "-frames:v", "1",
+            "-vf", "scale='min(%d,iw)':-2" % MAX_EDGE,
+            str(dest),
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, timeout=60)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
+                FileNotFoundError):
+            continue
+        if dest.is_file() and dest.stat().st_size > 0:
+            return dest.stat().st_size
+    dest.unlink(missing_ok=True)
+    return None
+
+
 def run(force: bool) -> dict:
     rows = build_site._read_jsonl(OUTPUT / "images.jsonl")
     made = skipped = kept = failed = 0
@@ -97,7 +127,12 @@ def run(force: bool) -> dict:
                 kept += 1
                 continue
 
-            size = make_thumb(source, dest)
+            # 동영상은 프레임을 뽑아야 한다. Pillow 는 mp4 를 못 읽는다.
+            if (row.get("media_kind") == "video"
+                    or source.suffix.lower() in (".mp4", ".mov")):
+                size = make_poster(source, dest)
+            else:
+                size = make_thumb(source, dest)
             if size is None:
                 # 작은 사진은 원본을 그대로 쓴다. 화면이 thumb_path 가 없으면
                 # 원본을 쓰도록 되어 있어야 한다.

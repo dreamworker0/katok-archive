@@ -141,8 +141,10 @@ def plan_merge(parsed_messages, existing: list[dict]) -> MergePlan:
     # 사람 글 전부가 새 글로 잡혔다. 그냥 넣으면 중복에 유령 참여자까지 생긴다.
     same_text = {(e["timestamp"], content_key(e["text"])) for e in existing}
     by_slot: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    existing_by_time: dict[str, list[dict]] = defaultdict(list)
     for e in existing:
         by_slot[(e["timestamp"], e["nickname"])].append(e)
+        existing_by_time[e["timestamp"]].append(e)
 
     for msg in parsed_messages:
         slot = (msg.timestamp, msg.nickname)
@@ -181,8 +183,23 @@ def plan_merge(parsed_messages, existing: list[dict]) -> MergePlan:
             plan.overlap.append(msg)
             continue
 
-        if msg.kind == "image":
-            plan.skipped["겹침_사진"] += 1
+        if msg.kind in ("image", "video"):
+            # 같은 자리에 미디어 메시지가 **실제로 있을 때만** 건너뛴다. 예전에는
+            # 무조건 건너뛰었는데, 그건 '겹치는 구간이면 아카이브에 그 사진이 있다'는
+            # 가정이었다. 동영상에는 그 가정이 성립하지 않는다 — 2026-07-27 전까지
+            # 아예 수집하지 않았으므로 자리가 없다. 무조건 건너뛰면 정책을 바꿔도
+            # 옛 동영상이 영영 들어오지 못한다.
+            # 이름은 보지 않는다. 사진·동영상에는 견줄 본문이 없어서 표시명이
+            # 바뀌면 같은 사진이 남의 것으로 보인다 — 실측 2026-07-27: '임태오' 으로
+            # 들어온 사진이 아카이브에는 '다온종합사회복지관' 으로 있었고, 이름으로
+            # 찾으니 자리가 없다고 판단해 중복 사진과 유령 참여자를 만들었다.
+            same_minute = any(
+                e.get("image_id") and e.get("kind") == msg.kind
+                for e in existing_by_time.get(msg.timestamp, []))
+            if same_minute:
+                plan.skipped["겹침_사진"] += 1
+                continue
+            plan.overlap.append(msg)
             continue
 
         if (msg.timestamp, msg.nickname, key) in exact:
@@ -238,21 +255,27 @@ def to_record(msg, number: int) -> dict:
         "date": msg.date,
         "time": msg.time,
         "nickname": msg.nickname,
-        "text": "사진" if msg.media_status else msg.text,
+        # '읽지 않음' 은 본문이 아니라 상태다. 화면에 그 말이 그대로 나오면
+        # 대화 내용처럼 읽힌다 — 사진/동영상 자리표로 바꿔 둔다.
+        "text": ("동영상" if msg.kind == "video" else "사진")
+                if msg.media_status else msg.text,
         "urls": list(msg.urls),
         "kind": msg.kind,
-        "image_id": ("img-%06d" % number) if msg.kind == "image" else None,
-        "image_count": msg.image_count if msg.kind == "image" else None,
+        "image_id": ("img-%06d" % number) if msg.kind in ("image", "video") else None,
+        "image_count": msg.image_count if msg.kind in ("image", "video") else None,
         "source_line": msg.source_line,
         "is_file_share": msg.kind == "file",
     }
 
 
 def image_entry(rec: dict, msg, note: str) -> dict:
-    """사진 메시지 하나에 대응하는 images.jsonl 항목(파일은 아직 안 붙임)."""
+    """사진·동영상 메시지 하나에 대응하는 images.jsonl 항목(파일은 아직 안 붙임)."""
     lost = msg.media_status == "lost"
     return {
         "image_id": rec["image_id"],
+        # 사진과 동영상이 같은 대장을 쓰므로 무엇인지 적어 둔다. 이게 없으면
+        # 동영상 경로가 사진 목록에 섞여 화면이 <img> 로 그리려다 깨진다.
+        "media_kind": "video" if rec["kind"] == "video" else "image",
         "message_id": rec["id"],
         "timestamp": rec["timestamp"],
         "nickname": rec["nickname"],
@@ -326,7 +349,12 @@ def attach_files(images: list[dict], source_dir: Path, dry_run: bool) -> Counter
                 stats["중복_재사용"] += 1
             else:
                 month = row["timestamp"][:7]
-                rel = "assets/images/%s/%s-%02d%s" % (month, row["image_id"], seq, suffix)
+                # 동영상은 폴더를 갈라 둔다. assets/images 는 '사진 하나당 파일
+                # 하나' 라는 성질을 지켜야 하고(테스트가 그것을 센다), Storage
+                # 규칙도 경로로 나누면 무엇이 무엇인지 규칙만 봐도 안다.
+                root = ("assets/videos" if row.get("media_kind") == "video"
+                        else "assets/images")
+                rel = "%s/%s/%s-%02d%s" % (root, month, row["image_id"], seq, suffix)
                 if not dry_run:
                     dest = ROOT / rel
                     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -365,6 +393,10 @@ def attach_files(images: list[dict], source_dir: Path, dry_run: bool) -> Counter
 TIME_NAME_RE = re.compile(
     r"^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})(?:_(\d+))?\.(\w+)$")
 IMAGE_EXT = {"png", "jpg", "jpeg", "gif", "webp"}
+VIDEO_EXT = {"mp4", "mov"}
+# 사진과 동영상은 같은 미디어 대장을 쓰므로 함께 맞춘다. 대신 자리를 섞으면 안 된다 —
+# 사진 메시지에 동영상이 붙으면 갤러리가 그림으로 읽으려 해 깨진다.
+MEDIA_EXT = IMAGE_EXT | VIDEO_EXT
 
 
 def link_by_timestamp(images: list[dict], source_dir: Path) -> Counter:
@@ -377,24 +409,27 @@ def link_by_timestamp(images: list[dict], source_dir: Path) -> Counter:
     이미 파일을 가진 항목은 건드리지 않는다 — 먼저 들어온 것이 정본이다.
     """
     stats = Counter()
-    by_minute: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    # 사진과 동영상을 갈라서 맞춘다. 한 통에 섞으면 사진 메시지에 mp4 가 붙어
+    # 화면이 그림으로 읽으려다 깨진다 — 자리 수만 맞으면 조용히 잘못 붙는다.
+    by_minute: dict[tuple[str, str], list[tuple[int, str]]] = defaultdict(list)
     for path in sorted(source_dir.iterdir()):
         match = TIME_NAME_RE.match(path.name)
-        if not match or match.group(8).lower() not in IMAGE_EXT:
+        if not match or match.group(8).lower() not in MEDIA_EXT:
             continue
-        year, month, day, hour, minute, _sec, seq, _ext = match.groups()
+        year, month, day, hour, minute, _sec, seq, ext = match.groups()
         stamp = "%s-%s-%sT%s:%s+09:00" % (year, month, day, hour, minute)
-        by_minute[stamp].append((int(seq or 0), path.name))
+        lane = "video" if ext.lower() in VIDEO_EXT else "image"
+        by_minute[(stamp, lane)].append((int(seq or 0), path.name))
 
     for rows in by_minute.values():
         rows.sort()
 
-    # 같은 분의 사진 메시지를 순서대로 놓고 파일을 차례로 붙인다
-    waiting: dict[str, list[dict]] = defaultdict(list)
+    # 같은 분의 미디어 메시지를 순서대로 놓고 파일을 차례로 붙인다
+    waiting: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for row in images:
         if row.get("assets") or row.get("media_refs"):
             continue
-        waiting[row["timestamp"]].append(row)
+        waiting[(row["timestamp"], row.get("media_kind") or "image")].append(row)
 
     for stamp, files in by_minute.items():
         targets = waiting.get(stamp) or []
@@ -608,12 +643,17 @@ def run(directory: Path, dry_run: bool) -> dict:
         print("\n--dry-run: 파일을 바꾸지 않았습니다.")
         return {"added": len(accepted), "plan": plan}
 
-    start_no = int(messages[-1]["id"].split("-")[1]) + 1 if messages else 1
+    # 마지막 줄이 아니라 **전체 최댓값**에서 다음 번호를 뽑는다. 이 파일은 시각 순으로
+    # 정렬돼 있어서 마지막 줄이 가장 큰 번호가 아니다 — 옛 백업을 합치면 번호가 큰
+    # 레코드가 중간으로 간다. 실측 2026-07-27: 마지막 줄을 믿어 msg-002596 을 다시
+    # 발급해 같은 ID 를 가진 메시지가 두 개 생겼고, 주제 배정까지 어긋났다.
+    # (ingest_incremental.next_message_number 도 같은 이유로 고쳤다.)
+    start_no = max((int(m["id"].split("-")[1]) for m in messages), default=0) + 1
     new_records = []
     for offset, msg in enumerate(accepted):
         rec = to_record(msg, start_no + offset)
         new_records.append(rec)
-        if rec["kind"] == "image":
+        if rec["kind"] in ("image", "video"):
             note = ("내보내기 시점에 사진을 받지 못해 원본이 없습니다"
                     if msg.media_status == "lost" else "옛 백업에서 합쳐짐")
             images.append(image_entry(rec, msg, note))

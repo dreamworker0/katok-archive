@@ -902,12 +902,16 @@
   function renderGallery() {
     var items = [];
     MEDIA.forEach(function (m) {
-      if (m.kind !== "image" || !m.images || !m.images.length) return;
       if (state.nick && m.nickname !== state.nick) return;
-      var th = m.thumbs || m.images;
-      m.images.forEach(function (src, i) {
+      // 동영상도 갤러리에 있다(2026-07-27 부터 수집). 칸에는 포스터를 걸고,
+      // 누를 때 원본을 받는다 — 목록만 훑어도 15MB 씩 빠지면 안 된다.
+      var srcs = m.kind === "video" ? m.videos : m.images;
+      if (!srcs || !srcs.length) return;
+      var th = m.thumbs || [];
+      srcs.forEach(function (src, i) {
         items.push({ src: th[i] || src, full: src, nick: m.nickname,
-                     date: m.date, time: m.time, tid: m.thread_id });
+                     date: m.date, time: m.time, tid: m.thread_id,
+                     video: m.kind === "video" });
       });
     });
     if (!items.length) {
@@ -926,9 +930,12 @@
       "</div></div>",
       '<div class="gallery' + (list ? " as-list" : "") + '">'];
     items.forEach(function (it) {
-      html.push('<figure data-jump="t-' + esc(it.tid || "") + '"><img data-img="' + esc(it.src) +
-        '" data-full="' + esc(it.full || it.src) +
-        '" alt="" /><figcaption>' + esc(it.date) + " · " + esc(it.nick) + "</figcaption></figure>");
+      html.push('<figure' + (it.video ? ' class="is-video"' : "") +
+        ' data-jump="t-' + esc(it.tid || "") + '"><img data-img="' + esc(it.src) +
+        '" data-full="' + esc(it.full || it.src) + '"' +
+        (it.video ? ' data-video="1"' : "") +
+        ' alt="" />' + (it.video ? '<span class="play">▶</span>' : "") +
+        '<figcaption>' + esc(it.date) + " · " + esc(it.nick) + "</figcaption></figure>");
     });
     html.push("</div>");
     el.view.innerHTML = html.join("");
@@ -1539,6 +1546,25 @@
     // 그 blob 을 그대로 띄우면 흐리게 보인다. data-full 이 원본 경로다.
     var full = img.getAttribute("data-full");
     var path = img.getAttribute("data-img");
+
+    // 동영상은 여기서 비로소 원본을 받는다. 갤러리에서는 포스터만 걸려 있었다.
+    if (img.getAttribute("data-video") && full && window.ArchiveImages) {
+      el.lightboxImg.style.display = "none";
+      var v = ensureLightboxVideo();
+      v.style.display = "";
+      v.removeAttribute("src");
+      v.poster = img.src || "";
+      el.lightbox.classList.add("on");
+      window.ArchiveImages.urlFor(full).then(function (u) {
+        v.src = u;
+        v.play().catch(function () { /* 자동재생을 막는 브라우저는 눌러서 본다 */ });
+      });
+      return;
+    }
+    el.lightboxImg.style.display = "";
+    var vv = document.getElementById("lightboxVideo");
+    if (vv) { vv.pause(); vv.removeAttribute("src"); vv.style.display = "none"; }
+
     if (full && window.ArchiveImages) {
       // 원본이 뜨기 전까지는 작은 사진을 보여 준다 — 빈 화면보다 낫다
       if (img.src) el.lightboxImg.src = img.src;
@@ -1550,7 +1576,25 @@
     }
     el.lightbox.classList.add("on");
   }
-  function closeLightbox() { el.lightbox.classList.remove("on"); el.lightboxImg.src = ""; }
+  /** 라이트박스에 동영상 자리를 만든다(처음 필요할 때 한 번). */
+  function ensureLightboxVideo() {
+    var v = document.getElementById("lightboxVideo");
+    if (v) return v;
+    v = document.createElement("video");
+    v.id = "lightboxVideo";
+    v.controls = true;
+    v.playsInline = true;
+    v.preload = "none";
+    el.lightboxImg.parentNode.insertBefore(v, el.lightboxImg.nextSibling);
+    return v;
+  }
+  function closeLightbox() {
+    el.lightbox.classList.remove("on");
+    el.lightboxImg.src = "";
+    // 닫을 때 src 를 비우지 않으면 동영상이 뒤에서 계속 내려온다
+    var v = document.getElementById("lightboxVideo");
+    if (v) { v.pause(); v.removeAttribute("src"); v.load(); }
+  }
 
   /* ---------- 내 글 관리 ----------
    *

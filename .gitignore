@@ -89,3 +89,6 @@ Thumbs.db
 # 갤러리용 작은 사진 — 원본에서 다시 만들 수 있는 파생물이다.
 # (python -m scripts.build_thumbnails)
 /assets/thumbs/
+
+# 동영상 원본 — 대화 데이터다(assets/images 와 같은 이유로 커밋하지 않는다).
+/assets/videos/

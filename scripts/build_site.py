@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
 ASSETS_IMAGES = ROOT / "assets" / "images"
 ASSETS_THUMBS = ROOT / "assets" / "thumbs"
+ASSETS_VIDEOS = ROOT / "assets" / "videos"
 WEB = ROOT / "web"
 SITE = ROOT / "site"
 
@@ -228,7 +229,12 @@ def build_media(messages: list[dict]) -> list[dict]:
     out = []
     for m in messages:
         item = None
-        if m.get("images"):
+        if m.get("videos"):
+            item = {"kind": "video", "videos": m["videos"],
+                    # 포스터가 없으면 화면이 검은 칸을 보여 줄 수밖에 없다.
+                    "thumbs": m.get("thumbs") or [],
+                    "count": len(m["videos"])}
+        elif m.get("images"):
             item = {"kind": "image", "images": m["images"],
                     "thumbs": m.get("thumbs") or m["images"],
                     "count": m.get("image_count") or len(m["images"])}
@@ -274,6 +280,7 @@ def build_data(
             msg_thread[mid] = thread
 
     downloaded_assets = 0
+    downloaded_videos = 0
     out_messages = []
     for m in messages:
         item = {
@@ -291,7 +298,7 @@ def build_data(
             item["thread_id"] = thread["id"]
             item["category"] = thread["category"]
 
-        if m["kind"] == "image":
+        if m["kind"] in ("image", "video"):
             img = image_by_id.get(m.get("image_id"))
             paths = []
             # 갤러리에 쓸 작은 사진. 원본과 짝을 맞춰 같은 길이로 둔다 — 작은 사진이
@@ -305,7 +312,14 @@ def build_data(
                         # 원본 경로는 'assets/images/...' → 사이트 기준 상대경로 그대로 사용
                         paths.append(lp.replace("\\", "/"))
                         thumbs.append((asset.get("thumb_path") or lp).replace("\\", "/"))
-            item["images"] = paths
+            # 동영상은 사진 목록에 섞지 않는다 — 섞으면 화면이 <img> 로 그리려
+            # 하다 깨진다. 포스터(작은 사진)는 사진과 같은 자리에 둔다.
+            if m["kind"] == "video":
+                item["videos"] = paths
+                item["images"] = []
+                item["is_video"] = True
+            else:
+                item["images"] = paths
             item["thumbs"] = thumbs
             # '유실' 과 '수집 대기' 를 갈라 둔다. 옛 백업에서 온 사진 중에는 그
             # 기기가 원본을 받지 못해 파일이 영영 없는 것이 있다. 그걸 대기로
@@ -318,7 +332,12 @@ def build_data(
                 or (img.get("expected_asset_count") if img else None)
                 or 1
             )
-            downloaded_assets += len(paths)
+            # 사진과 동영상을 갈라 센다. 'downloaded_images' 가 동영상까지 세면
+            # 화면의 '보관 사진' 숫자가 사진 수와 맞지 않는다.
+            if m["kind"] == "video":
+                downloaded_videos += len(paths)
+            else:
+                downloaded_assets += len(paths)
 
         # 원본을 못 구한 첨부는 예전처럼 이름만 남는다 — 링크는 붙은 것에만 준다
         f = file_by_msg.get(m["id"])
@@ -446,6 +465,7 @@ def build_data(
             "messages": len(messages),
             "participants": len(participant_stats),
             "downloaded_images": downloaded_assets,
+            "downloaded_videos": downloaded_videos,
         },
         "categories": topics["categories"],
         "messages": out_messages,
@@ -465,6 +485,7 @@ def build_data(
                 "files": kind_counter.get("file", 0),
                 "images": kind_counter.get("image", 0),
                 "downloaded_images": downloaded_assets,
+            "downloaded_videos": downloaded_videos,
                 "date_start": messages[0]["date"] if messages else None,
                 "date_end": messages[-1]["date"] if messages else None,
             },
@@ -502,6 +523,8 @@ def write_site(data: dict) -> None:
     # 배포본은 Storage 에서 받으므로 로컬에서만 그렇다 — 알아채기 어렵다.
     if ASSETS_THUMBS.exists():
         shutil.copytree(ASSETS_THUMBS, SITE / "assets" / "thumbs")
+    if ASSETS_VIDEOS.exists():
+        shutil.copytree(ASSETS_VIDEOS, SITE / "assets" / "videos")
 
 
 PERSON_VALUE_CAP = 300     # 발언이 아무리 많아도 노드가 화면을 잡아먹지 않게

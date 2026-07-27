@@ -877,3 +877,13 @@ img.img-error {
     transition-duration: .01ms !important;
   }
 }
+
+/* 갤러리의 동영상 — 칸에는 포스터만 걸고 재생 표시를 얹는다.
+   원본은 눌러서 라이트박스를 열 때 받는다(15MB 를 목록만 훑다가 받으면 안 된다). */
+.gallery figure.is-video { position: relative; }
+.gallery figure.is-video .play {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font-size: 1.6rem; color: #fff; text-shadow: 0 1px 6px rgba(0,0,0,.6);
+  background: rgba(0,0,0,.18); pointer-events: none;
+}
+#lightboxVideo { max-width: 92vw; max-height: 86vh; display: none; background: #000; }

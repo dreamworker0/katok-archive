@@ -71,17 +71,37 @@ class BuildDataTest(unittest.TestCase):
                 lost = img_status[m["id"]]["status"] == "lost"
                 self.assertEqual(m["image_lost"], lost, m["id"])
                 self.assertEqual(m["image_pending"], not lost, m["id"])
-        # 다운로드/부분 상태 레코드 수와 파일 보유 메시지 수 정합
+        # 파일을 가진 '사진' 레코드 수와 파일 보유 사진 메시지 수 정합.
+        # 동영상은 같은 대장(images.jsonl)을 쓰지만 사진 목록에 들어가지 않으므로
+        # 여기서 빼야 한다 — 안 빼면 동영상을 넣는 순간 이 검사가 어긋난다.
         downloaded_records = [
-            i for i in self.images if i.get("assets")
+            i for i in self.images
+            if i.get("assets") and (i.get("media_kind") or "image") == "image"
         ]
         self.assertEqual(n_with_files, len(downloaded_records))
 
-    def test_downloaded_image_count_matches_files(self):
-        total = sum(len(m.get("images", [])) for m in self.data["messages"])
-        on_disk = len(list((ROOT / "assets" / "images").rglob("*.*")))
-        self.assertEqual(total, on_disk)
-        self.assertEqual(self.data["stats"]["totals"]["downloaded_images"], total)
+    def test_every_referenced_image_exists_and_every_file_is_used(self):
+        """참조와 파일이 서로 빠짐없이 맞물리는가.
+
+        '참조 수 == 파일 수' 로 보면 안 된다 — 내용이 같은 사진은 한 번만 저장하고
+        여러 메시지가 함께 가리킨다(같은 사진을 두 사람이 올린 경우). 같은 바이트를
+        두 번 두지 않으려고 일부러 그렇게 했다. 그래서 두 방향을 따로 본다.
+        """
+        referenced = set()
+        for m in self.data["messages"]:
+            for p in m.get("images") or []:
+                self.assertTrue(p.startswith("assets/images/"), p)
+                self.assertTrue((ROOT / p).exists(), "참조하는데 파일이 없다: " + p)
+                referenced.add(p)
+
+        on_disk = {
+            str(p.relative_to(ROOT)).replace("\\", "/")
+            for p in (ROOT / "assets" / "images").rglob("*.*")
+        }
+        self.assertEqual(on_disk - referenced, set(), "아무도 안 쓰는 사진 파일")
+        self.assertEqual(
+            self.data["stats"]["totals"]["downloaded_images"],
+            sum(len(m.get("images") or []) for m in self.data["messages"]))
 
     def test_participant_totals_consistent(self):
         stat_sum = sum(p["message_count"] for p in self.data["stats"]["participants"])

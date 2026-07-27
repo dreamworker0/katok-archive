@@ -21,18 +21,26 @@ class ParseChatTests(unittest.TestCase):
     def test_preserves_image_text_file_and_multiline_messages(self):
         result = parse_chat(SAMPLE)
 
-        self.assertEqual([m.kind for m in result.messages], ["image", "text", "file"])
+        self.assertEqual([m.kind for m in result.messages],
+                         ["image", "text", "file", "video"])
         self.assertEqual(result.messages[0].nickname, "김 종원")
         self.assertEqual(result.messages[0].image_id, "img-000001")
+        # 동영상도 미디어 대장에 자리를 받는다 — 사진과 같은 열쇠를 쓴다
+        self.assertEqual(result.messages[3].image_id, "img-000004")
         self.assertEqual(result.messages[1].text, "첫 줄\n둘째 줄 https://example.com/a")
         self.assertEqual(result.messages[1].urls, ["https://example.com/a"])
         self.assertEqual(result.messages[2].nickname, "한도윤 (관리자)")
         self.assertEqual(result.messages[2].time, "12:00")
 
-    def test_excludes_video_emoticon_and_system_event(self):
+    def test_excludes_emoticon_and_system_event_but_keeps_video(self):
+        """동영상은 2026-07-27 부터 수집한다.
+
+        그 전에는 버렸는데, 사진은 '그 자체가 공유된 결과물' 이라 남기면서 동영상만
+        버릴 이유가 없다는 판단으로 바꿨다. 이모티콘은 계속 버린다 — 내용이 없다.
+        """
         result = parse_chat(SAMPLE)
 
-        self.assertEqual(result.excluded["video"], 1)
+        self.assertEqual(result.excluded["video"], 0)
         self.assertEqual(result.excluded["emoticon"], 1)
         self.assertEqual(result.excluded["system"], 1)
 

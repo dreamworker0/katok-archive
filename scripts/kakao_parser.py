@@ -105,6 +105,13 @@ def _classify(body: str) -> tuple[str, int | None, tuple[str, ...], str | None]:
     if photo_match:
         return "image", int(photo_match.group(1) or 1), (), None
 
+    # 동영상은 2026-07-27 부터 수집한다. 그 전에는 버렸다 — 사진은 '그 자체가 공유된
+    # 결과물' 이라 남기면서 동영상만 버릴 이유가 없다는 판단으로 바꿨다.
+    if body == "동영상":
+        return "video", 1, (), None
+    if LOST_VIDEO_RE.fullmatch(body):
+        return "video", 1, (), "lost"
+
     lines = [ln for ln in body.split("\n") if ln.strip()]
     if lines and all(LOST_PHOTO_RE.fullmatch(ln) for ln in lines):
         return "image", len(lines), (), "lost"
@@ -113,7 +120,7 @@ def _classify(body: str) -> tuple[str, int | None, tuple[str, ...], str | None]:
     if lines and all(refs):
         names = tuple(m.group(0) for m in refs if m)
         if all((m.group(2).lower() in VIDEO_EXT) for m in refs if m):
-            return "video", None, names, None
+            return "video", len(names), names, "referenced"
         return "image", len(names), names, "referenced"
 
     if body.startswith("파일:"):
@@ -130,17 +137,11 @@ def _build(raw_messages: list[dict], excluded: dict, warnings: list) -> ParseRes
             raise TypeError("Message lines must be a list")
         body = "\n".join(str(item) for item in raw_lines).rstrip()
 
-        if body == "동영상" or LOST_VIDEO_RE.fullmatch(body):
-            excluded["video"] += 1
-            continue
         if body == "이모티콘":
             excluded["emoticon"] += 1
             continue
 
         kind, image_count, media_refs, media_status = _classify(body)
-        if kind == "video":
-            excluded["video"] += 1
-            continue
 
         raw_date_parts = raw["date_parts"]
         if not isinstance(raw_date_parts, tuple):
@@ -159,7 +160,10 @@ def _build(raw_messages: list[dict], excluded: dict, warnings: list) -> ParseRes
                 text=body,
                 urls=URL_RE.findall(body),
                 kind=kind,
-                image_id=(f"img-{number:06d}" if kind == "image" else None),
+                # 사진과 동영상이 같은 미디어 대장(images.jsonl)을 쓴다. 이름이
+                # img- 인 것은 사진만 있던 시절의 흔적이지만, 그 열쇠로 파이프라인
+                # 전체가 엮여 있어 이름만 바꾸면 배포본까지 깨진다.
+                image_id=(f"img-{number:06d}" if kind in ("image", "video") else None),
                 image_count=image_count,
                 source_line=int(raw["source_line"]),
                 media_refs=media_refs,
