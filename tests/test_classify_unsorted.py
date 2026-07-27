@@ -13,9 +13,16 @@ LLM 출력은 믿을 수 없다. 프롬프트는 부탁이고 검증이 보장�
 """
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
-from scripts.classify_unsorted import merge_graph, norm_label, validate
+from scripts import classify_unsorted as classify
+from scripts.classify_unsorted import (
+    merge_graph, norm_label, render_report, validate, write_report,
+)
+from scripts.topic_reports import parse_report
 
 CATS = {"projects", "ai-tools", "chat"}
 IDS = {"msg-001", "msg-002", "msg-003"}
@@ -180,6 +187,87 @@ class GraphMergeTests(unittest.TestCase):
              "label": "딴 이름"}
         ]}, CATS)
         self.assertEqual(before, k["nodes"])
+
+
+class ReportRenderTests(unittest.TestCase):
+    """보고서 md 가 화면의 실제 내용 단위다.
+
+    apply_reports() 가 제목·요지·**태그**·본문을 여기서 읽어 스레드에 얹는다.
+    보고서가 없으면 그 주제는 태그도 본문도 없다 — 실측 2026-07-27 에 자동 분류가
+    스레드만 만들고 보고서를 빼먹어 새 주제 두 개가 그 상태로 남았다.
+    """
+
+    def test_rendered_report_round_trips_through_parse_report(self):
+        text = render_report("제목", "요지 한 문장", ["태그1", "태그2"], "본문이다.")
+        back = parse_report(text, "t-999.md")
+        self.assertEqual("제목", back["title"])
+        self.assertEqual("요지 한 문장", back["summary"])
+        self.assertEqual(["태그1", "태그2"], back["keywords"])
+        self.assertEqual("본문이다.", back["report"])
+
+    def test_newlines_in_values_are_flattened(self):
+        # parse_report 는 프론트매터를 줄 단위로 읽는다. 값에 줄바꿈이 들어가면
+        # 다음 줄이 '콜론이 없는 줄'이 되어 ValueError 로 파이프라인이 멈춘다.
+        text = render_report("제목\n둘째 줄", "요지\n계속", ["태\n그"], "본문")
+        back = parse_report(text, "t-999.md")
+        self.assertEqual("제목 둘째 줄", back["title"])
+        self.assertEqual("요지 계속", back["summary"])
+
+    def test_keywords_are_optional(self):
+        text = render_report("제목", "요지", [], "본문")
+        self.assertEqual([], parse_report(text, "t-999.md")["keywords"])
+        self.assertNotIn("keywords:", text)
+
+    def test_colon_in_title_survives(self):
+        # parse_report 가 첫 콜론에서만 자르는 이유가 이것이다(제목에 URL·시각).
+        text = render_report("우리말: 윤문 도구", "요지", [], "본문")
+        self.assertEqual("우리말: 윤문 도구",
+                         parse_report(text, "t-999.md")["title"])
+
+
+class ReportGuardTests(unittest.TestCase):
+    """지어낸 본문을 막되, 정상적인 보고서를 막지는 않는다.
+
+    write_report 는 파일을 쓴다. 실제 output/reports/ 에 쓰게 두면 테스트가 아카이브를
+    더럽히고, 단정이 먼저 실패하면 찌꺼기가 남는다. 임시 폴더로 갈아끼운다.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.patch = mock.patch.object(
+            classify, "REPORTS_DIR", Path(self.tmp.name))
+        self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        self.tmp.cleanup()
+
+    def base(self, body):
+        return {"id": "t-999", "title": "제목", "summary": "요지",
+                "keywords": [], "report": body}
+
+    def test_empty_body_is_refused(self):
+        self.assertIsNotNone(write_report("t-999", self.base(""), 100))
+
+    def test_placeholder_in_body_is_refused(self):
+        # 자리표를 만들면 audit_report_context 가 '유효하지 않은 자리표'로 잡는다.
+        why = write_report("t-999", self.base("본문 ![[img-1]] 끝"), 1000)
+        self.assertIsNotNone(why)
+        self.assertIn("자리표", why)
+
+    def test_slightly_longer_than_source_is_allowed(self):
+        # 실측 2026-07-27: 95자 원문의 정상 보고서가 110자로 나왔는데, '원문보다
+        # 짧아야 한다'는 규칙에 걸려 거부됐다. 짧고 압축된 말을 풀어 쓰면 원문보다
+        # 길어지는 것이 당연하다. topic_reports 도 최소 분량만 정한다.
+        why = write_report("t-999", self.base("가" * 110), 95)
+        self.assertIsNone(why, msg=f"거부됨: {why}")
+        self.assertTrue((Path(self.tmp.name) / "t-999.md").exists())
+
+    def test_wildly_longer_than_source_is_refused(self):
+        why = write_report("t-999", self.base("가" * 900), 95)
+        self.assertIsNotNone(why)
+        self.assertIn("너무 깁니다", why)
+        self.assertFalse((Path(self.tmp.name) / "t-999.md").exists())
 
 
 class NormalizeTests(unittest.TestCase):

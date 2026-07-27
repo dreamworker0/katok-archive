@@ -17,11 +17,21 @@
     · `claude -p` 는 OAuth 로그인 계정의 요금제를 쓴다 — 종량 API 키가 아니다
 
 무엇을 고치고 무엇을 안 고치는가
-    고침   topics.json  미분류 스레드를 실제 카테고리·제목·요지로 교체
-           knowledge.json  새로 등장한 사람·앱·도구 노드와 엣지 (덧붙이기만)
+    고침   topics.json      미분류 스레드를 실제 카테고리·제목·요지·태그로 교체
+           output/reports/  주제 보고서 md — 태그와 본문 산문이 여기서 나온다
+           knowledge.json   새로 등장한 앱·도구 노드와 엣지 (덧붙이기만)
     안 고침 topic-digests.json  카테고리별 요지 산문. 그건 아카이브 전체를 요약한
            글이라, 새 글 2건 때문에 12편을 매일 다시 쓰면 품질이 흔들리고 비용도
            훨씬 크다. 그건 사람이 필요할 때 갱신한다.
+
+보고서를 빼먹으면 안 되는 이유
+    보고서 md 가 화면의 실제 내용 단위다 — apply_reports() 가 제목·요지·**태그**·
+    본문을 여기서 읽어 스레드에 얹는다. 보고서가 없으면 그 주제는 제목과 요지만
+    있고 태그도 본문도 없다. 실측 2026-07-27: 자동 분류 첫날 스레드만 만들고
+    보고서를 빼먹어 새 주제 두 개가 그 상태로 남았다.
+
+    그리고 한 번 빠지면 스스로 낫지 않는다 — 분류가 끝나 미분류가 아니므로 다음
+    실행이 다시 볼 일이 없다. 그래서 매 실행이 '보고서 없는 주제'도 함께 본다.
 
 지켜야 하는 불변식
     **모든 메시지는 정확히 하나의 스레드에 속한다.** LLM 이 메시지를 빠뜨리거나
@@ -42,6 +52,8 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+
+from scripts.topic_reports import REPORTS_DIR, parse_report
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "output"
@@ -153,6 +165,13 @@ def build_prompt(msgs: list[dict], categories: list[dict],
 - category 는 위 id 중 하나여야 합니다. 애매하면 'chat' 을 쓰되, 실제로 도구·모델·
   프로젝트·정책 이야기라면 그에 맞는 카테고리를 고르세요.
 - title 은 30자 이내의 명사구. summary 는 한 문장(80자 이내), 사람 이름을 주어로.
+- keywords 는 2~6개. 이 대화를 나중에 찾을 때 쓸 말(도구 이름, 개념, 결과물).
+  카테고리 이름을 그대로 넣지 마세요.
+- report 는 이 대화를 읽은 사람이 다시 읽지 않아도 되게 쓰는 **본문 산문**입니다.
+  · 사실만 씁니다. 대화에 없는 내용을 채우지 마세요.
+  · 원문보다 짧아야 합니다. 짧은 대화면 두세 문장으로 충분합니다.
+  · 링크나 사진 자리표(![[...]])를 넣지 마세요. 자료는 화면 아래에 따로 붙습니다.
+  · 굵게(**...**)는 정말 중요한 한두 곳에만.
 
 ## 이미 등록된 앱·도구 (새로 만들지 말고 이 id 를 그대로 쓰세요)
 {known_lines}
@@ -174,7 +193,7 @@ def build_prompt(msgs: list[dict], categories: list[dict],
 ## 출력
 JSON 만 출력하세요. 산문·설명·코드펜스 없이 이 형태 그대로:
 
-{{"threads":[{{"category":"ai-tools","title":"제목","summary":"요지 한 문장","message_ids":["msg-001510"]}}],"graph":{{"nodes":[{{"id":"tool:claude-p","type":"tool","category":"ai-tools","label":"Claude -p"}}],"edges":[{{"source":"person:김종원","target":"tool:claude-p","type":"uses"}}]}}}}
+{{"threads":[{{"category":"ai-tools","title":"제목","summary":"요지 한 문장","keywords":["키워드1","키워드2"],"report":"본문 산문. 여러 문장이어도 됩니다.","message_ids":["msg-001510"]}}],"graph":{{"nodes":[{{"id":"tool:claude-p","type":"tool","category":"ai-tools","label":"Claude -p"}}],"edges":[{{"source":"person:김종원","target":"tool:claude-p","type":"uses"}}]}}}}
 """
 
 
@@ -287,10 +306,19 @@ def validate(data: dict, expected_ids: set[str],
         if not title:
             print(f"threads[{i}] 제목이 없습니다.")
             return None
+        # 키워드(=태그). 프론트매터에서 쉼표로 갈리므로 쉼표를 지운다.
+        kws = []
+        for k in (t.get("keywords") or []):
+            k = str(k).replace(",", " ").strip()
+            if k and k not in kws:
+                kws.append(k[:30])
+
         clean.append({
             "category": cat,
             "title": title[:60],
             "summary": summary[:200],
+            "keywords": kws[:6],
+            "report": str(t.get("report") or "").strip(),
             "message_ids": list(ids),
         })
 
@@ -302,6 +330,72 @@ def validate(data: dict, expected_ids: set[str],
 
 
 NEW_NODE_ID_RE = re.compile(r"^(app|tool):[a-z0-9][a-z0-9-]{1,39}$")
+
+
+def render_report(title: str, summary: str, keywords: list[str],
+                  body: str) -> str:
+    """output/reports/*.md 형식으로 만든다.
+
+    프론트매터는 `topic_reports.parse_report` 가 첫 콜론에서만 자르는 단순 형식이다
+    (pyyaml 을 쓰지 않는 이유가 거기 적혀 있다). 값에 줄바꿈이 들어가면 그 파서가
+    깨지므로 한 줄로 눕힌다.
+    """
+    def one_line(s: str) -> str:
+        return re.sub(r"\s+", " ", str(s or "")).strip()
+
+    head = [
+        f"title: {one_line(title)}",
+        f"summary: {one_line(summary)}",
+    ]
+    if keywords:
+        head.append("keywords: " + ", ".join(one_line(k) for k in keywords))
+    return "---\n" + "\n".join(head) + "\n---\n\n" + body.strip() + "\n"
+
+
+def write_report(thread_id: str, thread: dict, raw_chars: int) -> str | None:
+    """보고서 md 를 쓴다. 못 쓰면 이유를 돌려준다(None 이면 성공).
+
+    보고서는 화면의 실제 내용 단위다 — 제목·요지·**키워드(태그)**·본문 산문이
+    여기서 나오고, apply_reports() 가 그것을 스레드에 얹는다. 보고서가 없으면
+    스레드는 제목과 요지만 있고 태그도 본문도 없다(실측 2026-07-27: 자동 분류가
+    스레드만 만들고 보고서를 빼먹어 새 주제 두 개가 그런 상태였다).
+
+    쓰기 전에 `parse_report` 로 되읽어 본다. 형식이 어긋난 md 를 남기면 다음
+    실행의 `load_reports` 가 예외를 던져 파이프라인 전체가 멈춘다 — 보고서 하나
+    때문에 갱신이 죽는 것은 이 설계에서 가장 피하고 싶은 일이다.
+    """
+    body = thread.get("report") or ""
+    if not body:
+        return "본문이 비었습니다"
+
+    # 지어낸 내용이 섞였는지 본다. 다만 "원문보다 짧아야 한다"로 잡으면 안 된다 —
+    # 실측 2026-07-27: 95자 메시지의 정상적인 보고서가 110자로 나와 걸렸다.
+    # 짧고 압축된 말('Claude -p 로 구조를 바꿨다')을 읽을 수 있게 풀면 원문보다
+    # 길어지는 게 당연하다. topic_reports 도 최소 분량만 정하고 상한은 두지 않는다.
+    #
+    # 그래서 '약간 김'이 아니라 '터무니없이 김'만 막는다. 두 문장짜리 대화에서
+    # 원고지 몇 장이 나오면 그건 지어낸 것이다.
+    limit = max(400, raw_chars * 2)
+    if len(body) > limit:
+        return f"본문이 원문에 비해 너무 깁니다 ({len(body)} > {limit})"
+
+    # 자리표를 만들면 audit_report_context 가 '유효하지 않은 자리표'로 잡는다.
+    # 링크·사진은 화면 아래에 따로 붙으므로 본문에 넣을 이유가 없다.
+    if re.search(r"!\[\[|\]\]", body):
+        return "본문에 자리표(![[...]])가 들어 있습니다"
+
+    text = render_report(thread["title"], thread["summary"],
+                         thread.get("keywords") or [], body)
+    try:
+        back = parse_report(text, thread_id + ".md")
+    except ValueError as e:
+        return f"되읽기 실패: {e}"
+    if back["title"] != re.sub(r"\s+", " ", thread["title"]).strip():
+        return "되읽은 제목이 다릅니다"
+
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    (REPORTS_DIR / f"{thread_id}.md").write_text(text, encoding="utf-8")
+    return None
 
 
 def norm_label(s: str) -> str:
@@ -393,6 +487,111 @@ def merge_graph(knowledge: dict, graph: dict,
     return added_n, added_e
 
 
+def build_report_prompt(thread: dict, msgs: list[dict],
+                        examples: list[dict]) -> str:
+    """보고서만 새로 쓰는 프롬프트. 분류는 이미 끝난 스레드에 쓴다."""
+    ex = "\n".join(
+        f"  [{t['category']}] {t['title']} — {t.get('summary', '')}"
+        for t in examples[:6]
+    )
+    lines = []
+    for m in msgs:
+        urls = m.get("urls") or []
+        extra = (" | 링크: " + ", ".join(urls)) if urls else ""
+        text = (m.get("text") or "").replace("\n", " ⏎ ")
+        lines.append(f"  {m.get('date')} {m.get('time')} | "
+                     f"{m.get('nickname')} | {text}{extra}")
+    return f"""카카오톡 대화 아카이브의 주제 보고서를 씁니다.
+
+이 주제는 이미 분류돼 있습니다. 제목·요지는 그대로 두고, **태그와 본문**만 씁니다.
+
+## 이 주제
+  제목: {thread.get('title')}
+  요지: {thread.get('summary')}
+  카테고리: {thread.get('category')}
+
+## 톤을 맞출 예시
+{ex}
+
+## 대화
+{chr(10).join(lines)}
+
+## 규칙
+- keywords 는 2~6개. 나중에 이 대화를 찾을 때 쓸 말(도구 이름, 개념, 결과물).
+- report 는 본문 산문. 사실만 쓰고, 대화에 없는 내용을 채우지 마세요.
+  원문보다 짧아야 하고, 짧은 대화면 두세 문장으로 충분합니다.
+  링크·사진 자리표(![[...]])는 넣지 마세요 — 자료는 화면 아래에 따로 붙습니다.
+
+## 출력
+JSON 만, 코드펜스 없이:
+
+{{"keywords":["키워드1","키워드2"],"report":"본문 산문."}}
+"""
+
+
+def fill_missing_reports(threads: list[dict], model: str,
+                         examples: list[dict], dry_run: bool,
+                         limit: int = 5) -> int:
+    """보고서가 없는 스레드에 보고서를 써 넣는다. 쓴 편수를 돌려준다.
+
+    왜 필요한가: 보고서 쓰기가 한 번 실패하면 그 주제는 태그도 본문도 없이 영구히
+    남는다 — 분류는 이미 끝나 미분류가 아니므로 다음 실행이 다시 볼 일이 없다.
+    실측 2026-07-27: 자동 분류 첫날 t-166·t-167 이 정확히 그 상태로 남았다.
+    그래서 매 실행이 '보고서 없는 스레드'도 함께 본다. 스스로 메꾼다.
+
+    한 번에 limit 편까지만 한다. 예전 주제 수십 개에 보고서가 없는 상태로 이 기능을
+    켜면 하루에 다 쓰려다 프롬프트와 시간이 폭발한다 — 매일 조금씩 줄이는 편이 낫다.
+    """
+    have = set()
+    if REPORTS_DIR.exists():
+        have = {p.stem for p in REPORTS_DIR.glob("*.md")}
+    missing = [t for t in threads
+               if not UNSORTED_RE.match(str(t.get("id") or ""))
+               and t["id"] not in have]
+    if not missing:
+        return 0
+
+    print(f"보고서 없는 주제 {len(missing)}개 — 이번에 최대 {limit}개를 씁니다.")
+    wrote = 0
+    for t in missing[:limit]:
+        msgs = read_messages(set(t.get("message_ids") or []))
+        if not msgs:
+            print(f"  건너뜀({t['id']}): 메시지를 찾지 못했습니다.")
+            continue
+        raw = sum(len(m.get("text") or "") for m in msgs)
+        data = parse_reply(call_claude(
+            build_report_prompt(t, msgs, examples), model) or "")
+        if not data:
+            print(f"  건너뜀({t['id']}): 보고서 결과를 받지 못했습니다.")
+            continue
+        kws = []
+        for k in (data.get("keywords") or []):
+            k = str(k).replace(",", " ").strip()
+            if k and k not in kws:
+                kws.append(k[:30])
+        payload = {
+            "title": t.get("title") or "",
+            "summary": t.get("summary") or "",
+            "keywords": kws[:6],
+            "report": str(data.get("report") or "").strip(),
+        }
+        if dry_run:
+            print(f"  [dry-run] {t['id']} 본문 {len(payload['report'])}자 "
+                  f"· 태그 {', '.join(payload['keywords'])}")
+            continue
+        why = write_report(t["id"], {**payload, "id": t["id"]}, raw)
+        if why:
+            print(f"  보고서 못 씀({t['id']}): {why}")
+            continue
+        # 스레드에도 태그를 얹어 둔다. 발행은 apply_reports 가 보고서에서 다시
+        # 읽지만, topics.json 만 보는 도구들도 태그를 볼 수 있어야 한다.
+        if payload["keywords"]:
+            t["keywords"] = list(payload["keywords"])
+        wrote += 1
+        print(f"  {t['id']} 보고서 작성 · 태그: {', '.join(payload['keywords'])}")
+    return wrote
+
+
 def next_thread_id(threads: list[dict]) -> int:
     """t-001 형식의 다음 번호. 미분류 스레드는 이 형식이 아니라 섞이지 않는다."""
     top = 0
@@ -417,10 +616,21 @@ def main() -> int:
     threads = topics.get("threads", [])
     unsorted = [t for t in threads if UNSORTED_RE.match(str(t.get("id") or ""))]
 
+    categories = topics.get("categories", [])
+    valid_categories = {c["id"] for c in categories}
+    # 톤을 맞출 표본. 너무 많이 보내면 프롬프트만 커진다.
+    examples = [t for t in threads
+                if not UNSORTED_RE.match(str(t.get("id") or ""))][:12]
+
     if not unsorted:
-        # 여기서 끝내는 것이 비용 억제의 핵심이다. 조용한 날은 호출이 없다.
-        print("미분류 스레드가 없습니다 — 분류할 것이 없습니다.")
-        emit("CLASSIFIED", 0)
+        # 미분류가 없어도 '보고서 없는 주제'는 메꿔야 한다. 그것까지 없으면
+        # 여기서 끝난다 — 조용한 날 LLM 호출 0회가 비용 억제의 핵심이다.
+        print("미분류 스레드가 없습니다.")
+        filled = fill_missing_reports(threads, args.model, examples,
+                                      args.dry_run)
+        if filled and not args.dry_run:
+            save_json(TOPICS, topics)
+        emit("CLASSIFIED", filled)
         return 0
 
     target_ids: list[str] = []
@@ -441,12 +651,6 @@ def main() -> int:
               "분류를 건너뜁니다.")
         emit("CLASSIFIED", 0)
         return 0
-
-    categories = topics.get("categories", [])
-    valid_categories = {c["id"] for c in categories}
-    # 톤을 맞출 표본. 너무 많이 보내면 프롬프트만 커진다.
-    examples = [t for t in threads
-                if not UNSORTED_RE.match(str(t.get("id") or ""))][:12]
 
     print(f"미분류 {len(msgs)}건을 분류합니다 (모델: {args.model})")
     known_nodes = [n for n in (load_json(KNOWLEDGE).get("nodes", [])
@@ -484,18 +688,27 @@ def main() -> int:
             t["start_msg"], t["end_msg"] = left[0], left[-1]
             rebuilt.append(t)
 
+    # 원문 글자 수 — 보고서가 원문보다 길지 않은지 볼 때 쓴다
+    raw_by_id = {m["id"]: len(m.get("text") or "") for m in msgs}
+
     nid = next_thread_id(threads)
+    assigned = []
     for c in clean:
         ids = c["message_ids"]
-        rebuilt.append({
-            "id": f"t-{nid:03d}",
+        tid = f"t-{nid:03d}"
+        thread = {
+            "id": tid,
             "category": c["category"],
             "title": c["title"],
             "summary": c["summary"],
             "start_msg": ids[0],
             "end_msg": ids[-1],
             "message_ids": ids,
-        })
+        }
+        if c["keywords"]:
+            thread["keywords"] = list(c["keywords"])
+        rebuilt.append(thread)
+        assigned.append((tid, c, sum(raw_by_id.get(i, 0) for i in ids)))
         nid += 1
 
     topics["threads"] = rebuilt
@@ -507,8 +720,10 @@ def main() -> int:
         added_n, added_e = merge_graph(knowledge, data.get("graph") or {},
                                        valid_categories)
 
-    for c in clean:
-        print(f"  [{c['category']}] {c['title']} ({len(c['message_ids'])}건)")
+    for tid, c, raw in assigned:
+        kw = (" · 태그: " + ", ".join(c["keywords"])) if c["keywords"] else ""
+        print(f"  {tid} [{c['category']}] {c['title']} "
+              f"({len(c['message_ids'])}건, 본문 {len(c['report'])}자){kw}")
     if added_n or added_e:
         print(f"  관계 그래프: 노드 +{added_n}, 엣지 +{added_e}")
 
@@ -521,7 +736,26 @@ def main() -> int:
     if knowledge is not None and (added_n or added_e):
         save_json(KNOWLEDGE, knowledge)
 
-    print(f"분류 완료: 스레드 {len(clean)}개, 메시지 {len(handled)}건")
+    # 보고서는 스레드를 저장한 뒤에 쓴다. 보고서만 있고 스레드가 없으면
+    # apply_reports 가 조용히 무시해 무해하지만, 반대(스레드만 있고 보고서 없음)는
+    # 화면에 태그도 본문도 없는 주제로 보인다 — 그쪽이 눈에 띄는 손해다.
+    wrote = 0
+    for tid, c, raw in assigned:
+        why = write_report(tid, {**c, "id": tid}, raw)
+        if why:
+            print(f"  보고서 못 씀({tid}): {why} — 제목·요지만 남습니다.")
+        else:
+            wrote += 1
+
+    print(f"분류 완료: 스레드 {len(clean)}개, 메시지 {len(handled)}건, "
+          f"보고서 {wrote}편")
+
+    # 이번에 못 쓴 보고서와 예전에 빠진 보고서를 함께 메꾼다.
+    filled = fill_missing_reports(rebuilt, args.model, examples, False)
+    if filled:
+        save_json(TOPICS, topics)
+        print(f"밀린 보고서 {filled}편을 채웠습니다.")
+
     emit("CLASSIFIED", len(handled))
     return 0
 
