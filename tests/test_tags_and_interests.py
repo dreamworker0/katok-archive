@@ -121,6 +121,28 @@ class InterestTests(unittest.TestCase):
         self.assertNotIn("잠깐", [p["nickname"] for p in out["people"]])
 
 
+class DigestKeywordTests(unittest.TestCase):
+    """요지 산문의 태그는 눌러서 갈 곳이 있어야 화면에 낸다."""
+
+    def test_unreachable_digest_keywords_are_dropped(self):
+        from scripts import build_site
+        threads = [{"id": "t-1", "category": "projects", "title": "차량운행일지 공개",
+                    "summary": "티맵 연동", "report": "슬랙으로 알린다.",
+                    "message_ids": ["m1"], "count": 1, "tags": ["차량운행일지"]}]
+        topics = {"categories": [{"id": "projects", "label": "프로젝트"}],
+                  "threads": [{"id": "t-1", "category": "projects", "message_ids": ["m1"]}]}
+        prose = {"digests": {"projects": {"keywords": [
+            "차량 운행일지",   # 태그와 띄어쓰기만 다르다 → 남는다
+            "슬랙",            # 보고서 본문에 있다 → 남는다
+            "망분리·보안",      # 어디에도 없다 → 뺀다
+        ]}}}
+        digests = build_site.build_digests(
+            [{"id": "m1", "nickname": "김종원", "date": "2026-01-01", "category": "projects"}],
+            threads, topics, {"nodes": []}, prose,
+        )
+        self.assertEqual(digests["projects"]["keywords"], ["차량 운행일지", "슬랙"])
+
+
 class SecondaryCategoryTests(unittest.TestCase):
     """보조 분류는 통계를 건드리지 않아야 한다."""
 

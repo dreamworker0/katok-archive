@@ -10,6 +10,18 @@
   var KNOW = A.knowledge || { nodes: [], edges: [] };
   var TAGIDX = A.tag_index || { tags: [], total_tags: 0, hidden_tags: 0, min_count: 2 };
   var THREAD_BY_ID = {}; THREADS.forEach(function (t) { THREAD_BY_ID[t.id] = t; });
+  /* 태그 → 그 태그가 붙은 주제. 표기 차이(공백·대소문자)는 무시하고 맞춘다.
+   * 발행 때 이미 통일했지만, 요지 산문의 태그는 사람이 따로 쓴 말이라 '차량
+   * 운행일지'처럼 띄어쓰기가 다를 수 있다. */
+  var TAG_THREADS = {};
+  function tagFold(s) { return String(s || "").replace(/[\s\-_.]+/g, "").toLowerCase(); }
+  THREADS.forEach(function (t) {
+    (t.tags || t.keywords || []).forEach(function (k) {
+      var key = tagFold(k);
+      if (!TAG_THREADS[key]) TAG_THREADS[key] = [];
+      if (TAG_THREADS[key].indexOf(t.id) === -1) TAG_THREADS[key].push(t.id);
+    });
+  });
   var CAT_LABEL = {}; CATS.forEach(function (c) { CAT_LABEL[c.id] = c.label; });
 
   // 카테고리 색 (그래프 클러스터·요약·통계 공용)
@@ -188,7 +200,11 @@
       return '<button class="chip" data-nick="' + esc(p.nickname) + '">' + esc(p.nickname) +
         " <span style=\"color:var(--ink-faint)\">" + p.count + "</span></button>";
     }).join("");
-    var kw = (d.keywords || []).map(function (k) { return '<span class="chip">' + esc(k) + "</span>"; }).join("");
+    // 요지의 태그도 누르면 그 화제의 주제만 보이게 한다. 장식으로 두면 눌러
+    // 보고 아무 일도 안 일어나는데, 태그처럼 생긴 것은 누르게 되어 있다.
+    var kw = (d.keywords || []).map(function (k) {
+      return '<button class="chip kw" data-kw="' + esc(k) + '">' + esc(k) + "</button>";
+    }).join("");
     // 최근 대화가 위로 오도록 끝난 날짜 기준 내림차순. 날짜는 YYYY-MM-DD라 문자열 비교로 충분하다.
     var threadList = (d.threads || []).slice().sort(function (a, b) {
       return String(b.end_date || "").localeCompare(String(a.end_date || "")) ||
@@ -274,6 +290,26 @@
     if (label) label.textContent = open ? "접기" : "자세히 보기";
   }
 
+  /** 태그 칩을 눌렀을 때.
+   *
+   *  그 말이 실제 태그면 태그가 붙은 주제만 ID 로 골라낸다 — 글자 검색은 보고서
+   *  본문에 스쳐 지나간 것까지 걸려서 "이게 왜 나오지"가 된다. 태그가 아닌 말
+   *  (요지 산문에만 나오는 표현)은 그때만 글자 검색으로 넘긴다. */
+  function openKeyword(word) {
+    var ids = TAG_THREADS[tagFold(word)];
+    if (ids && ids.length) pickThreads(ids, word);
+    else runSearch(word);
+  }
+
+  function bindKeywordChips(scope) {
+    Array.prototype.forEach.call(scope.querySelectorAll("[data-kw]"), function (b) {
+      b.onclick = function (e) {
+        e.stopPropagation();
+        openKeyword(b.getAttribute("data-kw"));
+      };
+    });
+  }
+
   function bindDocActions(scope) {
     Array.prototype.forEach.call(scope.querySelectorAll(".doc-toggle"), function (b) {
       b.onclick = function () {
@@ -291,6 +327,7 @@
         else runSearch(b.getAttribute("data-q"));
       };
     });
+    bindKeywordChips(scope);
     Array.prototype.forEach.call(scope.querySelectorAll("[data-nick]"), function (b) {
       b.onclick = function () {
         el.filter.value = b.getAttribute("data-nick"); state.nick = el.filter.value;
@@ -911,9 +948,8 @@
   }
 
   function bindThreadCards(scope) {
-    Array.prototype.forEach.call(scope.querySelectorAll(".kw"), function (b) {
-      b.onclick = function () { runSearch(b.getAttribute("data-kw")); };
-    });
+    // 주제 카드의 태그도 같은 규칙으로 — 태그면 정확히, 아니면 글자 검색.
+    bindKeywordChips(scope);
     Array.prototype.forEach.call(scope.querySelectorAll(".tc-dl"), function (b) {
       b.onclick = function () {
         var tid = b.parentNode.parentNode.getAttribute("data-tid");

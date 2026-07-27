@@ -135,6 +135,21 @@ def build_digests(
         for cid in t.get("also") or []:
             also_by_cat.setdefault(cid, []).append(t)
 
+    # 요지 산문의 태그는 화면에서 눌러 그 화제의 주제로 가는 입구다. 그런데 그
+    # 태그는 사람이 요지를 쓰면서 붙인 말이라, 어느 주제와도 이어지지 않는 조어가
+    # 섞인다(실측: '망분리·보안', 'Gemini flash' 등 11개). 눌러서 빈 화면이 나오면
+    # 고장으로 보이므로, 이어지지 않는 것은 화면에 내지 않고 여기서 알려 준다.
+    tag_keys = {taglib.fold(tg) for t in threads_meta for tg in (t.get("tags") or [])}
+    thread_text = " ".join(
+        ((t.get("title") or "") + " " + (t.get("summary") or "") + " " +
+         (t.get("report") or "")) for t in threads_meta
+    ).lower()
+
+    def keeps(word: str) -> bool:
+        return taglib.fold(word) in tag_keys or word.lower() in thread_text
+
+    dropped_kw: list[str] = []
+
     digests = {}
     for c in topics["categories"]:
         cid = c["id"]
@@ -148,7 +163,7 @@ def build_digests(
             "label": c["label"],
             "headline": p.get("headline", ""),
             "overview": p.get("overview", ""),
-            "keywords": p.get("keywords", []),
+            "keywords": [k for k in p.get("keywords", []) if keeps(k)],
             "apps": apps_by_cat.get(cid, []),
             "links": links_by_cat.get(cid, []),
             "participants": top_nicks,
@@ -159,6 +174,10 @@ def build_digests(
             ],
             "message_count": sum(t["count"] for t in threads_by_cat.get(cid, [])),
         }
+        dropped_kw += ["%s:%s" % (cid, k) for k in p.get("keywords", []) if not keeps(k)]
+    if dropped_kw:
+        print("[요지 태그] 어느 주제와도 이어지지 않아 화면에서 뺀 %d개: %s"
+              % (len(dropped_kw), ", ".join(dropped_kw)))
     return digests
 
 
