@@ -238,6 +238,20 @@ if ($added -eq 0) {
     Say "새 메시지는 없지만 멤버 요청 변경 또는 주제 분류가 있어 발행합니다."
 }
 
+# 5b) 보조 분류 — 새로 생긴 주제만 판정한다(이미 물어본 주제는 다시 묻지 않는다).
+#
+#     실패해도 갱신을 멈추지 않는다. 보조 분류는 '여기서도 볼 만한 주제'라는
+#     곁길일 뿐이고, 없으면 그 곁길만 안 생긴다. 다음 날 실행이 이어서 한다.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try { $secOut = & { python -m scripts.assign_secondary } 2>&1 }
+finally { $ErrorActionPreference = $prevEap }
+$secCode = $LASTEXITCODE
+foreach ($l in $secOut) { Say "    $l" }
+if ($null -ne $secCode -and $secCode -ne 0) {
+    Say "보조 분류가 실패했습니다 (exit $secCode) — 곁길 없이 계속합니다." 'WARN'
+}
+
 # 6) 갤러리용 작은 사진 — 발행본을 만들기 전에 있어야 한다
 #
 #    없으면 화면이 원본을 그대로 내려받는다. 22MB 사진을 200px 칸에 넣으려고 22MB 를
