@@ -49,6 +49,40 @@ class ClickTargetIsVerifiedTests(unittest.TestCase):
         self.assertIn("항상 위", block)
 
 
+class LoggingNeverAbortsTheRunTests(unittest.TestCase):
+    """진단을 남기려고 둔 코드가 실행을 멈춰서는 안 된다.
+
+    실측 2026-07-27: 진행 상황을 보려고 로그를 `tail -f` 로 열어둔 것만으로 내보내기가
+    첫 줄에서 죽었다. $ErrorActionPreference = 'Stop' 이라 Add-Content 실패가
+    스크립트를 그 자리에서 끝냈다. 백신·백업·편집기도 같은 잠금을 만든다.
+    """
+
+    DAILY = (ROOT / "scripts" / "run_daily.ps1").read_text(encoding="utf-8")
+
+    def test_export_log_write_is_guarded(self):
+        block = EXPORT[EXPORT.index("function Write-Log"):][:1600]
+        self.assertIn("try {", block)
+        self.assertIn("Add-Content -Path $script:LogFile", block)
+        self.assertIn("} catch {", block)
+
+    def test_daily_log_write_is_guarded(self):
+        block = self.DAILY[self.DAILY.index("function Say"):][:1200]
+        self.assertIn("try { Add-Content -Path $log", block)
+        self.assertIn("catch {", block)
+
+    def test_failure_is_surfaced_on_screen_not_swallowed(self):
+        # 조용히 삼키면 왜 로그가 비었는지 알 수 없다.
+        for text in (EXPORT, self.DAILY):
+            with self.subTest():
+                self.assertIn("로그 파일이 잠겨 있어 화면에만 남깁니다", text)
+
+    def test_warning_is_printed_once_not_per_line(self):
+        # 줄마다 경고하면 로그가 두 배로 늘고 정작 읽을 것이 묻힌다.
+        for text in (EXPORT, self.DAILY):
+            with self.subTest():
+                self.assertIn("$script:LogWriteWarned", text)
+
+
 class EscapeIsNeverSentTests(unittest.TestCase):
     """카톡에서 Esc 는 대화방 창을 닫는다 — 다음 실행이 창을 못 찾게 된다."""
 

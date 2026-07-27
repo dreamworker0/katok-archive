@@ -122,7 +122,30 @@ public class U32 {
 function Write-Log { param([string]$m, [string]$level = 'INFO')
     $line = "[{0}] {1} {2}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $level, $m
     Write-Host $line
-    if ($script:LogFile) { Add-Content -Path $script:LogFile -Value $line -Encoding utf8 }
+    if (-not $script:LogFile) { return }
+
+    # 로그를 못 써도 실행은 계속한다.
+    #
+    # $ErrorActionPreference = 'Stop' 이라 Add-Content 실패는 스크립트를 그 자리에서
+    # 죽인다. 실측(2026-07-27): 진행 상황을 보려고 로그를 `tail -f` 로 열어둔 것만으로
+    # 내보내기가 첫 줄에서 죽었다 — 그 잠금이 Add-Content 를 막았다. 백신·백업·
+    # 편집기도 같은 일을 한다.
+    #
+    # 진단을 남기려고 둔 코드가 실행을 멈추는 것은 앞뒤가 맞지 않는다. 짧게 몇 번
+    # 다시 시도하고, 그래도 안 되면 화면에만 남기고 나아간다. 로그가 없는 것은
+    # 불편한 일이지만, 그날 갱신이 없는 것은 되돌릴 수 없는 손해다.
+    for ($i = 0; $i -lt 3; $i++) {
+        try {
+            Add-Content -Path $script:LogFile -Value $line -Encoding utf8
+            return
+        } catch {
+            Start-Sleep -Milliseconds 150
+        }
+    }
+    if (-not $script:LogWriteWarned) {
+        $script:LogWriteWarned = $true
+        Write-Host "  (로그 파일이 잠겨 있어 화면에만 남깁니다 — 다른 프로그램이 열고 있는지 보세요)"
+    }
 }
 
 function Save-Screenshot { param([string]$tag)

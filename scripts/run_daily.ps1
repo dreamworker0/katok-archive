@@ -54,7 +54,19 @@ $log = Join-Path $LogDir ("daily-{0}.log" -f (Get-Date -Format 'yyyyMMdd'))
 function Say { param([string]$m, [string]$lvl = 'INFO')
     $line = "[{0}] {1} {2}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $lvl, $m
     Write-Host $line
-    Add-Content -Path $log -Value $line -Encoding utf8
+
+    # 로그를 못 써도 갱신은 계속한다. $ErrorActionPreference = 'Stop' 이라
+    # Add-Content 실패는 여기서 갱신을 죽인다 — 로그를 tail -f 로 열어두거나
+    # 백신이 잡고 있으면 그렇게 된다(실측 2026-07-27, kakao_export.ps1 에서).
+    # 진단을 남기려는 코드가 그날 갱신을 없애서는 안 된다.
+    for ($i = 0; $i -lt 3; $i++) {
+        try { Add-Content -Path $log -Value $line -Encoding utf8; return }
+        catch { Start-Sleep -Milliseconds 150 }
+    }
+    if (-not $script:LogWriteWarned) {
+        $script:LogWriteWarned = $true
+        Write-Host "  (로그 파일이 잠겨 있어 화면에만 남깁니다)"
+    }
 }
 
 # 한 번에 하나만 돈다 — 겹쳐 돌면 발행이 반쪽 상태로 섞인다.
