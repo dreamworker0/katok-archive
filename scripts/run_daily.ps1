@@ -7,16 +7,17 @@
   3. 멤버 요청(수집 동의·삭제) 내려받기        sync_member_requests.js
   4. inbox/*.txt 를 증분 반영                  ingest_incremental.py
   5. 주제 분류 (LLM, 비치명적)                 classify_unsorted.py
-  6. 발행본 재생성                             build_firestore_payload.py
-  7. Firestore·Storage 적재                    upload_firestore.js
-  8. 테스트로 정합성 확인                      unittest
+  6. 갤러리용 작은 사진 생성                   build_thumbnails.py
+  7. 발행본 재생성                             build_firestore_payload.py
+  8. Firestore·Storage 적재                    upload_firestore.js
+  9. 테스트로 정합성 확인                      unittest
 
 설계
   - 각 단계는 실패하면 즉시 중단한다. 반쪽 상태로 발행하지 않는다.
     **단, 5단계(주제 분류)는 예외다** — 실패하면 미분류 스레드가 남을 뿐이므로
     삼키고 나아간다. LLM 장애가 그날 타임라인·통계·삭제 요청 반영을 통째로
     날려서는 안 된다. 이것이 파이프라인에서 유일하게 LLM 을 쓰는 칸이다.
-  - 6~7단계는 발행 사유가 있을 때만 돈다. 사유는 셋이다 — 새 메시지, 멤버 요청
+  - 6~8단계는 발행 사유가 있을 때만 돈다. 사유는 셋이다 — 새 메시지, 멤버 요청
     변경, 주제 분류 변경. 조용한 날에 들어온 삭제 요청이 묻히면 안 되므로 요청
     변경도 사유이고, 정리해 놓고 안 올리면 화면이 거짓말을 하므로 분류도 사유다.
   - 멤버 요청을 증분 반영보다 먼저 받는다. '수집 거부'는 수집 단계에서 걸러야 해서
@@ -237,13 +238,20 @@ if ($added -eq 0) {
     Say "새 메시지는 없지만 멤버 요청 변경 또는 주제 분류가 있어 발행합니다."
 }
 
-# 6) 발행본 재생성
+# 6) 갤러리용 작은 사진 — 발행본을 만들기 전에 있어야 한다
+#
+#    없으면 화면이 원본을 그대로 내려받는다. 22MB 사진을 200px 칸에 넣으려고 22MB 를
+#    받는 셈이다(실측 2026-07-27: 사진 312장이 462MB, 작은 사진으로는 5MB).
+#    이미 있는 것은 건너뛰므로 새로 들어온 사진만 만든다 — 조용한 날은 거의 0초다.
+Invoke-Step '작은 사진 생성' { python -m scripts.build_thumbnails } | Out-Null
+
+# 7) 발행본 재생성
 Invoke-Step '발행본 생성' { python -m scripts.build_firestore_payload } | Out-Null
 
-# 7) Firestore·Storage 적재
+# 8) Firestore·Storage 적재
 Invoke-Step 'Firestore 적재' { node scripts\upload_firestore.js } | Out-Null
 
-# 8) 정합성 확인 — 파이썬(발행본 무결성) + 노드(증분 적재 규칙)
+# 9) 정합성 확인 — 파이썬(발행본 무결성) + 노드(증분 적재 규칙)
 Invoke-Step '테스트' { python -m unittest discover -s tests } | Out-Null
 Invoke-Step '테스트(적재)' { npm test --silent } | Out-Null
 
