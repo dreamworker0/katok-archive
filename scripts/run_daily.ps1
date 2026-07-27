@@ -6,14 +6,19 @@
   2. 멤버 명부 거울 갱신                       sync_members.js
   3. 멤버 요청(수집 동의·삭제) 내려받기        sync_member_requests.js
   4. inbox/*.txt 를 증분 반영                  ingest_incremental.py
-  5. 발행본 재생성                             build_firestore_payload.py
-  6. Firestore·Storage 적재                    upload_firestore.js
-  7. 테스트로 정합성 확인                      unittest
+  5. 주제 분류 (LLM, 비치명적)                 classify_unsorted.py
+  6. 발행본 재생성                             build_firestore_payload.py
+  7. Firestore·Storage 적재                    upload_firestore.js
+  8. 테스트로 정합성 확인                      unittest
 
 설계
   - 각 단계는 실패하면 즉시 중단한다. 반쪽 상태로 발행하지 않는다.
-  - 5~6단계는 새 메시지가 있거나 멤버 요청이 바뀌었을 때만 돈다.
-    조용한 날에 들어온 삭제 요청이 묻히면 안 되므로 요청 변경도 발행 사유다.
+    **단, 5단계(주제 분류)는 예외다** — 실패하면 미분류 스레드가 남을 뿐이므로
+    삼키고 나아간다. LLM 장애가 그날 타임라인·통계·삭제 요청 반영을 통째로
+    날려서는 안 된다. 이것이 파이프라인에서 유일하게 LLM 을 쓰는 칸이다.
+  - 6~7단계는 발행 사유가 있을 때만 돈다. 사유는 셋이다 — 새 메시지, 멤버 요청
+    변경, 주제 분류 변경. 조용한 날에 들어온 삭제 요청이 묻히면 안 되므로 요청
+    변경도 사유이고, 정리해 놓고 안 올리면 화면이 거짓말을 하므로 분류도 사유다.
   - 멤버 요청을 증분 반영보다 먼저 받는다. '수집 거부'는 수집 단계에서 걸러야 해서
     순서가 뒤바뀌면 거부 의사를 낸 그날 글이 한 번 수집되고 만다.
   - 모든 출력은 logs\daily-YYYYMMDD.log 에 남긴다.
@@ -171,22 +176,74 @@ Say "새 메시지: $added 건 / 멤버 요청 변경: $requestsChanged"
 
 if ($DryRun) { Say "===== DryRun 종료 (발행하지 않음) ====="; exit 0 }
 
-if ($added -eq 0 -and -not $requestsChanged) {
-    Say "새 메시지도 멤버 요청 변경도 없어 발행을 건너뜁니다."
+# 5) 주제 분류 (LLM) — 실패해도 갱신을 멈추지 않는다
+#
+#    파이프라인에서 유일하게 LLM 을 쓰는 칸이다. "이 대화가 어느 주제인가"는 코드가
+#    답할 수 없어서 맡긴다. 원래 사람이 주 1회 하던 일을 자동으로 돌리기로 했다.
+#
+#    Invoke-Step 을 쓰지 않는다 — 그것은 실패하면 갱신을 중단시킨다. 분류는 있으면
+#    좋은 것이고, 없으면 미분류 스레드가 남을 뿐이다. LLM 장애 때문에 그날 타임라인·
+#    통계·삭제 요청 반영이 통째로 날아가서는 안 된다. 그래서 실패를 삼키고 나아간다.
+#
+#    분류가 발행보다 **앞**에 있어야 한다. 뒤에 두면 분류 결과를 올리려고 발행을
+#    한 번 더 해야 한다.
+#
+#    그리고 '발행할지' 판단보다도 앞이어야 한다. 새 메시지가 없는 날에도 지난 실패나
+#    한 번에 처리하는 상한(MAX_MESSAGES_PER_RUN) 때문에 미분류가 남아 있을 수 있다.
+#    발행 여부로 먼저 걸러내면 그 잔여분을 영영 치우지 못한다 — 새 글이 있는 날에만
+#    정리되는 셈이 되고, 실패가 한 번 나면 그대로 굳는다.
+#
+#    비용: 미분류가 없으면 스크립트가 호출 자체를 하지 않는다(조용한 날 0원).
+Say "--- 주제 분류 (LLM) ---"
+# Invoke-Step 과 같은 이유로 stderr 를 오류로 승격시키지 않는다 — 파이썬이 stderr 에
+# 한 줄이라도 쓰면 'Stop' 정책이 여기서 갱신을 죽인다.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try { $classifyOut = & { python -m scripts.classify_unsorted } 2>&1 }
+finally { $ErrorActionPreference = $prevEap }
+$classifyCode = $LASTEXITCODE
+foreach ($l in $classifyOut) { Say "    $l" }
+
+# 분류가 실제로 무언가 바꿨으면 그것도 발행 사유다. 안 그러면 새 메시지가 없는 날에
+# 미분류를 정리해 놓고도 발행을 건너뛰어, 화면은 그대로 '미분류'로 남는다.
+$classified = 0
+if ($null -ne $classifyCode -and $classifyCode -ne 0) {
+    Say "주제 분류가 실패했습니다 (exit $classifyCode) — 미분류로 남기고 계속합니다." 'WARN'
+} else {
+    $marker = $null
+    foreach ($l in $classifyOut) {
+        if ($l -match 'CLASSIFIED=(\d+)') { $marker = [int]$Matches[1] }
+    }
+    if ($null -eq $marker) {
+        # 표식을 못 읽으면 바뀌었을 수도 있다고 본다 — 발행하는 쪽으로 기운다.
+        # 불필요한 발행은 손해가 없지만, 정리해 놓고 안 올리면 화면이 거짓말을 한다.
+        Say "분류 결과 표식(CLASSIFIED)을 읽지 못했습니다 — 발행하는 쪽으로 진행합니다." 'WARN'
+        $classified = 1
+    } else {
+        $classified = $marker
+        if ($classified -gt 0) {
+            Say "주제 분류: 메시지 $classified 건을 정리했습니다."
+        }
+    }
+}
+
+# 발행할지 판단 — 분류 뒤에 둔다(위 주석 참고)
+if ($added -eq 0 -and -not $requestsChanged -and $classified -eq 0) {
+    Say "새 메시지도 멤버 요청 변경도 분류 변경도 없어 발행을 건너뜁니다."
     Say "===== 일일 갱신 종료 ====="
     exit 0
 }
 if ($added -eq 0) {
-    Say "새 메시지는 없지만 멤버 요청이 바뀌어 발행합니다."
+    Say "새 메시지는 없지만 멤버 요청 변경 또는 주제 분류가 있어 발행합니다."
 }
 
-# 5) 발행본 재생성
+# 6) 발행본 재생성
 Invoke-Step '발행본 생성' { python -m scripts.build_firestore_payload } | Out-Null
 
-# 6) Firestore·Storage 적재
+# 7) Firestore·Storage 적재
 Invoke-Step 'Firestore 적재' { node scripts\upload_firestore.js } | Out-Null
 
-# 7) 정합성 확인 — 파이썬(발행본 무결성) + 노드(증분 적재 규칙)
+# 8) 정합성 확인 — 파이썬(발행본 무결성) + 노드(증분 적재 규칙)
 Invoke-Step '테스트' { python -m unittest discover -s tests } | Out-Null
 Invoke-Step '테스트(적재)' { npm test --silent } | Out-Null
 

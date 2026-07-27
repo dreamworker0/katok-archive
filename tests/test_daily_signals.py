@@ -91,20 +91,76 @@ class EncodingSetupTests(unittest.TestCase):
 
 
 class RunnerStillGuardsPublishingTests(unittest.TestCase):
-    """인코딩을 고치면서 원래의 발행 조건이 흐트러지지 않았는지."""
+    """발행 조건이 흐트러지지 않았는지.
 
-    def test_quiet_day_with_no_requests_still_skips(self):
-        self.assertIn("if ($added -eq 0 -and -not $requestsChanged) {", DAILY)
+    발행 사유는 셋이다: 새 메시지 · 멤버 요청 변경 · 주제 분류 변경.
+    조용한 날에만 건너뛴다.
+    """
+
+    def test_truly_quiet_day_still_skips(self):
+        self.assertIn(
+            "if ($added -eq 0 -and -not $requestsChanged -and $classified -eq 0) {",
+            DAILY)
 
     def test_request_change_alone_is_a_reason_to_publish(self):
         # run_daily.ps1 머리말이 약속한 규칙이다.
-        self.assertIn("새 메시지는 없지만 멤버 요청이 바뀌어 발행합니다.", DAILY)
+        self.assertIn("새 메시지는 없지만 멤버 요청 변경 또는 주제 분류가 있어 발행합니다.",
+                      DAILY)
         # 머리말이 같은 단계를 순서대로 나열하고 있어, 실제 호출부만 본다.
         body = DAILY[DAILY.index("$ErrorActionPreference"):]
         order = [body.index("Invoke-Step '%s'" % step) for step in (
             "멤버 요청 동기화", "증분 반영", "발행본 생성", "Firestore 적재"
         )]
         self.assertEqual(order, sorted(order))
+
+    def test_classification_alone_is_a_reason_to_publish(self):
+        # 새 메시지가 없는 날에 미분류를 정리해 놓고 발행을 건너뛰면, 로컬은
+        # 정리됐는데 화면은 그대로 '미분류'로 남는다 — 화면이 거짓말을 한다.
+        self.assertIn("$classified -eq 0", DAILY)
+        body = DAILY[DAILY.index("$ErrorActionPreference"):]
+        self.assertLess(body.index("CLASSIFIED=(\\d+)"),
+                        body.index("$classified -eq 0"))
+
+    def test_unreadable_classification_marker_leans_to_publishing(self):
+        # 모를 때는 발행하는 쪽으로 기운다. 불필요한 발행은 손해가 없다.
+        block = DAILY[DAILY.index("CLASSIFIED) 를 읽지 못했습니다"):][:400] \
+            if "CLASSIFIED) 를 읽지 못했습니다" in DAILY \
+            else DAILY[DAILY.index("CLASSIFIED"):]
+        self.assertIn("$classified = 1", DAILY)
+
+
+class ClassificationIsNonFatalTests(unittest.TestCase):
+    """분류는 파이프라인에서 유일하게 LLM 을 쓰는 칸이고, 유일하게 실패가 허용되는
+    칸이다. LLM 장애 때문에 그날 타임라인·통계·삭제 요청 반영이 통째로 날아가서는
+    안 된다."""
+
+    def test_classification_does_not_use_the_fatal_step_runner(self):
+        # Invoke-Step 은 실패하면 exit 한다. 분류에 그것을 쓰면 안 된다.
+        self.assertNotIn("Invoke-Step '주제 분류", DAILY)
+        self.assertIn("python -m scripts.classify_unsorted", DAILY)
+
+    def test_classification_failure_warns_and_continues(self):
+        idx = DAILY.index("주제 분류가 실패했습니다")
+        block = DAILY[idx - 200:idx + 300]
+        self.assertIn("'WARN'", block)
+        # exit **문장**이 없어야 한다. 로그 문구 안의 '(exit $classifyCode)' 는
+        # 문장이 아니라 사람에게 보여주는 값이므로 세면 안 된다.
+        for line in block.splitlines():
+            with self.subTest(line=line):
+                self.assertFalse(line.strip().startswith("exit "))
+
+    def test_classification_runs_before_publishing(self):
+        body = DAILY[DAILY.index("$ErrorActionPreference"):]
+        self.assertLess(body.index("scripts.classify_unsorted"),
+                        body.index("Invoke-Step '발행본 생성'"))
+
+    def test_classification_stderr_is_not_promoted_to_an_error(self):
+        # Invoke-Step 과 같은 함정이다 — 파이썬이 stderr 에 한 줄 쓰면 'Stop' 이
+        # 여기서 갱신을 죽인다.
+        idx = DAILY.index("scripts.classify_unsorted")
+        block = DAILY[idx - 400:idx + 200]
+        self.assertIn("$ErrorActionPreference = 'Continue'", block)
+        self.assertIn("finally { $ErrorActionPreference = $prevEap }", block)
 
 
 class NativeStderrIsNotAnErrorTests(unittest.TestCase):
