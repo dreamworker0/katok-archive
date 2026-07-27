@@ -483,6 +483,16 @@ def build_data(
 
     # 태그 표기를 통일해 `tags` 로 얹는다(보고서 원문은 손대지 않는다).
     taglib.attach_tags(threads_meta, participants)
+    # 제목이 곧 그 화제인데 태그에 빠진 것을 채운다 — 관계망에 이미 이름이 있는
+    # 앱·도구를 어휘로 쓴다. 태그로 찾을 때 그 주제가 새지 않게 하는 몫이다.
+    known_labels = [
+        n["label"] for n in (knowledge or {}).get("nodes", [])
+        if n.get("type") in ("app", "tool") and n.get("label")
+    ]
+    filled = taglib.backfill_from_titles(threads_meta, known_labels)
+    if filled:
+        print("[태그] 제목에 있는데 빠졌던 태그 %d건 채움 (앞 5개: %s)"
+              % (len(filled), ", ".join("%s←%s" % f for f in filled[:5])))
     # 보조 분류 — 한 주제를 여러 분류에서 찾게 하는 곁길. 주 분류는 그대로 하나다.
     cat_ids = {c["id"] for c in topics["categories"]}
     for tmeta in threads_meta:

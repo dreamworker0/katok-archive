@@ -86,6 +86,46 @@ def canonical_tags(tags: list[str], tag_map: dict[str, str]) -> list[str]:
     return out
 
 
+def backfill_from_titles(threads: list[dict], labels: list[str],
+                         aliases: dict[str, str] | None = None,
+                         min_len: int = 3) -> list[tuple[str, str]]:
+    """제목이 곧 그 화제인데 태그에 없으면 채운다. 채운 (주제 id, 태그) 목록.
+
+    태그는 보고서마다 따로 지어졌고 공통 어휘가 없었다. 그래서 '차량 운행일지
+    전체 코드 공개'의 태그가 오픈소스·깃허브·멀티테넌트뿐이고 정작
+    '차량운행일지'가 없다 — 태그로 찾으면 이 주제가 빠진다(실측 42건).
+
+    제목에 이름이 들어 있으면 그 주제는 그 화제를 **다루는** 것이다. 원문에
+    스쳐 언급된 것과 다르다 — 제목은 사람이 그 대화를 무엇이라 불렀는지다.
+    """
+    aliases = aliases if aliases is not None else load_aliases()
+    known = [l.strip() for l in labels if l and len(fold(l)) >= min_len]
+
+    # 채워 넣는 이름도 통일표를 거쳐야 한다. 안 그러면 관계망의 '차량 운행일지'가
+    # 통일해 둔 태그 '차량운행일지' 옆에 따로 서서 태그가 둘로 갈린다.
+    display: dict[str, str] = {}
+    for th in threads:
+        for t in th.get("tags") or []:
+            display.setdefault(fold(t), t)
+
+    def resolve(label: str) -> str:
+        key = fold(label)
+        return aliases.get(key) or display.get(key) or label
+
+    added: list[tuple[str, str]] = []
+    for th in threads:
+        title = fold(th.get("title") or "")
+        have = {fold(t) for t in (th.get("tags") or [])}
+        for label in known:
+            key = fold(label)
+            if key in title and key not in have:
+                name = resolve(label)
+                th.setdefault("tags", []).append(name)
+                have.add(key)
+                added.append((th["id"], name))
+    return added
+
+
 def person_names(participants: dict) -> set[str]:
     """참여자 이름(괄호 소속 제외)의 모음. '김종원(○○관)' → '김종원' 도 넣는다."""
     names: set[str] = set()

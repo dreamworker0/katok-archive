@@ -203,7 +203,8 @@
     // 요지의 태그도 누르면 그 화제의 주제만 보이게 한다. 장식으로 두면 눌러
     // 보고 아무 일도 안 일어나는데, 태그처럼 생긴 것은 누르게 되어 있다.
     var kw = (d.keywords || []).map(function (k) {
-      return '<button class="chip kw" data-kw="' + esc(k) + '">' + esc(k) + "</button>";
+      return '<button class="chip kw" data-kw="' + esc(k) + '" ' +
+        'title="이 태그가 붙은 주제만 보기">' + esc(k) + "</button>";
     }).join("");
     // 최근 대화가 위로 오도록 끝난 날짜 기준 내림차순. 날짜는 YYYY-MM-DD라 문자열 비교로 충분하다.
     var threadList = (d.threads || []).slice().sort(function (a, b) {
@@ -251,7 +252,10 @@
 
     var body =
       (kw ? '<div class="doc-kw">' + kw + "</div>" : "") +
-      (apps ? '<div class="doc-section"><h4>🧩 주요 결과물</h4><div class="app-list">' + apps + "</div></div>" : "") +
+      (apps ? '<div class="doc-section"><h4>🧩 주요 결과물</h4>' +
+        '<p class="doc-note">누르면 그 결과물이 <b>대화에 나온</b> 주제를 모두 봅니다 ' +
+        "(스쳐 언급된 것까지 포함). 태그로 정확히 좁히려면 위의 🏷️ 태그를 누르세요.</p>" +
+        '<div class="app-list">' + apps + "</div></div>" : "") +
       (people ? '<div class="doc-section"><h4>👥 활발한 참여자</h4><div class="people-row">' + people + "</div></div>" : "") +
       (linkHtml ? '<div class="doc-section"><h4>🔗 공유 링크</h4><div class="link-list">' + linkHtml + "</div></div>" : "") +
       (threads ? '<div class="doc-section thread-list"><h4>🧵 소속 대화 주제 ' + threadList.length +
@@ -297,7 +301,7 @@
    *  (요지 산문에만 나오는 표현)은 그때만 글자 검색으로 넘긴다. */
   function openKeyword(word) {
     var ids = TAG_THREADS[tagFold(word)];
-    if (ids && ids.length) pickThreads(ids, word);
+    if (ids && ids.length) pickThreads(ids, word, "tag");
     else runSearch(word);
   }
 
@@ -418,8 +422,8 @@
 
   /** 결과물 하나에 딸린 주제만 추린다. 검색어가 아니라 ID 로 고르므로
    *  보고서를 어떻게 고쳐 쓰든 결과가 흔들리지 않는다. */
-  function pickThreads(ids, label) {
-    state.pick = { ids: ids, label: label };
+  function pickThreads(ids, label, kind) {
+    state.pick = { ids: ids, label: label, kind: kind || "mention" };
     state.q = ""; state.nick = "";
     el.search.value = ""; el.filter.value = "";
     setView("timeline");
@@ -472,7 +476,7 @@
     Array.prototype.forEach.call(el.view.querySelectorAll("[data-tag]"), function (b) {
       b.onclick = function () {
         var ids = (b.getAttribute("data-ids") || "").split(",").filter(Boolean);
-        pickThreads(ids, "#" + b.getAttribute("data-tag"));
+        pickThreads(ids, b.getAttribute("data-tag"), "tag");
       };
     });
     var input = document.getElementById("tagFilter");
@@ -494,8 +498,14 @@
 
   function renderTimeline() {
     var rows = THREADS.filter(threadMatches);
+    /* 두 길이 서로 다른 규칙으로 돈다. 라벨이 같으면 무엇을 보고 있는지 알 수
+     * 없다 — '차량 운행일지'가 결과물 버튼으로는 6개(원문에 언급된 것), 태그로는
+     * 5개(태그가 붙은 것)로 다르게 나오는데 안내문이 같았다. */
     var pickBar = state.pick
-      ? '<div class="pick-bar">🧩 <b>' + esc(state.pick.label) + "</b> 이(가) 나온 주제 " +
+      ? '<div class="pick-bar">' +
+        (state.pick.kind === "tag"
+          ? "🏷️ 태그 <b>#" + esc(state.pick.label) + "</b> 가 붙은 주제 "
+          : "🧩 <b>" + esc(state.pick.label) + "</b> 이(가) 대화에 나온 주제 ") +
         rows.length + '개만 보고 있습니다 <button class="btn ghost" id="pickClear">' +
         "전체 보기</button></div>"
       : "";

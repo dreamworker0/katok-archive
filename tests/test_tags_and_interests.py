@@ -121,6 +121,34 @@ class InterestTests(unittest.TestCase):
         self.assertNotIn("잠깐", [p["nickname"] for p in out["people"]])
 
 
+class BackfillTests(unittest.TestCase):
+    """제목이 곧 그 화제인데 태그에 없으면 채운다."""
+
+    def test_title_subject_is_added_with_unified_spelling(self):
+        threads = [
+            {"id": "t-1", "title": "차량 운행일지 전체 코드 공개",
+             "tags": ["오픈소스", "깃허브"]},
+            {"id": "t-2", "title": "차량운행일지 무료 배포", "tags": ["차량운행일지"]},
+        ]
+        added = tags.backfill_from_titles(threads, ["차량 운행일지"], aliases={})
+        # 이미 붙은 주제는 건드리지 않는다
+        self.assertEqual([a[0] for a in added], ["t-1"])
+        # 띄어쓰기가 다른 이름으로 새 태그를 만들면 태그가 둘로 갈린다
+        self.assertIn("차량운행일지", threads[0]["tags"])
+        self.assertNotIn("차량 운행일지", threads[0]["tags"])
+
+    def test_alias_table_decides_the_added_spelling(self):
+        threads = [{"id": "t-1", "title": "구글 AI 스튜디오 무료 한도", "tags": []}]
+        tags.backfill_from_titles(threads, ["구글 AI 스튜디오"],
+                                  aliases={"구글ai스튜디오": "AI 스튜디오"})
+        self.assertEqual(threads[0]["tags"], ["AI 스튜디오"])
+
+    def test_short_labels_are_ignored(self):
+        threads = [{"id": "t-1", "title": "AI 쓰는 법", "tags": []}]
+        tags.backfill_from_titles(threads, ["AI"], aliases={})
+        self.assertEqual(threads[0]["tags"], [], "두 글자 이름은 아무 제목에나 걸린다")
+
+
 class DigestKeywordTests(unittest.TestCase):
     """요지 산문의 태그는 눌러서 갈 곳이 있어야 화면에 낸다."""
 
