@@ -550,7 +550,22 @@ def build_report_prompt(thread: dict, msgs: list[dict],
 - keywords 는 2~6개. 나중에 이 대화를 찾을 때 쓸 말(도구 이름, 개념, 결과물).
 - report 는 본문 산문. 사실만 쓰고, 대화에 없는 내용을 채우지 마세요.
 {length_rule}
-  링크·사진 자리표(![[...]])는 넣지 마세요 — 자료는 화면 아래에 따로 붙습니다.
+
+### 인용을 반드시 쓰세요 — 두 가지 이유가 있습니다
+- 결정적인 말은 **원문 그대로** 인용(`>`)으로 옮기세요. 한 편에 1~3개.
+  줄여 쓰지 말고 그 사람이 쓴 문장을 그대로 씁니다. 조사·말투·이모티콘까지.
+- 요약만 늘어놓은 글은 읽히지 않습니다. 실제 목소리가 한 번씩 들어와야 삽니다.
+- 그리고 **사진과 링크가 이 인용을 기준으로 본문 사이에 끼워집니다.** 인용이
+  없으면 자료가 전부 글 끝으로 밀려 글 따로 자료 따로가 됩니다.
+
+### 대화가 여러 국면으로 흘렀으면 절로 나누세요
+- `## 짧은 제목` 으로 나눕니다. 문제 제기 → 시도 → 막힌 곳 → 해결 같은 흐름이면
+  그대로 절이 됩니다. 5건 이하의 짧은 대화는 나누지 않아도 됩니다.
+- 정말 중요한 한두 곳만 `**굵게**`. 남용하면 아무것도 강조되지 않습니다.
+
+### 자리표는 쓰지 마세요
+  `![[...]]` 를 직접 넣지 마세요 — 사진·링크는 위 인용을 보고 자동으로 붙습니다.
+  직접 쓰면 없는 자료를 가리켜 화면이 깨집니다.
 
 ## 출력
 JSON 만, 코드펜스 없이:
@@ -712,7 +727,29 @@ def main() -> int:
     # 흔들리기만 하고 값은 계속 든다. 사람이 필요할 때 부르는 일이다.
     ap.add_argument("--rewrite-thin", type=int, metavar="N", default=0,
                     help="분류 대신, 대화량에 비해 얇은 보고서 N편을 다시 쓴다")
+    ap.add_argument("--rewrite-ids", metavar="ID,ID", default="",
+                    help="분류 대신, 지정한 주제의 보고서를 다시 쓴다 (t-216,t-182)")
     args = ap.parse_args()
+
+    if args.rewrite_ids:
+        topics = load_json(TOPICS)
+        threads = topics.get("threads", [])
+        want = [s.strip() for s in args.rewrite_ids.split(",") if s.strip()]
+        by_id = {t["id"]: t for t in threads}
+        missing = [i for i in want if i not in by_id]
+        if missing:
+            raise SystemExit("없는 주제: %s" % ", ".join(missing))
+        examples = [t for t in threads
+                    if not UNSORTED_RE.match(str(t.get("id") or ""))][:12]
+        # 분량 목표는 '얇다' 판정과 같은 기준을 쓴다. 여기서 따로 정하면 다시 쓴
+        # 보고서가 곧바로 얇다고 잡히는 일이 생긴다.
+        need = dict((t["id"], n) for t, n in find_thin_reports([by_id[i] for i in want]))
+        n = _write_reports([by_id[i] for i in want], args.model, examples,
+                           args.dry_run, args.timeout, min_by_id=need)
+        if n and not args.dry_run:
+            save_json(TOPICS, topics)
+        emit("REWRITTEN", n)
+        return 0
 
     if args.rewrite_thin:
         topics = load_json(TOPICS)
