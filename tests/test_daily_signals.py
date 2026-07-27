@@ -107,6 +107,35 @@ class RunnerStillGuardsPublishingTests(unittest.TestCase):
         self.assertEqual(order, sorted(order))
 
 
+class NativeStderrIsNotAnErrorTests(unittest.TestCase):
+    """성공한 명령이 스크립트를 죽이지 못하게 한다.
+
+    PowerShell 5.1 에서 `& $body 2>&1` 은 네이티브 exe 의 stderr 한 줄마다
+    NativeCommandError 를 만들고, $ErrorActionPreference = 'Stop' 이면 그것이 종료
+    오류가 된다. `python -m unittest` 는 진행 표시와 'OK' 를 모두 stderr 로 쓴다.
+
+    실측 2026-07-27: 237개가 전부 통과했는데 갱신이 '테스트' 단계에서 죽었고 로그에는
+    단계 제목만 남았다. 앞선 이틀은 새 메시지가 0건이라 발행 전에 끝나서 이 단계가
+    한 번도 돌지 않았고, 그래서 잠재 버그로 남아 있었다.
+    """
+
+    def test_step_runner_neutralizes_stop_around_native_calls(self):
+        block = DAILY[DAILY.index("function Invoke-Step"):][:1800]
+        self.assertIn("$ErrorActionPreference = 'Continue'", block)
+        self.assertIn("& $body 2>&1", block)
+
+    def test_preference_is_restored_even_if_the_step_throws(self):
+        block = DAILY[DAILY.index("function Invoke-Step"):][:1800]
+        self.assertIn("finally { $ErrorActionPreference = $prevEap }", block)
+
+    def test_success_is_still_judged_by_exit_code(self):
+        # stderr 를 무시하는 대신 종료 코드로 판단해야 한다. 둘 다 놓치면
+        # 실패한 단계를 성공으로 보고 반쪽 상태로 발행한다.
+        block = DAILY[DAILY.index("function Invoke-Step"):][:2200]
+        self.assertIn("$code = $LASTEXITCODE", block)
+        self.assertIn("$code -ne 0", block)
+
+
 class SingleRunLockTests(unittest.TestCase):
     """실행 경로가 둘이 됐다 — 23:40 스케줄러와 관리 탭의 '지금 갱신'.
 

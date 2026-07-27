@@ -91,7 +91,23 @@ try {
 function Invoke-Step {
     param([string]$name, [scriptblock]$body)
     Say "--- $name ---"
-    $out = & $body 2>&1
+
+    # 네이티브 명령의 stderr 를 오류로 승격시키지 않는다.
+    #
+    # PowerShell 5.1 에서 `& $body 2>&1` 은 네이티브 exe 가 stderr 에 쓴 줄마다
+    # NativeCommandError 레코드를 만든다. $ErrorActionPreference = 'Stop' 이면 그것이
+    # 종료 오류가 되어, 명령이 0 으로 성공했어도 스크립트가 그 자리에서 죽는다.
+    #
+    # `python -m unittest` 는 진행 표시(......)와 'OK' 를 모두 stderr 로 쓴다. 실측
+    # 2026-07-27: 237개 테스트가 전부 통과했는데 갱신이 '테스트' 단계에서 죽었고,
+    # 로그에는 단계 제목만 남아 원인이 보이지 않았다. 이 단계는 그날까지 무인
+    # 실행에서 한 번도 돌지 않았다 — 앞선 이틀은 새 메시지가 0건이라 발행 전에
+    # 종료됐다. 그래서 잠재 버그로 남아 있었다.
+    #
+    # 성패는 stderr 가 아니라 종료 코드로 판단한다 (바로 아래에서 그렇게 한다).
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $out = & $body 2>&1 } finally { $ErrorActionPreference = $prevEap }
     $code = $LASTEXITCODE
     foreach ($l in $out) { Say "    $l" }
     if ($null -ne $code -and $code -ne 0) {
