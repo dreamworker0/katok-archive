@@ -27,6 +27,15 @@ service firebase.storage {
       allow write: if false;
     }
 
+    // 갤러리용 작은 사진. 원본과 폴더를 갈라 둔 이유는 두 가지다 —
+    // assets/images 는 '원본 하나당 파일 하나' 라는 성질을 지켜야 하고, 경로로
+    // 나누면 무엇이 원본이고 무엇이 파생물인지 규칙만 봐도 안다.
+    // 조건은 원본과 같다. 작은 사진도 대화 내용이다.
+    match /thumbs/{allPaths=**} {
+      allow read: if isMember();
+      allow write: if false;
+    }
+
     // 대화방에서 공유된 첨부 파일. 이미지와 같은 조건이다.
     // 업로드할 때 contentDisposition: attachment 를 붙여 브라우저가 실행하지 않고
     // 내려받게 한다 — html 첨부가 이 출처에서 실행되면 곤란하다.

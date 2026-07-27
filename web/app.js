@@ -648,8 +648,11 @@
     var imgs = [], files = [];
     rows.forEach(function (m) {
       if (m.kind === "image" && m.images) {
-        m.images.forEach(function (src) {
-          imgs.push('<img data-img="' + esc(src) + '" alt="" title="' +
+        var th = m.thumbs || m.images;
+        m.images.forEach(function (src, i) {
+          // 칸에는 작은 사진, 누르면 원본(data-full)
+          imgs.push('<img data-img="' + esc(th[i] || src) +
+            '" data-full="' + esc(src) + '" alt="" title="' +
             esc(m.nickname + " · " + m.date) + '" />');
         });
       } else if (m.kind === "file") {
@@ -901,9 +904,10 @@
     MEDIA.forEach(function (m) {
       if (m.kind !== "image" || !m.images || !m.images.length) return;
       if (state.nick && m.nickname !== state.nick) return;
-      m.images.forEach(function (src) {
-        items.push({ src: src, nick: m.nickname, date: m.date, time: m.time,
-                     tid: m.thread_id });
+      var th = m.thumbs || m.images;
+      m.images.forEach(function (src, i) {
+        items.push({ src: th[i] || src, full: src, nick: m.nickname,
+                     date: m.date, time: m.time, tid: m.thread_id });
       });
     });
     if (!items.length) {
@@ -923,6 +927,7 @@
       '<div class="gallery' + (list ? " as-list" : "") + '">'];
     items.forEach(function (it) {
       html.push('<figure data-jump="t-' + esc(it.tid || "") + '"><img data-img="' + esc(it.src) +
+        '" data-full="' + esc(it.full || it.src) +
         '" alt="" /><figcaption>' + esc(it.date) + " · " + esc(it.nick) + "</figcaption></figure>");
     });
     html.push("</div>");
@@ -1530,9 +1535,15 @@
     if (window.ArchiveImages) window.ArchiveImages.observe(scope);
   }
   function openLightbox(img) {
+    // 크게 볼 때는 원본이어야 한다. 화면의 칸에 걸린 것은 갤러리용 작은 사진이라
+    // 그 blob 을 그대로 띄우면 흐리게 보인다. data-full 이 원본 경로다.
+    var full = img.getAttribute("data-full");
     var path = img.getAttribute("data-img");
-    // 이미 받아둔 blob URL 이 있으면 그대로, 없으면 경로로 해석
-    if (img.src) {
+    if (full && window.ArchiveImages) {
+      // 원본이 뜨기 전까지는 작은 사진을 보여 준다 — 빈 화면보다 낫다
+      if (img.src) el.lightboxImg.src = img.src;
+      window.ArchiveImages.urlFor(full).then(function (u) { el.lightboxImg.src = u; });
+    } else if (img.src) {
       el.lightboxImg.src = img.src;
     } else if (path && window.ArchiveImages) {
       window.ArchiveImages.urlFor(path).then(function (u) { el.lightboxImg.src = u; });
@@ -1592,8 +1603,10 @@
       // 작은 썸네일만으로도 부족해서 — 클릭하면 원본 크기로 띄운다.
       body = m.images && m.images.length
         ? '<span class="mine-thumbs">' +
-          m.images.map(function (src) {
-            return '<img class="mine-thumb" data-img="' + esc(src) +
+          m.images.map(function (src, i) {
+            var th = (m.thumbs || m.images)[i] || src;
+            return '<img class="mine-thumb" data-img="' + esc(th) +
+              '" data-full="' + esc(src) +
               '" alt="" title="클릭하면 크게 봅니다" />';
           }).join("") +
           '<span class="mine-zoom">클릭하면 크게 보기</span></span>'

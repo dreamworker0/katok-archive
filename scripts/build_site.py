@@ -28,6 +28,7 @@ from scripts.topic_reports import (
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
 ASSETS_IMAGES = ROOT / "assets" / "images"
+ASSETS_THUMBS = ROOT / "assets" / "thumbs"
 WEB = ROOT / "web"
 SITE = ROOT / "site"
 
@@ -229,6 +230,7 @@ def build_media(messages: list[dict]) -> list[dict]:
         item = None
         if m.get("images"):
             item = {"kind": "image", "images": m["images"],
+                    "thumbs": m.get("thumbs") or m["images"],
                     "count": m.get("image_count") or len(m["images"])}
         elif m.get("file"):
             item = {"kind": "file", "name": m["file"]["name"], "file": m["file"]}
@@ -292,13 +294,19 @@ def build_data(
         if m["kind"] == "image":
             img = image_by_id.get(m.get("image_id"))
             paths = []
+            # 갤러리에 쓸 작은 사진. 원본과 짝을 맞춰 같은 길이로 둔다 — 작은 사진이
+            # 없는 자리(이미 가벼운 원본)는 원본 경로를 그대로 넣는다. 길이가 어긋나면
+            # 화면이 몇 번째 사진의 것인지 알 수 없게 된다.
+            thumbs = []
             if img:
                 for asset in img.get("assets", []):
                     lp = asset.get("local_path")
                     if lp:
                         # 원본 경로는 'assets/images/...' → 사이트 기준 상대경로 그대로 사용
                         paths.append(lp.replace("\\", "/"))
+                        thumbs.append((asset.get("thumb_path") or lp).replace("\\", "/"))
             item["images"] = paths
+            item["thumbs"] = thumbs
             # '유실' 과 '수집 대기' 를 갈라 둔다. 옛 백업에서 온 사진 중에는 그
             # 기기가 원본을 받지 못해 파일이 영영 없는 것이 있다. 그걸 대기로
             # 두면 채워질 리 없는 항목이 목록에 남아 남은 일이 얼마인지 흐려진다.
@@ -490,6 +498,10 @@ def write_site(data: dict) -> None:
     if ASSETS_IMAGES.exists():
         dest = SITE / "assets" / "images"
         shutil.copytree(ASSETS_IMAGES, dest)
+    # 갤러리용 작은 사진. 빠뜨리면 미리보기에서 갤러리가 통째로 비어 보이는데,
+    # 배포본은 Storage 에서 받으므로 로컬에서만 그렇다 — 알아채기 어렵다.
+    if ASSETS_THUMBS.exists():
+        shutil.copytree(ASSETS_THUMBS, SITE / "assets" / "thumbs")
 
 
 PERSON_VALUE_CAP = 300     # 발언이 아무리 많아도 노드가 화면을 잡아먹지 않게

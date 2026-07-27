@@ -322,10 +322,12 @@ async function uploadImages(bucket, images, remoteSize) {
     // assets/images/2026-05/x.png -> images/2026-05/x.png
     const dest = rel.replace(/^assets\//, "");
     const ext = path.extname(rel).toLowerCase();
+    // 갤러리용 작은 사진은 webp 다. 타입을 틀리게 주면 브라우저가 그림으로 읽지 않는다.
+    const TYPES = { ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif" };
     await bucket.upload(path.join(ROOT, rel), {
       destination: dest,
       metadata: {
-        contentType: ext === ".png" ? "image/png" : "image/jpeg",
+        contentType: TYPES[ext] || "image/jpeg",
         cacheControl: "private, max-age=86400",
       },
     });
@@ -435,8 +437,12 @@ async function main() {
     const bucket = admin.storage().bucket();
     // 목록을 한 번 받아 '건너뛸지'와 '고아인지'에 함께 쓴다
     const imgRemote = await remoteIndex(bucket, "images/");
+    // 갤러리용 작은 사진은 thumbs/ 밑에 따로 있다. 이 목록을 안 받으면 '이미 있음'
+    // 판정을 못 해 매일 밤 312장을 다시 올린다.
+    const thumbRemote = await remoteIndex(bucket, "thumbs/");
     const fileRemote = await remoteIndex(bucket, "files/");
-    await uploadImages(bucket, images, imgRemote.size);
+    const imgSize = new Map([...imgRemote.size, ...thumbRemote.size]);
+    await uploadImages(bucket, images, imgSize);
     if (files.length) await uploadFiles(bucket, files, fileRemote.size);
 
     // 발행본에서 빠진 것은 저장소에서도 지운다 (삭제 요청·수집 거부 반영)
@@ -444,6 +450,7 @@ async function main() {
       console.log("  --keep-orphans: 저장소 정리를 건너뜁니다.");
     } else {
       await pruneOrphans(bucket, "images/", images, "images", imgRemote.objects);
+      await pruneOrphans(bucket, "thumbs/", images, "thumbs", thumbRemote.objects);
       await pruneOrphans(bucket, "files/", files, "files", fileRemote.objects);
     }
   }

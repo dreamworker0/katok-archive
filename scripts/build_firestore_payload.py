@@ -309,7 +309,9 @@ def build_payload() -> dict:
     used_images: list[str] = []
     seen_img = set()
     for m in data["messages"]:
-        for p in m.get("images", []) or []:
+        # 원본과 갤러리용 작은 사진을 함께 올린다. 화면은 칸에 작은 것을 걸고
+        # 누를 때 원본을 받으므로, 둘 중 하나만 올라가면 그 자리가 비어 보인다.
+        for p in (m.get("images") or []) + (m.get("thumbs") or []):
             if p not in seen_img:
                 seen_img.add(p)
                 used_images.append(p)

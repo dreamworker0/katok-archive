@@ -85,3 +85,7 @@ Thumbs.db
 #   Kakaotalk_Chat_바이브코딩,…_20260721_142500-…-1-001    (483MB, 파일 309개)
 # 대소문자도 'Chats'/'Chat' 도 달랐다. 좁게 잡으면 다음 폴더가 또 빠져나간다.
 /assets/[Kk]akao[Tt]alk_*/
+
+# 갤러리용 작은 사진 — 원본에서 다시 만들 수 있는 파생물이다.
+# (python -m scripts.build_thumbnails)
+/assets/thumbs/

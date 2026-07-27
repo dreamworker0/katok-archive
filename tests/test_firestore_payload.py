@@ -74,8 +74,15 @@ class PayloadShapeTest(unittest.TestCase):
             self.assertLess(size, 1_000_000, "%s 문서가 1MiB 를 넘음" % email)
 
     def test_images_listed_exist_on_disk(self):
+        """올릴 목록은 두 뿌리 중 하나여야 한다 — 원본과 갤러리용 작은 사진.
+
+        경로 뿌리를 좁게 붙잡는 이유: storage.rules 가 images/** 와 thumbs/** 만
+        열어 둔다. 다른 뿌리를 올리면 규칙이 막아 화면에서 403 이 나고, 그건
+        배포한 뒤에야 드러난다.
+        """
         for rel in self.payload["images"]:
-            self.assertTrue(rel.startswith("assets/images/"), rel)
+            self.assertTrue(
+                rel.startswith(("assets/images/", "assets/thumbs/")), rel)
             self.assertTrue((ROOT / rel).exists(), rel)
 
     def test_graph_bulk_docs_present(self):
