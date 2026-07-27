@@ -12,8 +12,9 @@ assets/ 는 수정하지 않으며, 재실행 시 site/ 를 새로 만든다.
 from __future__ import annotations
 
 import json
+import math
 import shutil
-from collections import Counter, OrderedDict
+from collections import Counter, OrderedDict, defaultdict
 from pathlib import Path
 
 from scripts.topic_reports import (
@@ -297,7 +298,12 @@ def build_data(
                         # 원본 경로는 'assets/images/...' → 사이트 기준 상대경로 그대로 사용
                         paths.append(lp.replace("\\", "/"))
             item["images"] = paths
-            item["image_pending"] = len(paths) == 0
+            # '유실' 과 '수집 대기' 를 갈라 둔다. 옛 백업에서 온 사진 중에는 그
+            # 기기가 원본을 받지 못해 파일이 영영 없는 것이 있다. 그걸 대기로
+            # 두면 채워질 리 없는 항목이 목록에 남아 남은 일이 얼마인지 흐려진다.
+            lost = bool(img and img.get("status") == "lost")
+            item["image_lost"] = lost
+            item["image_pending"] = len(paths) == 0 and not lost
             item["image_count"] = (
                 m.get("image_count")
                 or (img.get("expected_asset_count") if img else None)
@@ -485,12 +491,81 @@ def write_site(data: dict) -> None:
         shutil.copytree(ASSETS_IMAGES, dest)
 
 
+PERSON_VALUE_CAP = 300     # 발언이 아무리 많아도 노드가 화면을 잡아먹지 않게
+
+
+def sync_person_nodes(knowledge: dict, participants: dict, topics: dict) -> list[str]:
+    """사람 노드를 참여자 명단과 맞춘다.
+
+    사람 노드는 원래 LLM 이 만들었는데, 그러면 새 참여자가 들어올 때마다 노드가
+    빠져 그래프에 구멍이 난다. 사람은 발언량과 분류만 있으면 정해지므로 코드가
+    맡는 편이 맞다 — LLM 은 '이 대화가 어느 주제인가' 처럼 코드가 못 하는 것만
+    한다. 발언 수가 바뀌면 크기도 같이 고친다.
+
+    반환: 새로 만든 사람 이름들
+    """
+    counts = {p["nickname"]: p["message_count"] for p in participants["participants"]}
+    category_of = {
+        mid: t["category"] for t in topics["threads"] for mid in t["message_ids"]
+    }
+
+    # 미분류(chat)는 '아직 안 정해졌다'는 뜻이라 대표 분류로 쓰면 안 된다.
+    # 분류가 끝나면 제 분류로 옮겨가는데, 그때 사람 노드가 통째로 흔들린다.
+    by_person: dict[str, Counter] = defaultdict(Counter)
+    for m in _read_jsonl(OUTPUT / "messages.jsonl"):
+        category = category_of.get(m["id"])
+        if category and category != "chat":
+            by_person[m["nickname"]][category] += 1
+
+    nodes = [n for n in knowledge.get("nodes", []) if n["type"] != "person"]
+    existing = {n["label"]: n for n in knowledge.get("nodes", []) if n["type"] == "person"}
+    added = []
+
+    for nickname, count in counts.items():
+        node = existing.get(nickname)
+        if node is None:
+            dominant = by_person[nickname].most_common(1)
+            node = {
+                "id": "person:" + nickname,
+                "type": "person",
+                "label": nickname,
+                "category": dominant[0][0] if dominant else "members",
+            }
+            added.append(nickname)
+        node["messages"] = count
+        node["value"] = 6 + math.sqrt(min(count, PERSON_VALUE_CAP))
+        nodes.append(node)
+
+    knowledge["nodes"] = nodes
+
+    # 노드만 만들고 끝내면 어디에도 안 붙은 점이 그래프에 떠 있다. 사람은 최소한
+    # 자기가 가장 많이 말한 주제에는 이어져 있어야 한다.
+    # `added` 로 판단하면 안 된다. 노드를 만든 실행에서 엣지 쓰기가 빠지면 다음
+    # 실행부터는 '새로 만든 사람' 이 없어 영영 고쳐지지 않는다. 늘 전부 훑는다.
+    edges = knowledge.setdefault("edges", [])
+    connected = {e["source"] for e in edges} | {e["target"] for e in edges}
+    for node in nodes:
+        if node["type"] != "person" or node["id"] in connected:
+            continue
+        edges.append({"source": node["id"], "type": "interested",
+                      "target": "topic:" + node["category"]})
+
+    return added
+
+
 def main() -> None:
     messages = _read_jsonl(OUTPUT / "messages.jsonl")
     images = _read_jsonl(OUTPUT / "images.jsonl")
     participants = _read_json(OUTPUT / "participants.json")
     topics = _read_json(OUTPUT / "topics.json")
     knowledge = _read_json(OUTPUT / "knowledge.json")
+    added = sync_person_nodes(knowledge, participants, topics)
+    # 노드를 새로 만들지 않았어도 발언 수는 바뀌었을 수 있다. 늘 써서 output 과
+    # 화면이 어긋나지 않게 둔다.
+    (OUTPUT / "knowledge.json").write_text(
+        json.dumps(knowledge, ensure_ascii=False, indent=2), encoding="utf-8")
+    if added:
+        print("사람 노드 %d명 추가: %s" % (len(added), ", ".join(added)))
     digest_prose = _read_json(OUTPUT / "topic-digests.json")
     # 첨부 원본은 나중에 사람이 모아 넣는다. 없으면 이름만 남는다.
     files_path = OUTPUT / "files.jsonl"

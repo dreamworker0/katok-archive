@@ -76,3 +76,7 @@ Thumbs.db
 /output/
 /assets/images/
 /KakaoTalk_*.txt
+# 폴더째 내보낸 것 (KakaoTalkChats.txt + 미디어 원본). 위 /KakaoTalk_*.txt 는
+# 파일 하나만 잡아서 이 폴더가 그물을 빠져나갔다 — 실측 2026-07-27, 원본 대화와
+# 사진 77개(43MB)가 커밋 대기 상태로 잡혔다.
+/assets/KakaoTalk_Chats_*/

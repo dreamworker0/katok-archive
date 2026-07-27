@@ -176,7 +176,9 @@ def build_my_messages(messages: list[dict], members: list[dict]) -> dict[str, li
             items.extend(by_nickname.get(name, []))
         if not items:
             continue
-        items.sort(key=lambda x: x["id"])
+        # 시각으로 정렬한다. ID 순이 아니다 — 옛 백업을 합치면(backfill_export)
+        # 2025년 글이 큰 번호를 받아, ID 로 줄세우면 본인 글이 뒤죽박죽 보인다.
+        items.sort(key=lambda x: (x.get("date") or "", x.get("time") or "", x["id"]))
         out[mem["email"]] = items
     return out
 

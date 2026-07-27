@@ -71,11 +71,14 @@ def sha256_of(path: Path) -> str:
 # ───────────────────────── 증분 추출 ─────────────────────────
 
 def next_message_number(existing: list[dict]) -> int:
-    """'msg-001509' → 1510"""
-    if not existing:
-        return 1
-    last = existing[-1]["id"]
-    return int(last.split("-")[1]) + 1
+    """'msg-001509' → 1510
+
+    마지막 줄이 아니라 **전체 최댓값**을 본다. 옛 백업을 합치면(backfill_export)
+    파일이 시각 순으로 다시 정렬되면서 번호가 큰 레코드가 중간으로 간다. 그때
+    마지막 줄을 믿으면 이미 쓴 번호를 다시 내주어 ID 가 겹친다.
+    """
+    numbers = [int(m["id"].split("-")[1]) for m in existing if m.get("id")]
+    return max(numbers) + 1 if numbers else 1
 
 
 def find_new_messages(parsed_messages, existing: list[dict]) -> tuple[list[dict], dict]:

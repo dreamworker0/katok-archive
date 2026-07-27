@@ -50,7 +50,7 @@ class BuildDataTest(unittest.TestCase):
             self.assertIn(m["category"], cats)
 
     def test_image_join_downloaded_vs_pending(self):
-        img_status = {i["image_id"]: i for i in self.images}
+        img_status = {i["message_id"]: i for i in self.images}
         n_with_files = 0
         for m in self.data["messages"]:
             if m["kind"] != "image":
@@ -60,11 +60,17 @@ class BuildDataTest(unittest.TestCase):
             if m["images"]:
                 n_with_files += 1
                 self.assertFalse(m["image_pending"])
+                self.assertFalse(m["image_lost"])
                 for p in m["images"]:
                     self.assertTrue(p.startswith("assets/images/"))
                     self.assertTrue((ROOT / p).exists(), p)
             else:
-                self.assertTrue(m["image_pending"])
+                # 파일이 없는 사진은 두 갈래다. '수집 대기'는 언젠가 채워지고,
+                # '유실'은 원본이 영영 없다(옛 백업에서 온 <사진 읽지 않음>).
+                # 둘을 한 상태로 뭉치면 남은 수집 일감을 셀 수 없다.
+                lost = img_status[m["id"]]["status"] == "lost"
+                self.assertEqual(m["image_lost"], lost, m["id"])
+                self.assertEqual(m["image_pending"], not lost, m["id"])
         # 다운로드/부분 상태 레코드 수와 파일 보유 메시지 수 정합
         downloaded_records = [
             i for i in self.images if i.get("assets")

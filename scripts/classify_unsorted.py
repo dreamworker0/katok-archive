@@ -43,6 +43,9 @@
     python -m scripts.classify_unsorted --dry-run    # 호출은 하고 파일은 안 씀
     python -m scripts.classify_unsorted --model sonnet   # 더 싸게
     python -m scripts.classify_unsorted --no-graph   # 관계 그래프는 건드리지 않음
+
+    옛 백업을 합친 뒤처럼 미분류가 수백 건 밀려 있을 때만:
+    python -m scripts.classify_unsorted --max 25 --timeout 900
 """
 from __future__ import annotations
 
@@ -181,11 +184,17 @@ def build_prompt(msgs: list[dict], categories: list[dict],
   새로 만들지 말고, edges 에서 그 id 를 그대로 참조하세요.
 - 사람(person) 노드는 만들지 마세요. 참여자는 다른 곳에서 자동으로 관리됩니다.
   기존 사람을 edge 에서 "person:닉네임" 으로 참조하는 것은 됩니다.
-- 새 node 는 이렇게 씁니다 (네 필드 모두 필수):
+- 새 node 는 이렇게 씁니다 (다섯 필드 모두 필수):
   · id       "app:영문-소문자-하이픈" 또는 "tool:영문-소문자-하이픈" (한글·공백 금지)
   · type     app | tool
   · category 위 카테고리 id 중 하나
   · label    화면에 보일 이름 (한글 가능)
+  · query    **위 대화에 실제로 그대로 적혀 있는** 짧은 말. 화면이 이 말로 원문을
+             훑어 노드 크기를 정하므로, 없는 말을 쓰면 그 노드는 가장 작게 나온다.
+             · 대화에 "커서" 라고만 나오면 query 는 "커서" 다. "커서(Cursor)" 가 아니다.
+             · '앱', '웹앱', '도구' 같은 꾸밈말은 붙이지 않는다.
+             · '사진', '관리', '깃허브' 처럼 아무 데나 나오는 일반 낱말은 쓰지 않는다.
+               그런 말밖에 없으면 label 을 그대로 쓴다 — 크기를 뻥튀기는 것보다 낫다.
 - edge.type 은 made | uses | belongs | interested 중 하나.
   source/target 은 "person:닉네임", "app:...", "tool:...", "topic:카테고리id".
 - 확실하지 않으면 빈 배열로 두세요. 틀린 노드보다 없는 편이 낫습니다.
@@ -193,11 +202,11 @@ def build_prompt(msgs: list[dict], categories: list[dict],
 ## 출력
 JSON 만 출력하세요. 산문·설명·코드펜스 없이 이 형태 그대로:
 
-{{"threads":[{{"category":"ai-tools","title":"제목","summary":"요지 한 문장","keywords":["키워드1","키워드2"],"report":"본문 산문. 여러 문장이어도 됩니다.","message_ids":["msg-001510"]}}],"graph":{{"nodes":[{{"id":"tool:claude-p","type":"tool","category":"ai-tools","label":"Claude -p"}}],"edges":[{{"source":"person:김종원","target":"tool:claude-p","type":"uses"}}]}}}}
+{{"threads":[{{"category":"ai-tools","title":"제목","summary":"요지 한 문장","keywords":["키워드1","키워드2"],"report":"본문 산문. 여러 문장이어도 됩니다.","message_ids":["msg-001510"]}}],"graph":{{"nodes":[{{"id":"tool:claude-p","type":"tool","category":"ai-tools","label":"Claude -p","query":"claude -p"}}],"edges":[{{"source":"person:김종원","target":"tool:claude-p","type":"uses"}}]}}}}
 """
 
 
-def call_claude(prompt: str, model: str) -> str | None:
+def call_claude(prompt: str, model: str, timeout: int = TIMEOUT_SEC) -> str | None:
     """claude -p 를 호출해 결과 문자열을 돌려준다. 실패하면 None.
 
     도구·MCP 를 끊는다 — 이 일은 파일을 읽거나 명령을 돌릴 필요가 없고, 도구
@@ -218,13 +227,13 @@ def call_claude(prompt: str, model: str) -> str | None:
     try:
         r = subprocess.run(
             cmd, input=prompt, capture_output=True, text=True, encoding="utf-8",
-            timeout=TIMEOUT_SEC, cwd=str(ROOT),
+            timeout=timeout, cwd=str(ROOT),
         )
     except FileNotFoundError:
         print("claude CLI 를 찾을 수 없습니다 — 분류를 건너뜁니다.")
         return None
     except subprocess.TimeoutExpired:
-        print(f"분류가 {TIMEOUT_SEC}초를 넘겨 포기합니다 — 미분류로 남깁니다.")
+        print(f"분류가 {timeout}초를 넘겨 포기합니다 — 미분류로 남깁니다.")
         return None
 
     if r.returncode != 0:
@@ -531,7 +540,7 @@ JSON 만, 코드펜스 없이:
 
 def fill_missing_reports(threads: list[dict], model: str,
                          examples: list[dict], dry_run: bool,
-                         limit: int = 5) -> int:
+                         limit: int = 5, timeout: int = TIMEOUT_SEC) -> int:
     """보고서가 없는 스레드에 보고서를 써 넣는다. 쓴 편수를 돌려준다.
 
     왜 필요한가: 보고서 쓰기가 한 번 실패하면 그 주제는 태그도 본문도 없이 영구히
@@ -560,7 +569,7 @@ def fill_missing_reports(threads: list[dict], model: str,
             continue
         raw = sum(len(m.get("text") or "") for m in msgs)
         data = parse_reply(call_claude(
-            build_report_prompt(t, msgs, examples), model) or "")
+            build_report_prompt(t, msgs, examples), model, timeout) or "")
         if not data:
             print(f"  건너뜀({t['id']}): 보고서 결과를 받지 못했습니다.")
             continue
@@ -610,6 +619,13 @@ def main() -> int:
                     help=f"claude -p 에 넘길 모델 (기본: {DEFAULT_MODEL})")
     ap.add_argument("--no-graph", action="store_true",
                     help="관계 그래프는 건드리지 않는다")
+    # 아래 두 값의 기본치는 '하루에 몇 건'을 전제로 잡혀 있다. 옛 백업을 합친 뒤처럼
+    # 수백 건이 한꺼번에 밀려 있으면 한 번의 호출이 훨씬 무거워져 상한에 걸린다.
+    # 매일 실행의 기본값은 건드리지 않고, 몰아서 할 때만 늘려 쓴다.
+    ap.add_argument("--timeout", type=int, default=TIMEOUT_SEC,
+                    help=f"claude -p 한 번의 제한 시간(초) (기본: {TIMEOUT_SEC})")
+    ap.add_argument("--max", type=int, default=MAX_MESSAGES_PER_RUN, dest="max_messages",
+                    help=f"한 번에 분류할 메시지 수 (기본: {MAX_MESSAGES_PER_RUN})")
     args = ap.parse_args()
 
     topics = load_json(TOPICS)
@@ -627,7 +643,7 @@ def main() -> int:
         # 여기서 끝난다 — 조용한 날 LLM 호출 0회가 비용 억제의 핵심이다.
         print("미분류 스레드가 없습니다.")
         filled = fill_missing_reports(threads, args.model, examples,
-                                      args.dry_run)
+                                      args.dry_run, timeout=args.timeout)
         if filled and not args.dry_run:
             save_json(TOPICS, topics)
         emit("CLASSIFIED", filled)
@@ -639,11 +655,11 @@ def main() -> int:
             if mid not in target_ids:
                 target_ids.append(mid)
 
-    capped = len(target_ids) > MAX_MESSAGES_PER_RUN
+    capped = len(target_ids) > args.max_messages
     if capped:
         print(f"미분류 {len(target_ids)}건 — 이번 실행은 오래된 "
-              f"{MAX_MESSAGES_PER_RUN}건만 하고 나머지는 다음 실행이 이어서 합니다.")
-        target_ids = target_ids[:MAX_MESSAGES_PER_RUN]
+              f"{args.max_messages}건만 하고 나머지는 다음 실행이 이어서 합니다.")
+        target_ids = target_ids[:args.max_messages]
 
     msgs = read_messages(set(target_ids))
     if len(msgs) != len(target_ids):
@@ -657,7 +673,7 @@ def main() -> int:
                               if KNOWLEDGE.exists() else [])
                    if n.get("type") in ("app", "tool")]
     prompt = build_prompt(msgs, categories, examples, known_nodes)
-    raw = call_claude(prompt, args.model)
+    raw = call_claude(prompt, args.model, args.timeout)
     data = parse_reply(raw) if raw else None
     if data is None:
         print("분류 결과를 받지 못했습니다 — 미분류로 남깁니다(갱신은 계속됩니다).")
@@ -751,7 +767,8 @@ def main() -> int:
           f"보고서 {wrote}편")
 
     # 이번에 못 쓴 보고서와 예전에 빠진 보고서를 함께 메꾼다.
-    filled = fill_missing_reports(rebuilt, args.model, examples, False)
+    filled = fill_missing_reports(rebuilt, args.model, examples, False,
+                                  timeout=args.timeout)
     if filled:
         save_json(TOPICS, topics)
         print(f"밀린 보고서 {filled}편을 채웠습니다.")

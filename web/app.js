@@ -1598,7 +1598,9 @@
           }).join("") +
           '<span class="mine-zoom">클릭하면 크게 보기</span></span>'
         : '<span class="mine-muted">🖼 사진' +
-          (m.image_count > 1 ? " " + m.image_count + "장" : "") + " (수집 대기)</span>";
+          (m.image_count > 1 ? " " + m.image_count + "장" : "") +
+          // 유실은 기다려도 오지 않는다. 대기라고 쓰면 언젠가 채워질 것처럼 읽힌다.
+          (m.image_lost ? " (원본 없음)" : " (수집 대기)") + "</span>";
     } else if (kind === "file") {
       // 파일은 이름만으로 내용을 알 수 없다. 열어보고 지울 수 있어야 한다.
       var fname = m.file ? m.file.name : (m.text || "").replace(/^파일:\s*/, "");
