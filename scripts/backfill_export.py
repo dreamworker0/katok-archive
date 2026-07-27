@@ -41,6 +41,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import mimetypes
+import os
 import re
 import shutil
 from collections import Counter, defaultdict
@@ -49,7 +51,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from scripts import build_site, collection_policy
-from scripts.kakao_parser import parse_chat
+from scripts.kakao_parser import URL_RE, parse_chat
 
 KST = timezone(timedelta(hours=9))
 ROOT = Path(__file__).resolve().parent.parent
@@ -66,6 +68,11 @@ UNSORTED_CATEGORY = "chat"
 UNSORTED_ID = "t-unsorted-%s-01"
 
 WS_RE = re.compile(r"\s+")
+# 내보내기 판마다 사진·이모티콘 표시를 본문 앞에 붙여 준다. 실측 2026-07-27:
+#   PC        "출석이랑 물품 수령 등을 …"
+#   점 구분   "이모티콘 출석이랑 물품 수령 등을 …"
+# 같은 글인데 접두어 때문에 새 글로 잡혀 중복이 된다.
+PREFIX_RE = re.compile(r"^(?:이모티콘|사진|동영상)\s+")
 
 
 def norm_text(value: str | None) -> str:
@@ -75,6 +82,11 @@ def norm_text(value: str | None) -> str:
     비교하면 같은 글이 새 글로 잡힌다.
     """
     return WS_RE.sub(" ", value or "").strip()
+
+
+def content_key(value: str | None) -> str:
+    """중복 판정용 열쇠. 공백과 판별 접두어를 지운 본문."""
+    return WS_RE.sub(" ", PREFIX_RE.sub("", norm_text(value))).strip()
 
 
 def sha256_of(path: Path) -> str:
@@ -94,6 +106,7 @@ class MergePlan:
     old: list = field(default_factory=list)        # 아카이브 시작 이전 — 전부 받음
     overlap: list = field(default_factory=list)    # 겹치는 구간에서 건진 글
     media_links: list = field(default_factory=list)  # (기존 image_id, 파일명) 이어붙이기
+    repairs: list = field(default_factory=list)    # (기존 id, 온전한 본문) 잘림 복구
     skipped: Counter = field(default_factory=Counter)
 
     @property
@@ -122,13 +135,27 @@ def plan_merge(parsed_messages, existing: list[dict]) -> MergePlan:
         return plan
 
     archive_start = existing[0]["timestamp"]
-    exact = {(e["timestamp"], e["nickname"], norm_text(e["text"])) for e in existing}
+    exact = {(e["timestamp"], e["nickname"], content_key(e["text"])) for e in existing}
+    # 표시명을 뺀 열쇠도 만든다. 카톡에서 이름을 바꾸면 같은 글이 다른 사람 것으로
+    # 보인다 — 실측 2026-07-27: '다온종합사회복지관' 이 '임태오' 으로 바뀌어 그
+    # 사람 글 전부가 새 글로 잡혔다. 그냥 넣으면 중복에 유령 참여자까지 생긴다.
+    same_text = {(e["timestamp"], content_key(e["text"])) for e in existing}
     by_slot: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for e in existing:
         by_slot[(e["timestamp"], e["nickname"])].append(e)
 
     for msg in parsed_messages:
         slot = (msg.timestamp, msg.nickname)
+        key = content_key(msg.text)
+
+        # 잘림 복구가 가장 먼저다. 이 판정은 구간과 무관하다 — 어느 출처든 '기존이
+        # 새 것의 앞부분이고 더 짧다' 면 기존이 잘린 것이다. 방향이 스스로 지켜지므로
+        # 잘린 출처(모바일 500자)가 온전한 본문을 덮어쓰는 일은 생기지 않는다.
+        truncated = _find_truncated(msg, by_slot.get(slot, []))
+        if truncated:
+            plan.repairs.append((truncated["id"], msg.text))
+            plan.skipped["잘림복구"] += 1
+            continue
 
         if msg.timestamp < archive_start:
             plan.old.append(msg)
@@ -158,8 +185,12 @@ def plan_merge(parsed_messages, existing: list[dict]) -> MergePlan:
             plan.skipped["겹침_사진"] += 1
             continue
 
-        if (msg.timestamp, msg.nickname, norm_text(msg.text)) in exact:
+        if (msg.timestamp, msg.nickname, key) in exact:
             plan.skipped["이미_보관"] += 1
+            continue
+
+        if (msg.timestamp, key) in same_text:
+            plan.skipped["이름만_다름"] += 1
             continue
 
         if _is_truncated_copy(msg.text, [e["text"] for e in by_slot.get(slot, [])]):
@@ -169,6 +200,27 @@ def plan_merge(parsed_messages, existing: list[dict]) -> MergePlan:
         plan.overlap.append(msg)
 
     return plan
+
+
+def _find_truncated(msg, candidates: list[dict]) -> dict | None:
+    """이 메시지의 온전한 본문으로 고쳐야 할 기존 레코드. 없으면 None.
+
+    조건을 좁게 잡는다 — 기존이 40자 이상이고, 새 것이 더 길고, 새 것의 앞부분이
+    기존과 같아야 한다. 짧은 글끼리 우연히 앞부분이 겹쳐 엉뚱한 글을 덮어쓰는 일을
+    막기 위해서다.
+    """
+    if msg.kind != "text":
+        return None
+    incoming = norm_text(msg.text)
+    for e in candidates:
+        if e.get("kind") != "text":
+            continue
+        current = norm_text(e.get("text"))
+        if len(current) < 40 or len(current) >= len(incoming):
+            continue
+        if incoming.startswith(current[:60]):
+            return e
+    return None
 
 
 # ───────────────────────── 레코드 만들기 ─────────────────────────
@@ -252,6 +304,7 @@ def attach_files(images: list[dict], source_dir: Path, dry_run: bool) -> Counter
             continue
 
         assets = []
+        seen_here: set[str] = set()
         for seq, ref in enumerate(refs, start=1):
             src = source_dir / ref
             if not src.is_file():
@@ -259,6 +312,13 @@ def attach_files(images: list[dict], source_dir: Path, dry_run: bool) -> Counter
                 continue
 
             digest = sha256_of(src)
+            # 한 메시지 안에서 같은 사진이 두 번 붙는 일이 있다 — '사진 2장' 인데
+            # 내보내기가 같은 파일을 두 개 준 경우다(실측 img-001900). 그대로 두면
+            # 갤러리에 같은 썸네일이 두 번 나오고 장수도 부풀려진다.
+            if digest in seen_here:
+                stats["같은_사진_중복"] += 1
+                continue
+            seen_here.add(digest)
             suffix = src.suffix.lower()
             known = sha_index.get(digest)
             if known:
@@ -299,6 +359,140 @@ def attach_files(images: list[dict], source_dir: Path, dry_run: bool) -> Counter
                 "assets": assets,
             })
     return stats
+
+
+# 시각을 이름으로 쓰는 판. 20251001_090514_1.png = 2025-10-01 09:05:14 의 첫 장.
+TIME_NAME_RE = re.compile(
+    r"^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})(?:_(\d+))?\.(\w+)$")
+IMAGE_EXT = {"png", "jpg", "jpeg", "gif", "webp"}
+
+
+def link_by_timestamp(images: list[dict], source_dir: Path) -> Counter:
+    """파일 이름의 시각으로 사진 메시지를 찾아 이어 준다.
+
+    앞선 판(해시 이름)은 본문에 파일 이름이 적혀 있어 그대로 이었지만, 이 판은
+    본문이 그냥 '사진' 이다. 대신 파일 이름이 초 단위 시각이라 메시지의 분과 맞출
+    수 있다. 한 분에 여러 장이면 파일 이름의 순번 순서대로 채운다.
+
+    이미 파일을 가진 항목은 건드리지 않는다 — 먼저 들어온 것이 정본이다.
+    """
+    stats = Counter()
+    by_minute: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    for path in sorted(source_dir.iterdir()):
+        match = TIME_NAME_RE.match(path.name)
+        if not match or match.group(8).lower() not in IMAGE_EXT:
+            continue
+        year, month, day, hour, minute, _sec, seq, _ext = match.groups()
+        stamp = "%s-%s-%sT%s:%s+09:00" % (year, month, day, hour, minute)
+        by_minute[stamp].append((int(seq or 0), path.name))
+
+    for rows in by_minute.values():
+        rows.sort()
+
+    # 같은 분의 사진 메시지를 순서대로 놓고 파일을 차례로 붙인다
+    waiting: dict[str, list[dict]] = defaultdict(list)
+    for row in images:
+        if row.get("assets") or row.get("media_refs"):
+            continue
+        waiting[row["timestamp"]].append(row)
+
+    for stamp, files in by_minute.items():
+        targets = waiting.get(stamp) or []
+        if not targets:
+            stats["대응_메시지_없음"] += len(files)
+            continue
+        names = [name for _seq, name in files]
+        for index, row in enumerate(targets):
+            want = row.get("expected_asset_count") or 1
+            take, names = names[:want], names[want:]
+            if not take:
+                break
+            row["media_refs"] = take
+            # '유실' 로 적어 둔 것이 실제로 나타났다. 상태를 되돌린다.
+            if row.get("status") == "lost":
+                row["status"] = "pending"
+                row["note"] = "옛 백업(시각 이름)에서 원본을 찾음"
+            stats["연결"] += len(take)
+        if names:
+            stats["남은_파일"] += len(names)
+    return stats
+
+
+ASSETS_FILES = ROOT / "assets" / "files"
+# 동영상은 이 아카이브가 수집하지 않는다 — 파서가 '동영상' 메시지를 제외하므로
+# 붙일 자리가 아예 없다. 정책을 바꾸는 일이라 여기서 조용히 넣지 않는다.
+SKIP_EXT = IMAGE_EXT | {"mp4", "mov"}
+
+
+def link_attachments(files: list[dict], messages: list[dict],
+                     source_dir: Path, dry_run: bool) -> Counter:
+    """시각 이름 파일 중 첨부(pdf·html 등)를 '파일: 이름' 메시지에 붙인다.
+
+    원본 파일명은 내보내기 폴더에 남지 않는다(이름이 시각으로 바뀐다). 그래서
+    메시지 본문의 '파일: 원래이름' 을 파일명으로 쓴다 — 사람이 화면에서 보는
+    이름이 그것이고, 목록도 그 이름으로 남아 있다.
+    """
+    stats = Counter()
+    have_msg = {f["message_id"] for f in files}
+    have_sha = {f.get("sha256") for f in files}
+    waiting: dict[str, list[dict]] = defaultdict(list)
+    for m in messages:
+        if m.get("kind") == "file" and m["id"] not in have_msg:
+            waiting[m["timestamp"]].append(m)
+
+    for path in sorted(source_dir.iterdir()):
+        match = TIME_NAME_RE.match(path.name)
+        if not match or match.group(8).lower() in SKIP_EXT:
+            continue
+        year, month, day, hour, minute, _sec, _seq, ext = match.groups()
+        stamp = "%s-%s-%sT%s:%s+09:00" % (year, month, day, hour, minute)
+        targets = waiting.get(stamp) or []
+        if not targets:
+            stats["대응_메시지_없음"] += 1
+            continue
+
+        digest = sha256_of(path)
+        if digest in have_sha:
+            stats["이미_보유"] += 1
+            continue
+
+        msg = targets.pop(0)
+        name = re.sub(r"^파일:\s*", "", (msg.get("text") or "")).strip() or path.name
+        # 파일명에 경로 구분자가 섞이면 엉뚱한 곳에 쓴다. 이름만 남긴다.
+        name = os.path.basename(name.replace("\\", "/")) or path.name
+        rel = "assets/files/%s" % name
+        if not dry_run:
+            dest = ROOT / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, dest)
+        files.append({
+            "file_id": "file-%s" % msg["id"].split("-")[1],
+            "message_id": msg["id"],
+            "filename": name,
+            "local_path": rel,
+            "byte_size": path.stat().st_size,
+            "sha256": digest,
+            "content_type": mimetypes.guess_type(name)[0] or "application/octet-stream",
+            "nickname": msg["nickname"],
+            "date": msg["date"],
+        })
+        have_sha.add(digest)
+        stats["연결"] += 1
+    return stats
+
+
+def apply_repairs(messages: list[dict], repairs: list[tuple[str, str]]) -> int:
+    """잘린 본문을 온전한 것으로 고친다. 고친 건수를 돌려준다."""
+    by_id = {m["id"]: m for m in messages}
+    fixed = 0
+    for mid, text in repairs:
+        row = by_id.get(mid)
+        if row is None or row.get("text") == text:
+            continue
+        row["text"] = text
+        row["urls"] = URL_RE.findall(text)
+        fixed += 1
+    return fixed
 
 
 def apply_media_links(images: list[dict], links: list[tuple[str, str]]) -> int:
@@ -398,6 +592,18 @@ def run(directory: Path, dry_run: bool) -> dict:
     if truncated:
         print("  ⚠ 500자에서 잘린 채 들어오는 글 %d건 — 더 긴 원본이 없습니다" % truncated)
 
+    if plan.repairs:
+        by_id = {m["id"]: m for m in messages}
+        gained = sum(len(t) - len(by_id[i]["text"]) for i, t in plan.repairs if i in by_id)
+        print("  잘림 복구 %d건 — 되찾는 글자 %d자 (원본을 고쳐 씁니다)"
+              % (len(plan.repairs), gained))
+        for mid, text in sorted(plan.repairs, key=lambda p: -len(p[1]))[:5]:
+            row = by_id.get(mid)
+            if row:
+                print("      %s %s %s  %d자 → %d자"
+                      % (mid, row["timestamp"][:16], row["nickname"],
+                         len(row["text"]), len(text)))
+
     if dry_run:
         print("\n--dry-run: 파일을 바꾸지 않았습니다.")
         return {"added": len(accepted), "plan": plan}
@@ -412,7 +618,14 @@ def run(directory: Path, dry_run: bool) -> dict:
                     if msg.media_status == "lost" else "옛 백업에서 합쳐짐")
             images.append(image_entry(rec, msg, note))
 
+    repaired = apply_repairs(messages, plan.repairs)
+    files_path = OUTPUT / "files.jsonl"
+    attachments = build_site._read_jsonl(files_path) if files_path.exists() else []
+    attach_stats = link_attachments(attachments, messages, directory, dry_run=False)
     linked = apply_media_links(images, plan.media_links)
+    # 본문에 파일 이름이 적힌 판을 먼저 붙이고, 남은 것을 시각으로 맞춘다.
+    # 순서가 중요하다 — 이름이 적힌 쪽이 더 확실하므로 그것이 자리를 먼저 잡는다.
+    time_stats = link_by_timestamp(images, directory)
     file_stats = attach_files(images, directory, dry_run=False)
     months = assign_monthly(topics, new_records)
 
@@ -430,13 +643,15 @@ def run(directory: Path, dry_run: bool) -> dict:
         "file": txt_path.name,
         "sha256": digest,
         "added": len(new_records),
+        "repaired": repaired,
         "linked_files": linked,
         "merged_at": datetime.now(KST).isoformat(timespec="seconds"),
     })
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print("\n합침: 메시지 +%d건, 사진 파일 연결 %d건, 미분류 스레드 %d개"
-          % (len(new_records), linked, months))
+    print("\n합침: 메시지 +%d건, 잘림 복구 %d건, 미분류 스레드 %d개"
+          % (len(new_records), repaired, months))
+    print("  사진 연결: 이름 기준 %d건 · 시각 기준 %s" % (linked, dict(time_stats)))
     print("  파일 처리: %s" % dict(file_stats))
     return {"added": len(new_records), "plan": plan}
 

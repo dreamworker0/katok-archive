@@ -40,6 +40,15 @@ M_DATE_ONLY_RE = re.compile(r"^%s$" % M_STAMP)
 M_MESSAGE_RE = re.compile(r"^%s, (.+?) : (.*)$" % M_STAMP)
 M_SYSTEM_RE = re.compile(r"^%s, .+님(?:이|을) .+했습니다\.$" % M_STAMP)
 
+# ── 점 구분 형식 (안드로이드 판) ──
+#   2025. 8. 20. 16:34, 김종원 : 본문
+# 오전/오후 없이 24시간제이고, 요일 줄이 따로 하루를 연다. 시스템 알림은 시각
+# 뒤가 쉼표가 아니라 콜론이다 — 그 차이가 유일한 구분점이라 순서를 지켜야 한다.
+D_STAMP = r"(\d{4})\. (\d{1,2})\. (\d{1,2})\. (\d{1,2}):(\d{2})"
+D_DAY_RE = re.compile(r"^\d{4}년 \d{1,2}월 \d{1,2}일 .+요일$")
+D_MESSAGE_RE = re.compile(r"^%s, (.+?) : (.*)$" % D_STAMP)
+D_SYSTEM_RE = re.compile(r"^%s: .+님(?:이|을) .+했습니다\.$" % D_STAMP)
+
 URL_RE = re.compile(r"https?://[^\s\)\]<>]+")
 PHOTO_RE = re.compile(r"^사진(?: (\d+)장)?$")
 # 카톡이 내보내기 폴더에 쓰는 이름. 내용 해시가 아니라 카톡 나름의 식별자다.
@@ -161,19 +170,20 @@ def _build(raw_messages: list[dict], excluded: dict, warnings: list) -> ParseRes
     return ParseResult(messages=messages, excluded=excluded, warnings=warnings)
 
 
-def _looks_like_mobile(lines: list[str]) -> bool:
-    """앞쪽 몇 줄만 보고 형식을 가린다.
+def _detect_format(lines: list[str]) -> str:
+    """앞쪽 몇 줄만 보고 형식을 가린다. 파일 이름은 믿을 게 못 된다.
 
-    PC 형식은 날짜 구분줄이 반드시 먼저 나오므로, 그게 나오면 PC 로 확정한다.
-    거꾸로 모바일 메시지 줄이 먼저 나오면 모바일이다. 둘 다 없으면 PC 로 둔다 —
-    기존 동작을 그대로 두는 쪽이 안전하다.
+    먼저 나오는 표식이 이긴다 — 셋 다 날짜로 시작하는 줄을 쓰지만 모양이 겹치지
+    않는다. 아무것도 못 찾으면 PC 로 둔다. 기존 동작을 그대로 두는 쪽이 안전하다.
     """
     for line in lines[:200]:
         if DATE_RE.match(line):
-            return False
+            return "pc"
+        if D_MESSAGE_RE.match(line) or D_SYSTEM_RE.match(line):
+            return "dotted"
         if M_MESSAGE_RE.match(line) or M_DATE_ONLY_RE.match(line):
-            return True
-    return False
+            return "mobile"
+    return "pc"
 
 
 def _parse_pc(lines: list[str]) -> ParseResult:
@@ -283,8 +293,63 @@ def _parse_mobile(lines: list[str]) -> ParseResult:
     return _build(raw_messages, excluded, warnings)
 
 
+def _parse_dotted(lines: list[str]) -> ParseResult:
+    raw_messages: list[dict] = []
+    excluded = {"video": 0, "emoticon": 0, "system": 0}
+    warnings: list[dict[str, object]] = []
+    active: dict | None = None
+
+    def flush() -> None:
+        nonlocal active
+        if active is not None:
+            raw_messages.append(active)
+            active = None
+
+    for line_number, line in enumerate(lines, start=1):
+        # 시스템 알림이 메시지 줄과 앞부분이 같다(시각 뒤 콜론 vs 쉼표). 먼저 본다.
+        if D_DAY_RE.match(line) or D_SYSTEM_RE.match(line):
+            flush()
+            if not D_DAY_RE.match(line):
+                excluded["system"] += 1
+            continue
+
+        message_match = D_MESSAGE_RE.match(line)
+        if message_match:
+            flush()
+            year, month, day, hour, minute, nickname, body = message_match.groups()
+            active = {
+                "nickname": nickname,
+                # 이 형식은 24시간제라 오전/오후가 없다. _build 가 쓰는 모양에
+                # 맞추려고 '오전' 으로 두고 시각을 그대로 넘긴다 — _to_24_hour 는
+                # 오전 12 만 0 으로 바꾸므로 0~23 이 그대로 보존된다.
+                "period": "오전" if int(hour) < 12 else "오후",
+                "hour": int(hour) if int(hour) <= 12 else int(hour) - 12,
+                "minute": int(minute),
+                "lines": [body],
+                "source_line": line_number,
+                "date_parts": (int(year), int(month), int(day)),
+            }
+            continue
+
+        # '메시지가 삭제되었습니다.' 는 다음 줄에 홀로 온다. 앞 메시지에 붙이면
+        # 그 메시지가 원문과 달라져 증분 비교에서 매번 새 글로 잡힌다.
+        if SYSTEM_RE.match(line):
+            flush()
+            excluded["system"] += 1
+            continue
+
+        if active is not None:
+            active["lines"].append(line)
+
+    flush()
+    return _build(raw_messages, excluded, warnings)
+
+
 def parse_chat(text: str) -> ParseResult:
     lines = text.lstrip("﻿").splitlines()
-    if _looks_like_mobile(lines):
+    kind = _detect_format(lines)
+    if kind == "dotted":
+        return _parse_dotted(lines)
+    if kind == "mobile":
         return _parse_mobile(lines)
     return _parse_pc(lines)

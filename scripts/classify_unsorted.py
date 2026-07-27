@@ -367,7 +367,24 @@ def render_report(title: str, summary: str, keywords: list[str],
     return "---\n" + "\n".join(head) + "\n---\n\n" + body.strip() + "\n"
 
 
-def write_report(thread_id: str, thread: dict, raw_chars: int) -> str | None:
+# 이보다 긴 메시지를 통째로 옮기면 그건 요약이 아니라 원문 발행이다.
+# 짧은 말은 그대로 옮겨도 된다 — 오히려 그래야 글이 살고, 자리표도 그 인용을
+# 기준으로 붙는다(place_context_anchors). 긴 글은 요약해야 한다.
+MAX_VERBATIM_CHARS = 40
+
+
+def quoted_whole_messages(body: str, msgs: list[dict]) -> list[str]:
+    """보고서가 통째로 옮긴 긴 메시지들. 발행하면 안 되는 것만 돌려준다."""
+    out = []
+    for m in msgs:
+        text = (m.get("text") or "").strip()
+        if len(text) > MAX_VERBATIM_CHARS and text in body:
+            out.append(m.get("id") or "")
+    return out
+
+
+def write_report(thread_id: str, thread: dict, raw_chars: int,
+                 msgs: list[dict] | None = None) -> str | None:
     """보고서 md 를 쓴다. 못 쓰면 이유를 돌려준다(None 이면 성공).
 
     보고서는 화면의 실제 내용 단위다 — 제목·요지·**키워드(태그)**·본문 산문이
@@ -398,6 +415,15 @@ def write_report(thread_id: str, thread: dict, raw_chars: int) -> str | None:
     # 링크·사진은 화면 아래에 따로 붙으므로 본문에 넣을 이유가 없다.
     if re.search(r"!\[\[|\]\]", body):
         return "본문에 자리표(![[...]])가 들어 있습니다"
+
+    # 원문 발행 금지. 이 방의 값어치는 오간 말이 아니라 그 안의 내용이고, 발행본은
+    # 요약이라는 전제로 멤버에게 나간다. 프롬프트로만 부탁하면 지켜지지 않는다 —
+    # 실측 2026-07-27: '그 사람이 쓴 문장을 그대로 인용하라'고 했더니 짧은 글은
+    # 전문이 실려 40자 넘는 원문 15건이 발행본에 들어갔다. 그래서 코드로 막는다.
+    leaked = quoted_whole_messages(body, msgs or [])
+    if leaked:
+        return "긴 원문을 통째로 옮겼습니다 (%s) — 인용은 %d자 이내로" % (
+            ", ".join(leaked[:3]), MAX_VERBATIM_CHARS)
 
     text = render_report(thread["title"], thread["summary"],
                          thread.get("keywords") or [], body)
@@ -531,6 +557,7 @@ def build_report_prompt(thread: dict, msgs: list[dict],
         )
     else:
         length_rule = ("  원문보다 짧아야 하고, 짧은 대화면 두세 문장으로 충분합니다.")
+    max_quote = MAX_VERBATIM_CHARS
     return f"""카카오톡 대화 아카이브의 주제 보고서를 씁니다.
 
 이 주제는 이미 분류돼 있습니다. 제목·요지는 그대로 두고, **태그와 본문**만 씁니다.
@@ -551,10 +578,13 @@ def build_report_prompt(thread: dict, msgs: list[dict],
 - report 는 본문 산문. 사실만 쓰고, 대화에 없는 내용을 채우지 마세요.
 {length_rule}
 
-### 인용을 반드시 쓰세요 — 두 가지 이유가 있습니다
-- 결정적인 말은 **원문 그대로** 인용(`>`)으로 옮기세요. 한 편에 1~3개.
-  줄여 쓰지 말고 그 사람이 쓴 문장을 그대로 씁니다. 조사·말투·이모티콘까지.
-- 요약만 늘어놓은 글은 읽히지 않습니다. 실제 목소리가 한 번씩 들어와야 삽니다.
+### 인용을 쓰되, 짧은 말만 그대로 옮기세요
+- 결정적인 **짧은 말**을 인용(`>`)으로 옮기세요. 한 편에 1~3개.
+  말투·이모티콘까지 그대로 씁니다. 요약만 늘어놓은 글은 읽히지 않습니다.
+- **한 인용은 {max_quote}자를 넘기지 마세요.** 긴 글은 인용하지 말고 요약하세요.
+  이 아카이브는 요약을 발행하고 원문은 발행하지 않습니다. 긴 글을 통째로 옮기면
+  그건 요약이 아니라 원문 발행이고, 검사에서 걸려 보고서가 통째로 버려집니다.
+- 긴 글에서 꼭 살리고 싶은 표현이 있으면 그 **한 구절만** 따와 인용하세요.
 - 그리고 **사진과 링크가 이 인용을 기준으로 본문 사이에 끼워집니다.** 인용이
   없으면 자료가 전부 글 끝으로 밀려 글 따로 자료 따로가 됩니다.
 
@@ -685,7 +715,7 @@ def _write_reports(targets: list[dict], model: str, examples: list[dict],
             print(f"  [dry-run] {t['id']} 본문 {len(payload['report'])}자 "
                   f"· 태그 {', '.join(payload['keywords'])}")
             continue
-        why = write_report(t["id"], {**payload, "id": t["id"]}, raw)
+        why = write_report(t["id"], {**payload, "id": t["id"]}, raw, msgs)
         if why:
             print(f"  보고서 못 씀({t['id']}): {why}")
             continue
