@@ -249,11 +249,27 @@ class ReportGuardTests(unittest.TestCase):
     def test_empty_body_is_refused(self):
         self.assertIsNotNone(write_report("t-999", self.base(""), 100))
 
-    def test_placeholder_in_body_is_refused(self):
-        # 자리표를 만들면 audit_report_context 가 '유효하지 않은 자리표'로 잡는다.
-        why = write_report("t-999", self.base("본문 ![[img-1]] 끝"), 1000)
-        self.assertIsNotNone(why)
-        self.assertIn("자리표", why)
+    def test_bad_placeholder_is_dropped_instead_of_killing_the_report(self):
+        """2026-07-28 방침 변경: 자리표는 쓰라고 한다.
+
+        안 쓰면 사진·링크가 전부 글 끝으로 밀려 '글 따로 자료 따로'가 된다. 대신
+        없는 자료를 가리키는 줄만 지운다 — 보고서를 통째로 버리지 않는다.
+        """
+        body = "첫 문단.\n\n![[msg-000001]]\n\n둘째 문단.\n\n![[msg-999999]]\n"
+        msgs = [{"id": "msg-000001", "kind": "image", "text": ""}]
+        why = write_report("t-999", self.base(body), 1000, msgs)
+        self.assertIsNone(why, msg=f"거부됨: {why}")
+        saved = (Path(self.tmp.name) / "t-999.md").read_text(encoding="utf-8")
+        self.assertIn("![[msg-000001]]", saved, "실제로 있는 사진 자리는 남아야 한다")
+        self.assertNotIn("msg-999999", saved, "없는 자료를 가리키는 줄은 지워야 한다")
+
+    def test_inline_placeholder_in_a_sentence_is_dropped(self):
+        # 화면은 한 줄로 놓인 자리표만 읽는다. 문장 속에 섞이면 글자로 새어 나온다.
+        why = write_report("t-999", self.base("본문 ![[msg-000001]] 끝"), 1000,
+                           [{"id": "msg-000001", "kind": "image", "text": ""}])
+        self.assertIsNone(why, msg=f"거부됨: {why}")
+        saved = (Path(self.tmp.name) / "t-999.md").read_text(encoding="utf-8")
+        self.assertNotIn("![[", saved)
 
     def test_slightly_longer_than_source_is_allowed(self):
         # 실측 2026-07-27: 95자 원문의 정상 보고서가 110자로 나왔는데, '원문보다

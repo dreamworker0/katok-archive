@@ -176,13 +176,25 @@
   function renderDoc(cid, d) {
     var col = colorFor(cid);
     var apps = (d.apps || []).map(function (a) {
-      var ids = (a.thread_ids || []).join(",");
-      return '<button class="app-item" data-pick="' + esc(ids) + '" data-label="' +
-        esc(a.label) + '" data-q="' + esc(a.query || a.label) + '">' +
+      /* 다룬 주제와 스친 언급을 나눠 적는다. 누르면 다룬 주제만 보여주고, 스친
+       * 언급은 목록 위 안내줄에서 한 번 더 눌러야 나온다(소음을 접는다). */
+      var subject = a.subject_ids || a.thread_ids || [];
+      var all = a.thread_ids || [];
+      var mentions = Math.max(0, all.length - subject.length);
+      var bits = [];
+      if (subject.length) bits.push("주제 " + subject.length);
+      if (mentions) bits.push("언급 " + mentions);
+      return '<button class="app-item" data-pick="' +
+        esc((subject.length ? subject : all).join(",")) + '" data-pick-all="' +
+        esc(all.join(",")) + '" data-kind="' +
+        // 다룬 주제를 못 가린 결과물은 '언급'이라고 정직하게 말한다. 언급 목록을
+        // '다룬 주제'라고 적으면 안내문이 거짓말이 된다.
+        (subject.length ? "subject" : "mention") +
+        '" data-label="' + esc(a.label) + '" data-q="' +
+        esc(a.query || a.label) + '">' +
         '<span class="an">' + esc(a.label) + "</span>" +
         (a.maker ? '<span class="am">' + esc(a.maker) + "</span>" : "") +
-        (a.thread_ids && a.thread_ids.length
-          ? '<span class="an-n">주제 ' + a.thread_ids.length + "개</span>" : "") +
+        (bits.length ? '<span class="an-n">' + bits.join(" · ") + "</span>" : "") +
         "</button>";
     }).join("");
     var links = (d.links || []);
@@ -253,8 +265,9 @@
     var body =
       (kw ? '<div class="doc-kw">' + kw + "</div>" : "") +
       (apps ? '<div class="doc-section"><h4>🧩 주요 결과물</h4>' +
-        '<p class="doc-note">누르면 그 결과물이 <b>대화에 나온</b> 주제를 모두 봅니다 ' +
-        "(스쳐 언급된 것까지 포함). 태그로 정확히 좁히려면 위의 🏷️ 태그를 누르세요.</p>" +
+        '<p class="doc-note">누르면 그 결과물을 <b>다룬 주제</b>를 봅니다. ' +
+        "'언급'은 다른 이야기 중에 스쳐 나온 횟수로, 목록에서 한 번 더 눌러야 " +
+        "보입니다.</p>" +
         '<div class="app-list">' + apps + "</div></div>" : "") +
       (people ? '<div class="doc-section"><h4>👥 활발한 참여자</h4><div class="people-row">' + people + "</div></div>" : "") +
       (linkHtml ? '<div class="doc-section"><h4>🔗 공유 링크</h4><div class="link-list">' + linkHtml + "</div></div>" : "") +
@@ -327,8 +340,14 @@
         // 검색 대상이 사라져 빈 목록으로 갔다. 지금은 빌드 때 이어 둔 주제로
         // 바로 간다. 이어진 주제가 없을 때만 옛 방식으로 물러선다.
         var ids = (b.getAttribute("data-pick") || "").split(",").filter(Boolean);
-        if (ids.length) pickThreads(ids, b.getAttribute("data-label"));
-        else runSearch(b.getAttribute("data-q"));
+        var all = (b.getAttribute("data-pick-all") || "").split(",").filter(Boolean);
+        if (ids.length) {
+          pickThreads(ids, b.getAttribute("data-label"),
+                      b.getAttribute("data-kind") || "subject",
+                      all.length > ids.length ? all : null);
+        } else {
+          runSearch(b.getAttribute("data-q"));
+        }
       };
     });
     bindKeywordChips(scope);
@@ -422,8 +441,9 @@
 
   /** 결과물 하나에 딸린 주제만 추린다. 검색어가 아니라 ID 로 고르므로
    *  보고서를 어떻게 고쳐 쓰든 결과가 흔들리지 않는다. */
-  function pickThreads(ids, label, kind) {
-    state.pick = { ids: ids, label: label, kind: kind || "mention" };
+  function pickThreads(ids, label, kind, moreIds) {
+    state.pick = { ids: ids, label: label, kind: kind || "mention",
+                   moreIds: moreIds || null };
     state.q = ""; state.nick = "";
     el.search.value = ""; el.filter.value = "";
     setView("timeline");
@@ -501,12 +521,24 @@
     /* 두 길이 서로 다른 규칙으로 돈다. 라벨이 같으면 무엇을 보고 있는지 알 수
      * 없다 — '차량 운행일지'가 결과물 버튼으로는 6개(원문에 언급된 것), 태그로는
      * 5개(태그가 붙은 것)로 다르게 나오는데 안내문이 같았다. */
+    var pickHead = "";
+    if (state.pick) {
+      if (state.pick.kind === "tag") {
+        pickHead = "🏷️ 태그 <b>#" + esc(state.pick.label) + "</b> 가 붙은 주제 ";
+      } else if (state.pick.kind === "subject") {
+        pickHead = "🧩 <b>" + esc(state.pick.label) + "</b> 를 다룬 주제 ";
+      } else {
+        pickHead = "🧩 <b>" + esc(state.pick.label) +
+          "</b> 이(가) 대화에 나온 주제(스쳐 언급 포함) ";
+      }
+    }
     var pickBar = state.pick
-      ? '<div class="pick-bar">' +
-        (state.pick.kind === "tag"
-          ? "🏷️ 태그 <b>#" + esc(state.pick.label) + "</b> 가 붙은 주제 "
-          : "🧩 <b>" + esc(state.pick.label) + "</b> 이(가) 대화에 나온 주제 ") +
-        rows.length + '개만 보고 있습니다 <button class="btn ghost" id="pickClear">' +
+      ? '<div class="pick-bar">' + pickHead +
+        rows.length + '개만 보고 있습니다 ' +
+        (state.pick.moreIds
+          ? '<button class="btn ghost" id="pickMore">스쳐 언급된 것까지 ' +
+            state.pick.moreIds.length + "개 보기</button> " : "") +
+        '<button class="btn ghost" id="pickClear">' +
         "전체 보기</button></div>"
       : "";
     if (!rows.length) {
@@ -955,6 +987,14 @@
   function bindPickClear() {
     var b = document.getElementById("pickClear");
     if (b) b.onclick = function () { state.pick = null; render(); };
+    var more = document.getElementById("pickMore");
+    if (more) {
+      more.onclick = function () {
+        // 접어 두었던 '스쳐 언급'까지 펼친다. 되돌릴 필요는 없다 — 좁은 쪽으로
+        // 다시 가려면 결과물 버튼을 다시 누르면 된다.
+        pickThreads(state.pick.moreIds, state.pick.label, "mention");
+      };
+    }
   }
 
   function bindThreadCards(scope) {

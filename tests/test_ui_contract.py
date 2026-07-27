@@ -362,9 +362,15 @@ class MobileDensityContractTests(unittest.TestCase):
                 self.assertIn('counts.push("%s"' % label, self.app)
 
     def test_toggle_hint_does_not_repeat_the_card_header(self):
-        """주제 개수는 세지 않는다 — doc-meta 가 위에서 이미 "N개 주제" 를 적는다."""
+        """주제 개수는 세지 않는다 — doc-meta 가 위에서 이미 "N개 주제" 를 적는다.
+
+        검사 범위를 '자세히 보기' 힌트를 만드는 대목으로 좁힌다. 파일 전체를 보면
+        결과물 버튼의 '주제 3 · 언급 3' 같은 다른 자리의 표기까지 걸린다.
+        """
         self.assertIn('개 메시지 · " + (d.threads || []).length + "개 주제', self.app)
-        self.assertNotIn('counts.push("주제 ', self.app)
+        start = self.app.index("var counts = [];")
+        hint = self.app[start:self.app.index("var body =", start)]
+        self.assertNotIn('counts.push("주제 ', hint)
 
     def test_toggle_is_an_accessible_disclosure(self):
         self.assertIn('aria-expanded="false"', self.app)

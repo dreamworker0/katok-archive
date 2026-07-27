@@ -63,6 +63,118 @@ from pathlib import Path
 
 REPORTS_DIR = Path(__file__).resolve().parent.parent / "output" / "reports"
 
+# 인용 한 줄의 상한. 넘기면 요약이 아니라 원문 발행이다.
+MAX_VERBATIM_CHARS = 40
+
+# 구조를 요구하는 기준. 이 두 숫자가 규칙 글과 검사에 함께 쓰인다 — 프롬프트가
+# 요구하는 것과 검사가 보는 것이 어긋나면 규칙이 아니라 취향이 된다.
+QUOTE_REQUIRED_FROM = 6     # 대화 6건 이상이면 인용이 하나는 있어야 한다
+SECTION_REQUIRED_FROM = 10  # 대화 10건 이상이면 절을 나눈다
+
+# 보고서 본문 규칙 — **원본은 여기 하나다.**
+#
+# 예전에는 규칙이 두 곳에 따로 있었다. 밤 자동 갱신이 쓰는 분류 프롬프트에는
+# "링크나 사진 자리표를 넣지 마세요, 자료는 화면 아래에 따로 붙습니다" 뿐이었고,
+# 인용·절 나눔 규칙은 보고서 전용 프롬프트에만 있었다. 그래서 자동 갱신이 만든
+# 보고서는 한 덩어리 산문이고 사진·링크가 전부 글 끝에 모였다(2026-07-27 실측).
+# 규칙을 한 군데 두고 두 프롬프트가 같은 것을 읽게 한다.
+REPORT_RULES = f"""- 사실만 씁니다. 대화에 없는 내용을 채우지 마세요.
+- **읽는 사람이 구조를 눈으로 볼 수 있게** 씁니다. 한 덩어리 산문은 안 됩니다.
+
+### 인용 — 자료가 본문 사이로 들어오는 통로다
+- 결정적인 **짧은 말**을 인용(`>`)으로 옮기세요. 한 편에 1~3개. 말투·이모티콘까지
+  그대로. 대화 {QUOTE_REQUIRED_FROM}건 이상이면 인용이 하나는 있어야 합니다.
+- **한 인용은 {MAX_VERBATIM_CHARS}자를 넘기지 마세요.** 긴 글은 인용하지 말고
+  요약하세요. 이 아카이브는 요약을 발행하고 원문은 발행하지 않습니다. 긴 글을
+  통째로 옮기면 그건 원문 발행이고, 검사에서 걸려 보고서가 버려집니다.
+- 긴 글에서 꼭 살리고 싶은 표현이 있으면 그 **한 구절만** 따오세요.
+
+### 절 — 흐름이 눈에 보이게 나눈다
+- 대화 {SECTION_REQUIRED_FROM}건 이상이면 `## 짧은 제목` 으로 절을 나눕니다.
+  문제 제기 → 시도 → 막힌 곳 → 해결 같은 흐름이면 그대로 절이 됩니다.
+- 짚을 것이 여럿이면 `-` 목록으로, 견주는 것이면 표로 쓰세요.
+- 정말 중요한 한두 곳만 `**굵게**`. 남용하면 아무것도 강조되지 않습니다.
+
+### 사진·첨부·링크는 **본문 사이에** 놓으세요
+- 그 자료를 이야기하는 문단 **바로 뒤에** 자리표를 한 줄로 적습니다.
+  · 사진·첨부 → `![[msg-000123]]`
+  · 링크      → `![[link:msg-000123]]`
+- **위 대화 목록에 있는 message id 만** 씁니다. 없는 id 를 지어내면 검사에서
+  버려집니다(내용이 아니라 자리만 가리키는 것이라 틀릴 여지가 없습니다).
+- 자리표를 안 놓은 자료는 글 끝에 모입니다. 그러면 '글 따로 자료 따로'가 되어
+  읽기 불편합니다 — 사진이 왜 거기 있는지 본문이 말해 주어야 합니다.
+- 같은 자리에 여러 장이 오갔으면 자리표를 여러 줄로 잇대어 적습니다."""
+
+
+def sanitize_anchors(body: str, messages: list[dict]) -> tuple[str, list[str]]:
+    """본문의 자리표를 검증한다. (고친 본문, 버린 자리표 목록)
+
+    본문이 자료의 자리를 짚는 것은 좋은 일이지만(안 짚으면 자료가 전부 글 끝으로
+    밀린다), 없는 message id 를 가리키면 화면이 빈 자리를 그린다. 그래서 이 대화에
+    실제로 있는 자료만 남기고 나머지 줄은 지운다 — 보고서를 통째로 버리지 않는다.
+    자리표는 내용이 아니라 자리만 가리키므로 틀린 줄만 지우면 손해가 없다.
+    """
+    if not body:
+        return body, []
+    media_ok, link_ok = set(), set()
+    for m in messages or []:
+        mid = str(m.get("id") or "")
+        if not mid:
+            continue
+        if (m.get("kind") in {"image", "file"} or m.get("images")
+                or m.get("file") or m.get("is_file_share")):
+            media_ok.add(mid)
+        if m.get("urls"):
+            link_ok.add(mid)
+
+    dropped: list[str] = []
+    seen: set[str] = set()
+    out_lines = []
+    for line in body.replace("\r\n", "\n").split("\n"):
+        stripped = line.strip()
+        hit = _ANY_ANCHOR.match(stripped)
+        if not hit and "![[" in stripped:
+            # 문장 속에 섞어 쓴 자리표는 화면이 못 읽는다(한 줄로 있어야 한다).
+            dropped.append(stripped[:40])
+            continue
+        if hit:
+            is_link = stripped.startswith("![[link:")
+            mid = hit.group(1)
+            ok = mid in (link_ok if is_link else media_ok)
+            if not ok or stripped in seen:
+                dropped.append(stripped)
+                continue
+            seen.add(stripped)
+        out_lines.append(line)
+    return "\n".join(out_lines), dropped
+
+
+def structure_gaps(threads: list[dict]) -> list[tuple[str, int, str]]:
+    """규칙을 어긴 보고서. (스레드 id, 대화 건수, 무엇이 없나)
+
+    분량(thin_reports)과 따로 본다 — 길게만 쓴 한 덩어리 산문이 정확히 이 검사에
+    걸리는 것이고, 그것이 읽기 불편하다고 지적된 꼴이다.
+    """
+    gaps = []
+    for t in threads:
+        body = t.get("report") or ""
+        if not body:
+            continue
+        count = t.get("count") or len(t.get("message_ids") or [])
+        missing = []
+        if count >= QUOTE_REQUIRED_FROM and not re.search(r"^>", body, re.M):
+            missing.append("인용")
+        if count >= SECTION_REQUIRED_FROM and not re.search(r"^##\s", body, re.M):
+            missing.append("절 나눔")
+        # 자료가 있는데 자리표가 하나도 없으면 사진·링크가 전부 글 끝으로 밀린다.
+        if t.get("asset_count") and not _ANY_ANCHOR.search(body):
+            missing.append("자료 자리")
+        if missing:
+            gaps.append((t["id"], count, "·".join(missing)))
+    gaps.sort(key=lambda g: -g[1])
+    return gaps
+
+
 # 대화 건수별 본문 최소 분량. 47건짜리와 2건짜리가 같은 분량이면 보고서가
 # 아니다. 넘치는 것은 막지 않는다 — 할 말이 많은 주제도 있다.
 MIN_BODY_BY_COUNT = (

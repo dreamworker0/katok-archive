@@ -57,10 +57,14 @@ import sys
 from pathlib import Path
 
 from scripts.topic_reports import (
+    MAX_VERBATIM_CHARS as REPORT_RULES_MAX_QUOTE,
+    REPORT_RULES,
     REPORTS_DIR,
     content_chars,
     load_reports,
     parse_report,
+    sanitize_anchors,
+    structure_gaps,
     thin_reports,
 )
 
@@ -146,8 +150,9 @@ def build_prompt(msgs: list[dict], categories: list[dict],
         urls = m.get("urls") or []
         extra = (" | 링크: " + ", ".join(urls)) if urls else ""
         text = (m.get("text") or "").replace("\n", " ⏎ ")
+        kind = {"image": " [사진]", "file": " [첨부]"}.get(m.get("kind"), "")
         msg_lines.append(
-            f"  {m['id']} | {m.get('date')} {m.get('time')} | "
+            f"  {m['id']}{kind} | {m.get('date')} {m.get('time')} | "
             f"{m.get('nickname')} | {text}{extra}"
         )
     msgs_block = "\n".join(msg_lines)
@@ -176,11 +181,11 @@ def build_prompt(msgs: list[dict], categories: list[dict],
 - title 은 30자 이내의 명사구. summary 는 한 문장(80자 이내), 사람 이름을 주어로.
 - keywords 는 2~6개. 이 대화를 나중에 찾을 때 쓸 말(도구 이름, 개념, 결과물).
   카테고리 이름을 그대로 넣지 마세요.
-- report 는 이 대화를 읽은 사람이 다시 읽지 않아도 되게 쓰는 **본문 산문**입니다.
-  · 사실만 씁니다. 대화에 없는 내용을 채우지 마세요.
-  · 원문보다 짧아야 합니다. 짧은 대화면 두세 문장으로 충분합니다.
-  · 링크나 사진 자리표(![[...]])를 넣지 마세요. 자료는 화면 아래에 따로 붙습니다.
-  · 굵게(**...**)는 정말 중요한 한두 곳에만.
+- report 는 이 대화를 읽은 사람이 다시 읽지 않아도 되게 쓰는 **본문**입니다.
+  원문보다 짧아야 합니다. 짧은 대화면 두세 문장으로 충분합니다.
+
+## 본문 규칙
+{REPORT_RULES}
 
 ## 이미 등록된 앱·도구 (새로 만들지 말고 이 id 를 그대로 쓰세요)
 {known_lines}
@@ -370,7 +375,30 @@ def render_report(title: str, summary: str, keywords: list[str],
 # 이보다 긴 메시지를 통째로 옮기면 그건 요약이 아니라 원문 발행이다.
 # 짧은 말은 그대로 옮겨도 된다 — 오히려 그래야 글이 살고, 자리표도 그 인용을
 # 기준으로 붙는다(place_context_anchors). 긴 글은 요약해야 한다.
-MAX_VERBATIM_CHARS = 40
+# 값의 원본은 topic_reports 다(규칙 글과 검사가 같은 숫자를 봐야 한다).
+MAX_VERBATIM_CHARS = REPORT_RULES_MAX_QUOTE
+
+
+def asset_lines(msgs: list[dict]) -> str:
+    """이 대화의 사진·첨부·링크 목록. 본문에 놓을 자리표를 그대로 적어 준다.
+
+    목록을 따로 뽑아 주는 이유: 대화 40건 사이에 흩어진 [사진] 표시를 세어 빠짐없이
+    놓기를 기대하는 것보다, 놓아야 할 것을 먼저 보여주는 편이 확실하다.
+    """
+    rows = []
+    for m in msgs:
+        mid = m.get("id")
+        if not mid:
+            continue
+        if m.get("kind") in ("image", "file") or m.get("is_file_share"):
+            what = "사진" if m.get("kind") == "image" else "첨부"
+            rows.append(f"  ![[{mid}]]  {what} · {m.get('nickname')} {m.get('time')}")
+        for u in (m.get("urls") or []):
+            rows.append(f"  ![[link:{mid}]]  링크 {u[:60]} · {m.get('nickname')}")
+    if not rows:
+        return ""
+    return ("\n## 이 대화의 자료 (본문 사이 알맞은 자리에 아래 자리표를 놓으세요)\n"
+            + "\n".join(rows) + "\n")
 
 
 def quoted_whole_messages(body: str, msgs: list[dict]) -> list[str]:
@@ -411,10 +439,14 @@ def write_report(thread_id: str, thread: dict, raw_chars: int,
     if len(body) > limit:
         return f"본문이 원문에 비해 너무 깁니다 ({len(body)} > {limit})"
 
-    # 자리표를 만들면 audit_report_context 가 '유효하지 않은 자리표'로 잡는다.
-    # 링크·사진은 화면 아래에 따로 붙으므로 본문에 넣을 이유가 없다.
-    if re.search(r"!\[\[|\]\]", body):
-        return "본문에 자리표(![[...]])가 들어 있습니다"
+    # 자리표는 이제 **쓰라고 한다** — 안 쓰면 사진·링크가 전부 글 끝으로 밀려
+    # '글 따로 자료 따로'가 되기 때문이다(2026-07-28 방침 변경). 다만 없는 자료를
+    # 가리키면 화면이 빈 자리를 그리므로, 통째로 거부하지 않고 틀린 줄만 지운다.
+    body, dropped = sanitize_anchors(body, msgs or [])
+    if dropped:
+        print("  [자리표] %s: 이 대화에 없는 자료를 가리켜 %d줄 지움 (%s)"
+              % (thread_id, len(dropped), ", ".join(dropped[:3])))
+    thread = {**thread, "report": body}
 
     # 원문 발행 금지. 이 방의 값어치는 오간 말이 아니라 그 안의 내용이고, 발행본은
     # 요약이라는 전제로 멤버에게 나간다. 프롬프트로만 부탁하면 지켜지지 않는다 —
@@ -540,13 +572,17 @@ def build_report_prompt(thread: dict, msgs: list[dict],
         f"  [{t['category']}] {t['title']} — {t.get('summary', '')}"
         for t in examples[:6]
     )
+    # message id 와 자료 종류를 함께 준다. 이걸 안 주면 본문에 자리표를 놓을 수
+    # 없어 사진·링크가 전부 글 끝으로 밀린다.
     lines = []
     for m in msgs:
         urls = m.get("urls") or []
         extra = (" | 링크: " + ", ".join(urls)) if urls else ""
+        kind = {"image": " [사진]", "file": " [첨부]"}.get(m.get("kind"), "")
         text = (m.get("text") or "").replace("\n", " ⏎ ")
-        lines.append(f"  {m.get('date')} {m.get('time')} | "
+        lines.append(f"  {m.get('id')}{kind} | {m.get('date')} {m.get('time')} | "
                      f"{m.get('nickname')} | {text}{extra}")
+    assets = asset_lines(msgs)
     if min_chars:
         # 분량을 말하되 '채워 넣어라'로 읽히지 않게 한다. 없는 내용을 지어내는 것보다
         # 얇은 채로 남는 편이 낫다 — 원문을 발행하지 않으니 거짓이 검증되지 않는다.
@@ -557,7 +593,6 @@ def build_report_prompt(thread: dict, msgs: list[dict],
         )
     else:
         length_rule = ("  원문보다 짧아야 하고, 짧은 대화면 두세 문장으로 충분합니다.")
-    max_quote = MAX_VERBATIM_CHARS
     return f"""카카오톡 대화 아카이브의 주제 보고서를 씁니다.
 
 이 주제는 이미 분류돼 있습니다. 제목·요지는 그대로 두고, **태그와 본문**만 씁니다.
@@ -572,30 +607,13 @@ def build_report_prompt(thread: dict, msgs: list[dict],
 
 ## 대화
 {chr(10).join(lines)}
-
+{assets}
 ## 규칙
 - keywords 는 2~6개. 나중에 이 대화를 찾을 때 쓸 말(도구 이름, 개념, 결과물).
 - report 는 본문 산문. 사실만 쓰고, 대화에 없는 내용을 채우지 마세요.
 {length_rule}
 
-### 인용을 쓰되, 짧은 말만 그대로 옮기세요
-- 결정적인 **짧은 말**을 인용(`>`)으로 옮기세요. 한 편에 1~3개.
-  말투·이모티콘까지 그대로 씁니다. 요약만 늘어놓은 글은 읽히지 않습니다.
-- **한 인용은 {max_quote}자를 넘기지 마세요.** 긴 글은 인용하지 말고 요약하세요.
-  이 아카이브는 요약을 발행하고 원문은 발행하지 않습니다. 긴 글을 통째로 옮기면
-  그건 요약이 아니라 원문 발행이고, 검사에서 걸려 보고서가 통째로 버려집니다.
-- 긴 글에서 꼭 살리고 싶은 표현이 있으면 그 **한 구절만** 따와 인용하세요.
-- 그리고 **사진과 링크가 이 인용을 기준으로 본문 사이에 끼워집니다.** 인용이
-  없으면 자료가 전부 글 끝으로 밀려 글 따로 자료 따로가 됩니다.
-
-### 대화가 여러 국면으로 흘렀으면 절로 나누세요
-- `## 짧은 제목` 으로 나눕니다. 문제 제기 → 시도 → 막힌 곳 → 해결 같은 흐름이면
-  그대로 절이 됩니다. 5건 이하의 짧은 대화는 나누지 않아도 됩니다.
-- 정말 중요한 한두 곳만 `**굵게**`. 남용하면 아무것도 강조되지 않습니다.
-
-### 자리표는 쓰지 마세요
-  `![[...]]` 를 직접 넣지 마세요 — 사진·링크는 위 인용을 보고 자동으로 붙습니다.
-  직접 쓰면 없는 자료를 가리켜 화면이 깨집니다.
+{REPORT_RULES}
 
 ## 출력
 JSON 만, 코드펜스 없이:
@@ -678,6 +696,37 @@ def rewrite_thin_reports(threads: list[dict], model: str, examples: list[dict],
                           min_by_id={t["id"]: need for t, need in thin[:limit]})
 
 
+def rewrite_unstructured_reports(threads: list[dict], model: str,
+                                 examples: list[dict], dry_run: bool,
+                                 limit: int = 5,
+                                 timeout: int = TIMEOUT_SEC) -> int:
+    """구조 규칙을 어긴 보고서를 다시 쓴다. 다시 쓴 편수를 돌려준다.
+
+    얇은 것 다시 쓰기와 나란한 기능이고, 역시 매일 돌리지 않는다 — 규칙이
+    프롬프트에 들어간 뒤로 새로 쓰는 보고서는 규칙을 지키므로, 이건 규칙이 없던
+    시절에 쓰인 보고서를 사람이 불러 정리하는 용도다.
+    """
+    reports = load_reports()
+    rows = []
+    for t in threads:
+        if UNSORTED_RE.match(str(t.get("id") or "")):
+            continue
+        r = reports.get(t["id"])
+        if not r:
+            continue
+        rows.append({**t, "report": r["report"], "count": len(t.get("message_ids") or [])})
+    gaps = structure_gaps(rows)
+    if not gaps:
+        print("구조 규칙을 어긴 보고서가 없습니다.")
+        return 0
+
+    by_id = {t["id"]: t for t in threads}
+    targets = [by_id[tid] for tid, _, _ in gaps[:limit] if tid in by_id]
+    print("구조 규칙을 어긴 보고서 %d개 — 이번에 최대 %d개를 다시 씁니다: %s"
+          % (len(gaps), limit, ", ".join("%s(%d건 %s없음)" % g for g in gaps[:limit])))
+    return _write_reports(targets, model, examples, dry_run, timeout)
+
+
 def _write_reports(targets: list[dict], model: str, examples: list[dict],
                    dry_run: bool, timeout: int,
                    min_by_id: dict[str, int] | None = None) -> int:
@@ -724,7 +773,12 @@ def _write_reports(targets: list[dict], model: str, examples: list[dict],
         if payload["keywords"]:
             t["keywords"] = list(payload["keywords"])
         wrote += 1
-        print(f"  {t['id']} 보고서 작성 · 태그: {', '.join(payload['keywords'])}")
+        # 규칙을 어겼으면 그 자리에서 말한다. 조용히 통과하면 규칙이 없는 것과
+        # 같다 — 실제로 그렇게 한 덩어리 산문이 314편 중 32편까지 쌓였다.
+        gap = structure_gaps([{**t, "report": payload["report"],
+                               "count": len(msgs)}])
+        note = (" [규칙 미달: %s 없음]" % gap[0][2]) if gap else ""
+        print(f"  {t['id']} 보고서 작성 · 태그: {', '.join(payload['keywords'])}{note}")
     return wrote
 
 
@@ -757,6 +811,8 @@ def main() -> int:
     # 흔들리기만 하고 값은 계속 든다. 사람이 필요할 때 부르는 일이다.
     ap.add_argument("--rewrite-thin", type=int, metavar="N", default=0,
                     help="분류 대신, 대화량에 비해 얇은 보고서 N편을 다시 쓴다")
+    ap.add_argument("--rewrite-unstructured", type=int, metavar="N", default=0,
+                    help="분류 대신, 구조 규칙(인용·절 나눔)을 어긴 보고서 N편을 다시 쓴다")
     ap.add_argument("--rewrite-ids", metavar="ID,ID", default="",
                     help="분류 대신, 지정한 주제의 보고서를 다시 쓴다 (t-216,t-182)")
     args = ap.parse_args()
@@ -776,6 +832,19 @@ def main() -> int:
         need = dict((t["id"], n) for t, n in find_thin_reports([by_id[i] for i in want]))
         n = _write_reports([by_id[i] for i in want], args.model, examples,
                            args.dry_run, args.timeout, min_by_id=need)
+        if n and not args.dry_run:
+            save_json(TOPICS, topics)
+        emit("REWRITTEN", n)
+        return 0
+
+    if args.rewrite_unstructured:
+        topics = load_json(TOPICS)
+        threads = topics.get("threads", [])
+        examples = [t for t in threads
+                    if not UNSORTED_RE.match(str(t.get("id") or ""))][:12]
+        n = rewrite_unstructured_reports(threads, args.model, examples, args.dry_run,
+                                         limit=args.rewrite_unstructured,
+                                         timeout=args.timeout)
         if n and not args.dry_run:
             save_json(TOPICS, topics)
         emit("REWRITTEN", n)

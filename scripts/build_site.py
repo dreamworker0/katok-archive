@@ -24,6 +24,7 @@ from scripts.topic_reports import (
     content_chars,
     load_reports,
     place_context_anchors,
+    structure_gaps,
     thin_reports,
 )
 
@@ -100,15 +101,46 @@ def build_digests(
                 found.append(tid)
         return found
 
-    # 카테고리별 앱 노드
+    # 결과물이 '주제인' 주제와 '스쳐 언급된' 주제를 가른다.
+    #
+    # 원문에 이름이 나오면 다 이어 놓았더니, 153건 중 그 결과물을 실제로 다룬 것은
+    # 34건이고 119건은 대화 중에 스친 언급이었다('welfareai 커뮤니티' 11건 중 0건,
+    # '팀 업무관리 시스템' 12건 중 1건). 그래서 눌러 보면 목록이 소음이 된다.
+    # 좁혀 버리면 결과 0개짜리 버튼이 40개 생기므로(눌러도 빈 화면), 버리지 않고
+    # 가른다 — 다룬 주제를 먼저 보여주고 스친 언급은 한 번 더 눌러야 나오게.
+    meta_by_id = {t["id"]: t for t in threads_meta}
+
+    def is_subject(tid: str, label: str) -> bool:
+        """제목이나 태그가 그 결과물의 이름이면 '다룬 주제'로 본다.
+
+        노드의 `query` 는 쓰지 않는다. 검색어가 '앱스스크립트'·'파이어베이스'
+        처럼 일반 도구명인 노드가 많아서, 그것으로 판정하면 앱스스크립트 이야기
+        전부가 '팀 업무관리 시스템을 다룬 주제'로 걸린다(실측 1건→11건, 대부분
+        엉뚱했다). 이름이 서술형이어서('AI 토론 앱') 못 가려지는 결과물은 억지로
+        가리지 않고 '언급'으로 정직하게 표시한다.
+        """
+        t = meta_by_id.get(tid)
+        if not t:
+            return False
+        key = taglib.fold(label)
+        if len(key) < 3:
+            return False
+        if any(taglib.fold(tg) == key for tg in (t.get("tags") or [])):
+            return True
+        return key in taglib.fold(t.get("title") or "")
+
     apps_by_cat: dict[str, list] = {}
     for n in knowledge.get("nodes", []):
         if n.get("type") == "app":
+            ids = threads_matching(n.get("query") or "", n["label"])
+            subject = [tid for tid in ids if is_subject(tid, n["label"])]
             apps_by_cat.setdefault(n["category"], []).append({
                 "label": n["label"],
                 "maker": n.get("maker"),
                 "query": n.get("query"),
-                "thread_ids": threads_matching(n.get("query") or "", n["label"]),
+                "thread_ids": ids,
+                "subject_ids": subject,
+                "mention_ids": [tid for tid in ids if tid not in set(subject)],
             })
     # 카테고리별 링크·참여자
     links_by_cat: dict[str, list] = {}
@@ -511,6 +543,36 @@ def build_data(
     if thin:
         print("[주의] 대화량에 비해 보고서가 얇은 주제 %d개 (앞 5개): %s"
               % (len(thin), ", ".join("%s(%d건 %d자<%d)" % x for x in thin[:5])))
+    # 길게만 쓴 한 덩어리 산문을 잡는다. 분량 검사로는 안 걸리는 종류의 문제다.
+    # 자료(사진·첨부·링크) 수를 함께 넘겨, 자료가 있는데 본문이 그 자리를 안 짚은
+    # 보고서도 걸리게 한다 — 그것이 '자료가 하단에만 있어 읽기 불편한' 꼴이다.
+    #
+    # 자리표가 본문에 없어도 발행할 때 `place_context_anchors` 가 인용을 보고 일부를
+    # 자동으로 끼운다. 그래서 검사도 **자동으로 끼운 뒤의 본문**을 봐야 한다 —
+    # 원본만 보면 이미 잘 붙는 주제까지 위반으로 세어(실측 231개 vs 실제 140개)
+    # 숫자가 겁만 주고 쓸모가 없어진다.
+    asset_count: Counter[str] = Counter()
+    msgs_by_thread: dict[str, list[dict]] = defaultdict(list)
+    for m in out_messages:
+        tid = m.get("thread_id")
+        if not tid:
+            continue
+        msgs_by_thread[tid].append(m)
+        if m.get("kind") in ("image", "file") or m.get("is_file_share"):
+            asset_count[tid] += 1
+        asset_count[tid] += len(m.get("urls") or [])
+    gaps = structure_gaps([
+        {**t,
+         "asset_count": asset_count.get(t["id"], 0),
+         "report": place_context_anchors(t.get("report") or "",
+                                         msgs_by_thread.get(t["id"], []))}
+        for t in threads_meta
+    ])
+    if gaps:
+        print("[주의] 구조 규칙을 어긴 보고서 %d개 — 고치려면 "
+              "`python -m scripts.classify_unsorted --rewrite-unstructured N` "
+              "(앞 5개: %s)"
+              % (len(gaps), ", ".join("%s(%d건 %s없음)" % g for g in gaps[:5])))
 
     knowledge = knowledge or {"nodes": [], "edges": [], "node_types": [], "edge_types": []}
     # 관계망 노드 크기를 실제 언급량으로 다시 매긴다
