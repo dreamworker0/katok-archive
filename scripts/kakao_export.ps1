@@ -64,6 +64,20 @@ public class Win32 {
     System.Threading.Thread.Sleep(40);
     keybd_event(0x11,0,2,IntPtr.Zero);        // Ctrl up
   }
+  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+
+  // 그 화면 좌표에 실제로 '보이는' 창의 소유 프로세스. 창이 없으면 0.
+  //
+  // 포그라운드와 다른 개념이다. '항상 위' 창은 포그라운드가 아니어도 남의 창 위에
+  // 그려지므로, 좌표를 클릭하면 그쪽이 맞는다.
+  public static uint PidAt(int x, int y){
+    POINT p; p.X = x; p.Y = y;
+    IntPtr h = WindowFromPoint(p);
+    if (h == IntPtr.Zero) return 0;
+    uint pid = 0; GetWindowThreadProcessId(h, out pid); return pid;
+  }
   public static bool ForceForeground(IntPtr h){
     uint target = GetWindowThreadProcessId(h, IntPtr.Zero);
     uint me = GetCurrentThreadId();
@@ -310,7 +324,29 @@ if ($Discover) {
 # 입력칸 클릭은 커서만 놓는 동작이라 안전하다 — Enter 는 절대 보내지 않는다.
 $ix = [int]($r.X + 60)
 $iy = [int]($r.Y + $r.Height - 145)
-Write-Log "메시지 입력칸 클릭으로 내부 포커스 확보 ($ix, $iy)"
+
+# 좌표를 그냥 클릭하지 않는다 — 그 자리에 다른 창이 덮여 있을 수 있다.
+#
+# '최상단 확보'를 통과했는데도 실패한 적이 있다(실측 2026-07-27). 작업 관리자의
+# '항상 위' 옵션이 켜져 있으면 카톡이 포그라운드여도 그 위에 그려진다. 그 상태로
+# 좌표를 클릭하면 포커스가 작업 관리자로 넘어가고 Ctrl+S 도 거기로 간다 —
+# 로그에는 "최상단 확보 확인" 다음에 "저장 대화상자가 뜨지 않았습니다" 만 남아
+# 원인이 안 보였다.
+#
+# 그리고 이건 실패로 끝나는 것보다 나쁠 수 있다. 덮은 창이 편집기라면 Ctrl+S 가
+# 남의 파일을 저장한다. 이 스크립트의 원칙은 '엉뚱한 창에 키를 보내지 않는다' 이므로,
+# 포그라운드만 보지 말고 클릭할 자리가 실제로 카톡인지 확인한다.
+$pidAt = [Win32]::PidAt($ix, $iy)
+if ($pidAt -ne $kakaoPid) {
+    $who = '알 수 없음'
+    if ($pidAt -ne 0) {
+        try { $who = (Get-Process -Id $pidAt -ErrorAction Stop).ProcessName } catch {}
+    }
+    Stop-Safely ("입력칸 자리($ix, $iy)가 다른 창에 덮여 있습니다 — '$who'(PID $pidAt). " +
+        "'항상 위'로 떠 있는 창(작업 관리자 등)을 닫고 다시 시도하세요.")
+}
+
+Write-Log "메시지 입력칸 클릭으로 내부 포커스 확보 ($ix, $iy) — 그 자리 창 확인됨(카톡)"
 [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($ix, $iy)
 Start-Sleep -Milliseconds 250
 [Win32]::MouseClick()
@@ -322,7 +358,9 @@ Write-Log "Ctrl+S 전송 (대화 내보내기 단축키)"
 # 4) 저장 대화상자 대기 — 안 뜨면 아무 것도 하지 않고 중단
 $dlg = Wait-SaveDialog -TimeoutSec 20 -OwnerPid $kakaoPid
 if ($null -eq $dlg) {
-    Stop-Safely "저장 대화상자가 뜨지 않았습니다(단축키가 동작하지 않았을 수 있음)."
+    Stop-Safely ("저장 대화상자가 뜨지 않았습니다(단축키가 동작하지 않았을 수 있음). " +
+        "클릭 직후에 다른 창이 앞으로 나왔거나, 시스템이 몹시 느려 20초 안에 " +
+        "대화상자가 못 떴을 수 있습니다 — 남긴 화면을 확인하세요.")
 }
 
 $savePath = Invoke-SaveDialog -found $dlg -Directory (Resolve-Path $InboxDir).Path
