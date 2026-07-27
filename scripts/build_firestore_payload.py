@@ -248,6 +248,19 @@ def build_payload() -> dict:
     images = build_site._read_jsonl(OUTPUT / "images.jsonl")
     topics = build_site._read_json(OUTPUT / "topics.json")
     knowledge = build_site._read_json(OUTPUT / "knowledge.json")
+
+    # 사람 노드 동기화가 build_site.main() 에만 있었다. 일일 갱신은 build_site 를
+    # 거치지 않고 여기로 오므로, 새 사람이 처음 말한 날 그 사람의 노드가 없어
+    # test_person_nodes_match_participants 가 깨지고 배포까지 멈춘다(2026-07-27
+    # '배유나'). 제외 반영 전의 명단으로 맞춘다 — output/knowledge.json 은 제외 전
+    # 원장이고, 발행본에서 빼는 일은 아래 prune_knowledge 가 따로 한다.
+    participants_raw = build_site._read_json(OUTPUT / "participants.json")
+    added = build_site.sync_person_nodes(knowledge, participants_raw, topics)
+    (OUTPUT / "knowledge.json").write_text(
+        json.dumps(knowledge, ensure_ascii=False, indent=2), encoding="utf-8")
+    if added:
+        print("    사람 노드 %d명 추가: %s" % (len(added), ", ".join(added)))
+
     digest_prose = build_site._read_json(OUTPUT / "topic-digests.json")
     # 첨부 원본은 나중에 사람이 모아 넣는다. 없으면 없는 대로 발행한다.
     files_path = OUTPUT / "files.jsonl"

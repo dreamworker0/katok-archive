@@ -9,6 +9,21 @@
 (function () {
   "use strict";
 
+  /* ── 화면 회전 고정 ──
+   *
+   * 설치한 앱을 눕히면 화면이 따라 돌아 읽던 자리를 놓친다. 세로로 묶는다.
+   * manifest 의 "orientation": "portrait" 가 본 수단이고, 여기 lock() 은 이미
+   * 열려 있는 창에도 즉시 먹이려는 보조 수단이다. 둘 다 안드로이드 기준이고
+   * iOS(사파리)는 어느 쪽도 따르지 않는다 — 아이폰에서는 회전 잠금을 써야 한다.
+   * 설치하지 않고 브라우저로 볼 때는 lock() 이 거부되는 게 정상이므로 삼킨다.
+   */
+  try {
+    if (screen.orientation && typeof screen.orientation.lock === "function") {
+      var locking = screen.orientation.lock("portrait");
+      if (locking && typeof locking.catch === "function") locking.catch(function () {});
+    }
+  } catch (e) { /* 브라우저 탭에서는 거부된다 — 정상 */ }
+
   if (!("serviceWorker" in navigator)) return;
 
   var THEME_COLORS = { light: "#FBF6EE", dark: "#292521" };  // styles.css 의 --bg
