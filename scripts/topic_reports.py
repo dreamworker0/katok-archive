@@ -289,6 +289,22 @@ def min_body_for(message_count: int) -> int:
     return MIN_BODY_BY_COUNT[-1][1]
 
 
+def content_chars(text: str | None) -> int:
+    """요약할 수 있는 글자 수. 링크와 사진·동영상 자리표는 빼고 센다.
+
+    왜 빼는가: 이 값이 '보고서가 얇은가'의 기준이 된다. 그런데 링크는 아무리 길어도
+    요약할 내용이 아니고(구글 앱스 스크립트 배포 URL 하나가 100자를 넘는다),
+    '사진'은 본문이 아예 없다는 표시다. 그것까지 세면 요약할 것이 없는 주제에
+    분량을 요구하게 되고, 그건 없는 내용을 지어내라는 말이 된다.
+
+    실측 2026-07-27: t-214 는 3건 108자로 잡혔는데 실제 내용은 "이 강의 녹화해놨어요.
+    시간되실 때 보세요." 한 줄이고, 나머지는 URL 63자와 '사진' 2자였다.
+    """
+    value = _URL.sub(" ", text or "")
+    value = re.sub(r"^(?:사진(?: \d+장)?|동영상|이모티콘)$", " ", value.strip(), flags=re.M)
+    return len(re.sub(r"\s+", "", value))
+
+
 def body_length(report: str) -> int:
     """본문 글자 수. 마크다운 기호는 빼고 실제 내용만 센다."""
     t = re.sub(r"^!\[\[[^\]]+\]\]\s*$", "", report, flags=re.M)  # 사진 자리표는 내용이 아니다

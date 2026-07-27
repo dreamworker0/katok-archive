@@ -56,7 +56,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from scripts.topic_reports import REPORTS_DIR, parse_report
+from scripts.topic_reports import (
+    REPORTS_DIR,
+    content_chars,
+    load_reports,
+    parse_report,
+    thin_reports,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "output"
@@ -497,8 +503,13 @@ def merge_graph(knowledge: dict, graph: dict,
 
 
 def build_report_prompt(thread: dict, msgs: list[dict],
-                        examples: list[dict]) -> str:
-    """보고서만 새로 쓰는 프롬프트. 분류는 이미 끝난 스레드에 쓴다."""
+                        examples: list[dict], min_chars: int | None = None) -> str:
+    """보고서만 새로 쓰는 프롬프트. 분류는 이미 끝난 스레드에 쓴다.
+
+    min_chars 를 주면 '짧아도 된다' 대신 분량 목표를 말한다. 기본 지시는 짧게
+    쓰라는 쪽이라(요약은 원문보다 짧아야 하므로 맞다), 그대로 다시 부르면 얇은
+    보고서가 또 얇게 나온다 — 다시 쓰는 값을 못 얻는다.
+    """
     ex = "\n".join(
         f"  [{t['category']}] {t['title']} — {t.get('summary', '')}"
         for t in examples[:6]
@@ -510,6 +521,16 @@ def build_report_prompt(thread: dict, msgs: list[dict],
         text = (m.get("text") or "").replace("\n", " ⏎ ")
         lines.append(f"  {m.get('date')} {m.get('time')} | "
                      f"{m.get('nickname')} | {text}{extra}")
+    if min_chars:
+        # 분량을 말하되 '채워 넣어라'로 읽히지 않게 한다. 없는 내용을 지어내는 것보다
+        # 얇은 채로 남는 편이 낫다 — 원문을 발행하지 않으니 거짓이 검증되지 않는다.
+        length_rule = (
+            f"  이 대화는 {len(msgs)}건입니다. 본문을 **{min_chars}자 이상**으로,\n"
+            "  오간 내용을 빠짐없이 담아 쓰세요. 다만 대화에 없는 내용으로 분량을\n"
+            "  채우지는 마세요 — 정말 쓸 것이 없으면 짧게 두는 편이 낫습니다."
+        )
+    else:
+        length_rule = ("  원문보다 짧아야 하고, 짧은 대화면 두세 문장으로 충분합니다.")
     return f"""카카오톡 대화 아카이브의 주제 보고서를 씁니다.
 
 이 주제는 이미 분류돼 있습니다. 제목·요지는 그대로 두고, **태그와 본문**만 씁니다.
@@ -528,7 +549,7 @@ def build_report_prompt(thread: dict, msgs: list[dict],
 ## 규칙
 - keywords 는 2~6개. 나중에 이 대화를 찾을 때 쓸 말(도구 이름, 개념, 결과물).
 - report 는 본문 산문. 사실만 쓰고, 대화에 없는 내용을 채우지 마세요.
-  원문보다 짧아야 하고, 짧은 대화면 두세 문장으로 충분합니다.
+{length_rule}
   링크·사진 자리표(![[...]])는 넣지 마세요 — 자료는 화면 아래에 따로 붙습니다.
 
 ## 출력
@@ -561,15 +582,76 @@ def fill_missing_reports(threads: list[dict], model: str,
         return 0
 
     print(f"보고서 없는 주제 {len(missing)}개 — 이번에 최대 {limit}개를 씁니다.")
+    return _write_reports(missing[:limit], model, examples, dry_run, timeout)
+
+
+def find_thin_reports(threads: list[dict]) -> list[tuple[dict, int]]:
+    """대화량에 비해 본문이 얇은 주제를 고른다. [(스레드, 목표 분량)]
+
+    '얇다'의 정의는 topic_reports.thin_reports 하나만 쓴다. 여기서 따로 세면
+    화면 경고와 다시 쓰는 대상이 어긋나, 경고는 남았는데 손댈 방법이 없어진다.
+    """
+    reports = load_reports()
+    counts = {t["id"]: len(t.get("message_ids") or []) for t in threads}
+    raw_chars: dict[str, int] = {}
+    wanted = {mid for t in threads for mid in (t.get("message_ids") or [])}
+    lengths = {m["id"]: content_chars(m.get("text")) for m in read_messages(wanted)}
+    for t in threads:
+        raw_chars[t["id"]] = sum(lengths.get(m, 0) for m in (t.get("message_ids") or []))
+
+    probe = [
+        {"id": t["id"], "count": counts[t["id"]],
+         "report": (reports.get(t["id"]) or {}).get("report") or ""}
+        for t in threads
+    ]
+    by_id = {t["id"]: t for t in threads}
+    out = []
+    for tid, _count, _got, need in thin_reports(probe, raw_chars):
+        out.append((by_id[tid], need))
+    return out
+
+
+def rewrite_thin_reports(threads: list[dict], model: str, examples: list[dict],
+                         dry_run: bool, limit: int = 5,
+                         timeout: int = TIMEOUT_SEC) -> int:
+    """얇은 보고서를 분량 목표를 주고 다시 쓴다. 다시 쓴 편수를 돌려준다.
+
+    보고서 없는 것을 메꾸는 일(fill_missing_reports)과 달리 이건 **매일 돌리지
+    않는다**. 기준을 겨우 넘긴 보고서를 매일 다시 쓰면 같은 내용이 흔들리기만
+    하고, 값은 계속 든다. 옛 백업을 한꺼번에 합친 뒤처럼 얇은 것이 무더기로
+    생겼을 때 사람이 불러 쓴다.
+    """
+    thin = find_thin_reports(
+        [t for t in threads if not UNSORTED_RE.match(str(t.get("id") or ""))])
+    if not thin:
+        print("얇은 보고서가 없습니다.")
+        return 0
+
+    print(f"얇은 보고서 {len(thin)}개 — 이번에 최대 {limit}개를 다시 씁니다.")
+    return _write_reports([t for t, _ in thin[:limit]], model, examples,
+                          dry_run, timeout,
+                          min_by_id={t["id"]: need for t, need in thin[:limit]})
+
+
+def _write_reports(targets: list[dict], model: str, examples: list[dict],
+                   dry_run: bool, timeout: int,
+                   min_by_id: dict[str, int] | None = None) -> int:
+    """주제 목록에 보고서를 써 넣는다. 쓴 편수를 돌려준다.
+
+    '없는 것 메꾸기'와 '얇은 것 다시 쓰기'가 이 루프를 같이 쓴다 — 대상을 고르는
+    기준만 다르고, 쓰고 검사하고 태그를 얹는 절차는 똑같아야 한다.
+    """
     wrote = 0
-    for t in missing[:limit]:
+    for t in targets:
         msgs = read_messages(set(t.get("message_ids") or []))
         if not msgs:
             print(f"  건너뜀({t['id']}): 메시지를 찾지 못했습니다.")
             continue
         raw = sum(len(m.get("text") or "") for m in msgs)
         data = parse_reply(call_claude(
-            build_report_prompt(t, msgs, examples), model, timeout) or "")
+            build_report_prompt(t, msgs, examples,
+                                (min_by_id or {}).get(t["id"])),
+            model, timeout) or "")
         if not data:
             print(f"  건너뜀({t['id']}): 보고서 결과를 받지 못했습니다.")
             continue
@@ -626,7 +708,23 @@ def main() -> int:
                     help=f"claude -p 한 번의 제한 시간(초) (기본: {TIMEOUT_SEC})")
     ap.add_argument("--max", type=int, default=MAX_MESSAGES_PER_RUN, dest="max_messages",
                     help=f"한 번에 분류할 메시지 수 (기본: {MAX_MESSAGES_PER_RUN})")
+    # 매일 실행에는 넣지 않는다 — 기준을 겨우 넘긴 보고서를 매일 다시 쓰면 내용이
+    # 흔들리기만 하고 값은 계속 든다. 사람이 필요할 때 부르는 일이다.
+    ap.add_argument("--rewrite-thin", type=int, metavar="N", default=0,
+                    help="분류 대신, 대화량에 비해 얇은 보고서 N편을 다시 쓴다")
     args = ap.parse_args()
+
+    if args.rewrite_thin:
+        topics = load_json(TOPICS)
+        threads = topics.get("threads", [])
+        examples = [t for t in threads
+                    if not UNSORTED_RE.match(str(t.get("id") or ""))][:12]
+        n = rewrite_thin_reports(threads, args.model, examples, args.dry_run,
+                                 limit=args.rewrite_thin, timeout=args.timeout)
+        if n and not args.dry_run:
+            save_json(TOPICS, topics)
+        emit("REWRITTEN", n)
+        return 0
 
     topics = load_json(TOPICS)
     threads = topics.get("threads", [])

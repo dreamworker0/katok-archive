@@ -3,7 +3,7 @@
 
 import unittest
 
-from scripts.topic_reports import place_context_anchors
+from scripts.topic_reports import content_chars, place_context_anchors, thin_reports
 
 
 class ContextAnchorTest(unittest.TestCase):
@@ -136,6 +136,37 @@ class ContextAnchorTest(unittest.TestCase):
         ]
 
         self.assertEqual(place_context_anchors(report, messages), report)
+
+
+class ContentCharsTest(unittest.TestCase):
+    """'보고서가 얇은가'의 기준이 되는 값이라, 요약할 수 없는 것은 세면 안 된다."""
+
+    def test_link_and_photo_placeholders_do_not_count(self):
+        self.assertEqual(content_chars("사진"), 0)
+        self.assertEqual(content_chars("사진 3장"), 0)
+        self.assertEqual(content_chars("동영상"), 0)
+        self.assertEqual(
+            content_chars("https://script.google.com/macros/s/AKfycbyKIWGSQ/exec"), 0
+        )
+
+    def test_counts_only_the_words_around_a_link(self):
+        self.assertEqual(content_chars("링크 보세요 https://a.com/very/long/path 확인"), 7)
+
+    def test_thin_check_stops_demanding_length_when_there_is_nothing_to_summarize(self):
+        """실측 t-214: 3건 108자로 잡혔지만 실제 내용은 한 줄이었다.
+
+        링크와 '사진'을 세면 요약할 것이 없는 주제에 분량을 요구하게 되고,
+        그건 없는 내용을 지어내라는 말이 된다.
+        """
+        thread = [{"id": "t-1", "count": 3, "report": "김종원이 강의 녹화 링크를 올렸다."}]
+        texts = ["https://drive.google.com/file/d/1PrQQxoy_5mDCrHMgKKsAatVrpSoCq/view",
+                 "사진", "이 강의 녹화해놨어요. 시간되실 때 보세요."]
+
+        naive = thin_reports(thread, {"t-1": sum(len(t) for t in texts)})
+        honest = thin_reports(thread, {"t-1": sum(content_chars(t) for t in texts)})
+
+        self.assertEqual([x[0] for x in naive], ["t-1"])   # 예전 기준: 얇다고 잡힌다
+        self.assertEqual(honest, [])                        # 새 기준: 이 정도면 충분하다
 
 
 if __name__ == "__main__":

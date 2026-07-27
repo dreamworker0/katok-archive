@@ -19,6 +19,7 @@ from pathlib import Path
 
 from scripts.topic_reports import (
     apply_reports,
+    content_chars,
     load_reports,
     place_context_anchors,
     thin_reports,
@@ -413,7 +414,7 @@ def build_data(
     # 쓴 마크다운을 얹는다. 없는 스레드는 한 줄 요약만 남는다.
     apply_reports(threads_meta, load_reports())
     raw_chars = {
-        t["id"]: sum(len(msg_index[m]["text"] or "") for m in t["message_ids"])
+        t["id"]: sum(content_chars(msg_index[m]["text"]) for m in t["message_ids"])
         for t in topics["threads"]
     }
     thin = thin_reports(threads_meta, raw_chars)
