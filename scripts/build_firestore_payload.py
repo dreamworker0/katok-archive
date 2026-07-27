@@ -302,7 +302,9 @@ def build_payload() -> dict:
     participants = rebuild_participants(kept)
 
     data = build_site.build_data(
-        kept, images, participants, topics_pruned, knowledge_pruned, digest_prose, files
+        kept, images, participants, topics_pruned, knowledge_pruned, digest_prose, files,
+        build_site.load_secondary(),
+        set(member_requests.interest_opt_outs(requests)),
     )
 
     # 원문 청크는 더 이상 멤버에게 발행하지 않는다.
@@ -344,6 +346,10 @@ def build_payload() -> dict:
         "thread_count": len(threads_pub),
         "image_count": len(used_images),
         "file_count": len(used_files),
+        # 태그 입구용 색인. 스레드 문서마다 태그가 이미 들어 있지만, 태그 목록을
+        # 화면에서 만들려면 스레드 전체를 훑어야 해서 meta 에 미리 담아 둔다.
+        "tag_index": data["tag_index"],
+        "interests": data["interests"],
         "node_types": data["knowledge"].get("node_types", []),
         "edge_types": data["knowledge"].get("edge_types", []),
         "excluded_count": report["dropped_count"],

@@ -55,6 +55,7 @@ def load_requests() -> list[dict]:
             "email": (r.get("email") or "").strip().lower(),
             "nicknames": nicknames,
             "collection": mode,
+            "hide_interests": bool(r.get("hide_interests")),
             "delete_all": bool(r.get("delete_all")),
             "delete_message_ids": [str(i) for i in (r.get("delete_message_ids") or [])],
         })
@@ -78,6 +79,19 @@ def collection_opt_outs(requests: list[dict]) -> list[str]:
     out = set()
     for r in requests:
         if r["collection"] == "none":
+            out.update(r["nicknames"])
+    return sorted(out)
+
+
+def interest_opt_outs(requests: list[dict]) -> list[str]:
+    """'관심 주제' 화면에서 빠지겠다고 한 사람의 표시명.
+
+    발행을 막는 요청과는 다르다 — 글은 그대로 남고, 그 사람의 관심사를 뽑아
+    보여주는 것만 그만둔다. 화면에서 감추는 게 아니라 발행 데이터에서 뺀다.
+    """
+    out = set()
+    for r in requests:
+        if r.get("hide_interests"):
             out.update(r["nicknames"])
     return sorted(out)
 

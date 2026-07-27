@@ -214,6 +214,8 @@
           threads: threads,
           media: media,
           digests: digests,
+          tag_index: meta.tag_index || null,
+          interests: meta.interests || null,
           knowledge: {
             nodes: graph.nodes,
             edges: graph.edges,
@@ -250,14 +252,24 @@
           var d = r[1].exists ? r[1].data() : null;
           return {
             collection: p.collection || "public",
+            hideInterests: p.hideInterests === true,
             deletion: d
               ? { messageIds: d.messageIds || [], allMessages: d.allMessages === true }
               : null,
           };
         });
       },
-      saveCollection: function (mode) {
-        return prefs.set({ collection: mode, updatedAt: stamp() });
+      /* 두 설정을 **항상 함께** 쓴다.
+       *
+       * merge 로 한 필드만 쓰면 안 된다: 규칙이 collection 값을 검사하는데,
+       * 아직 아무 설정도 없는 사람이 관심주제만 끄면 병합 결과에 collection 이
+       * 없어 규칙에 걸린다(그러면 저장이 조용히 실패한다). */
+      savePreferences: function (mode, hideInterests) {
+        return prefs.set({
+          collection: mode || "public",
+          hideInterests: !!hideInterests,
+          updatedAt: stamp(),
+        });
       },
       saveDeletion: function (messageIds, allMessages) {
         return dels.set({

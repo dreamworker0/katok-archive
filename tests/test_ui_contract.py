@@ -10,6 +10,7 @@ VIEWS = {
     "summary",
     "graph",
     "timeline",
+    "tags",
     "gallery",
     "files",
     "stats",

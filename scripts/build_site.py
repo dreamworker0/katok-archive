@@ -17,6 +17,8 @@ import shutil
 from collections import Counter, OrderedDict, defaultdict
 from pathlib import Path
 
+from scripts import interests as interestlib
+from scripts import tags as taglib
 from scripts.topic_reports import (
     apply_reports,
     content_chars,
@@ -50,6 +52,14 @@ def _read_jsonl(path: Path) -> list[dict]:
 def _read_json(path: Path) -> dict:
     with path.open(encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def load_secondary(path: Path | None = None) -> dict:
+    """보조 분류(주제 id → 분류 id 목록). 파일이 없으면 빈 표 — 없어도 발행된다."""
+    p = path or (OUTPUT / "secondary_categories.json")
+    if not p.exists():
+        return {}
+    return _read_json(p).get("secondary") or {}
 
 
 def _month(date: str) -> str:
@@ -117,8 +127,13 @@ def build_digests(
                     {"url": u, "nickname": m["nickname"], "date": m["date"], "msg_id": m["id"]}
                 )
     threads_by_cat: dict[str, list] = {}
+    # 보조 분류로 걸린 주제. 주 분류 목록과 **섞지 않는다** — 메시지 수 합계는
+    # 주 분류로만 세야 전체 합이 맞는다(한 주제 = 한 분류가 통계의 전제다).
+    also_by_cat: dict[str, list] = {}
     for t in threads_meta:
         threads_by_cat.setdefault(t["category"], []).append(t)
+        for cid in t.get("also") or []:
+            also_by_cat.setdefault(cid, []).append(t)
 
     digests = {}
     for c in topics["categories"]:
@@ -138,6 +153,10 @@ def build_digests(
             "links": links_by_cat.get(cid, []),
             "participants": top_nicks,
             "threads": threads_by_cat.get(cid, []),
+            "also_threads": [
+                {"id": t["id"], "category": t["category"]}
+                for t in also_by_cat.get(cid, [])
+            ],
             "message_count": sum(t["count"] for t in threads_by_cat.get(cid, [])),
         }
     return digests
@@ -266,6 +285,8 @@ def build_data(
     knowledge: dict | None = None,
     digest_prose: dict | None = None,
     files: list[dict] | None = None,
+    secondary: dict | None = None,
+    hide_interests: set[str] | None = None,
 ) -> dict:
     """수집 데이터를 화면 렌더링용 단일 딕셔너리로 조립한다."""
     # 이미지 메시지 → 다운로드된 로컬 경로 매핑
@@ -440,6 +461,19 @@ def build_data(
     # 원문을 발행하지 않으므로 보고서가 원문을 대신해야 한다. 사람이 원문을 읽고
     # 쓴 마크다운을 얹는다. 없는 스레드는 한 줄 요약만 남는다.
     apply_reports(threads_meta, load_reports())
+
+    # 태그 표기를 통일해 `tags` 로 얹는다(보고서 원문은 손대지 않는다).
+    taglib.attach_tags(threads_meta, participants)
+    # 보조 분류 — 한 주제를 여러 분류에서 찾게 하는 곁길. 주 분류는 그대로 하나다.
+    cat_ids = {c["id"] for c in topics["categories"]}
+    for tmeta in threads_meta:
+        also = [
+            cid for cid in ((secondary or {}).get(tmeta["id"]) or [])
+            if cid in cat_ids and cid != tmeta["category"]
+        ]
+        if also:
+            tmeta["also"] = also
+
     raw_chars = {
         t["id"]: sum(content_chars(msg_index[m]["text"]) for m in t["message_ids"])
         for t in topics["threads"]
@@ -471,6 +505,11 @@ def build_data(
         "messages": out_messages,
         "threads": threads_meta,
         "digests": digests,
+        "tag_index": taglib.build_tag_index(threads_meta, participants),
+        "interests": interestlib.build_interests(
+            threads_meta, topics["categories"], hide_interests,
+            taglib.person_names(participants),
+        ),
         "knowledge": {
             "nodes": knowledge.get("nodes", []),
             "edges": knowledge.get("edges", []),
@@ -607,7 +646,8 @@ def main() -> None:
     files_path = OUTPUT / "files.jsonl"
     files = _read_jsonl(files_path) if files_path.exists() else []
 
-    data = build_data(messages, images, participants, topics, knowledge, digest_prose, files)
+    data = build_data(messages, images, participants, topics, knowledge, digest_prose,
+                      files, load_secondary())
     # 화면은 원문이 아니라 스레드 요약과 결과물을 쓴다. 배포본과 같은 모양으로 맞춘다.
     data["threads"] = enrich_threads(data["threads"], data["messages"])
     data["media"] = build_media(data["messages"])

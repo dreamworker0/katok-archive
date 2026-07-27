@@ -8,6 +8,8 @@
   var STATS = A.stats || {};
   var DIGESTS = A.digests || {};
   var KNOW = A.knowledge || { nodes: [], edges: [] };
+  var TAGIDX = A.tag_index || { tags: [], total_tags: 0, hidden_tags: 0, min_count: 2 };
+  var THREAD_BY_ID = {}; THREADS.forEach(function (t) { THREAD_BY_ID[t.id] = t; });
   var CAT_LABEL = {}; CATS.forEach(function (c) { CAT_LABEL[c.id] = c.label; });
 
   // 카테고리 색 (그래프 클러스터·요약·통계 공용)
@@ -204,6 +206,21 @@
         threadRest.map(tl).join("") + "</details>";
     }
 
+    /* 여기 소속은 아니지만 이 분류를 찾아온 사람이 볼 만한 주제(보조 분류).
+     * 위 목록과 섞지 않는다 — 이 분류의 메시지 수는 소속 주제만 센 값이고,
+     * 섞으면 화면의 숫자와 목록이 어긋난다. 원래 어디 소속인지 함께 적어 둔다. */
+    var alsoRows = (d.also_threads || []).map(function (a) {
+      return THREAD_BY_ID[a.id];
+    }).filter(Boolean).sort(function (a, b) {
+      return String(b.end_date || "").localeCompare(String(a.end_date || ""));
+    });
+    var also = alsoRows.map(function (t) {
+      return '<div class="thread-line also" data-start="t-' + esc(t.id) + '"><b>' +
+        esc(t.title) + '</b><span class="tl-home" style="--c:' + colorFor(t.category) +
+        '">' + esc(CAT_LABEL[t.category] || t.category) + "</span>" +
+        '<span class="tl-n">💬 ' + t.count + "</span></div>";
+    }).join("");
+
     /* 모바일에서는 이 아래를 접는다. 12개 주제가 전부 펼쳐지면 첫 화면이 25화면
      * 분량(20,375px)이 되어 아무도 끝까지 보지 않는다. 무엇이 들어 있는지 세어
      * 버튼에 적어 둔다 — 열어봐야 아는 상자는 안 열어보게 된다.
@@ -214,6 +231,7 @@
     var counts = [];
     if ((d.apps || []).length) counts.push("결과물 " + d.apps.length);
     if (links.length) counts.push("링크 " + links.length);
+    if (alsoRows.length) counts.push("곁 주제 " + alsoRows.length);
 
     var body =
       (kw ? '<div class="doc-kw">' + kw + "</div>" : "") +
@@ -221,7 +239,10 @@
       (people ? '<div class="doc-section"><h4>👥 활발한 참여자</h4><div class="people-row">' + people + "</div></div>" : "") +
       (linkHtml ? '<div class="doc-section"><h4>🔗 공유 링크</h4><div class="link-list">' + linkHtml + "</div></div>" : "") +
       (threads ? '<div class="doc-section thread-list"><h4>🧵 소속 대화 주제 ' + threadList.length +
-        "개</h4>" + threads + "</div>" : "");
+        "개</h4>" + threads + "</div>" : "") +
+      (also ? '<div class="doc-section thread-list"><h4>↔️ 여기서도 볼 만한 주제 ' +
+        alsoRows.length + '개</h4><p class="doc-note">다른 분류에 속하지만 이 주제도 ' +
+        '함께 다룬 대화입니다.</p>' + also + "</div>" : "");
 
     return '<article class="doc" id="doc-' + cid + '" style="--c:' + col + '">' +
       '<div class="doc-head"><span class="doc-bar"></span>' +
@@ -365,6 +386,68 @@
     state.q = ""; state.nick = "";
     el.search.value = ""; el.filter.value = "";
     setView("timeline");
+  }
+
+  /* ---------- 태그 입구 ----------
+   *
+   * 분류 12개로는 묻히는 화제가 있다 — 'clasp' 이야기는 다섯 군데 흩어져 있고
+   * 어느 분류에도 'clasp' 이라 적혀 있지 않다. 보고서 태그를 한자리에 모아 그
+   * 길을 낸다. 표기가 갈린 태그는 발행할 때 이미 합쳐 두었다(scripts/tags.py).
+   *
+   * 한 번만 쓰인 태그 800여 개는 목록에 올리지 않는다. 다 늘어놓으면 목록이
+   * 아니라 벽이 되고, 그 태그는 어차피 주제 하나로만 이어진다(검색으로 찾는다).
+   */
+  function renderTags() {
+    var rows = (TAGIDX.tags || []).filter(function (r) { return !r.person; });
+    var people = (TAGIDX.tags || []).filter(function (r) { return r.person; });
+    if (!rows.length) {
+      el.view.innerHTML = emptyState("search", "아직 모인 태그가 없어요",
+        "주제 보고서에 태그가 붙으면 이곳에 모입니다.");
+      return;
+    }
+    var max = rows[0].count;
+    function chip(r) {
+      // 많이 쓰인 태그가 눈에 먼저 들어오게 글자 크기를 조금 키운다(1.0~1.5배).
+      var scale = (1 + 0.5 * (r.count - 1) / Math.max(1, max - 1)).toFixed(2);
+      return '<button class="tag-chip" data-tag="' + esc(r.tag) + '" data-ids="' +
+        esc((r.thread_ids || []).join(",")) + '" style="font-size:' + scale + 'em">' +
+        esc(r.tag) + '<span class="tag-n">' + r.count + "</span></button>";
+    }
+    var html = [
+      '<div class="gal-head"><p class="room-sub">태그 ' + rows.length +
+      "개 · 눌러서 그 태그가 붙은 주제만 봅니다</p></div>",
+      '<label class="tag-search"><span class="sr-only">태그 검색</span>' +
+      '<input id="tagFilter" type="search" placeholder="태그 이름으로 좁히기" ' +
+      'autocomplete="off" /></label>',
+      '<div class="tag-cloud" id="tagCloud">' + rows.map(chip).join("") + "</div>",
+    ];
+    if (TAGIDX.hidden_tags) {
+      html.push('<p class="doc-note">한 주제에서만 쓰인 태그 ' + TAGIDX.hidden_tags +
+        "개는 목록에서 뺐습니다 — 위 검색창이 아니라 화면 위쪽 검색으로 찾을 수 있어요.</p>");
+    }
+    if (people.length) {
+      html.push('<div class="doc-section"><h4>👤 사람 이름으로 붙은 태그</h4>' +
+        '<p class="doc-note">사람은 참여자 필터로 찾는 편이 정확합니다.</p>' +
+        '<div class="tag-cloud small">' + people.map(chip).join("") + "</div></div>");
+    }
+    el.view.innerHTML = html.join("");
+
+    Array.prototype.forEach.call(el.view.querySelectorAll("[data-tag]"), function (b) {
+      b.onclick = function () {
+        var ids = (b.getAttribute("data-ids") || "").split(",").filter(Boolean);
+        pickThreads(ids, "#" + b.getAttribute("data-tag"));
+      };
+    });
+    var input = document.getElementById("tagFilter");
+    if (input) {
+      input.oninput = function () {
+        var q = input.value.trim().toLowerCase();
+        Array.prototype.forEach.call(el.view.querySelectorAll(".tag-chip"), function (b) {
+          var hit = !q || b.getAttribute("data-tag").toLowerCase().indexOf(q) !== -1;
+          b.hidden = !hit;
+        });
+      };
+    }
   }
 
   /** 주제 정렬 키 — 같은 날 주제가 여럿이라 시각까지 봐야 순서가 맞는다. */
@@ -1485,6 +1568,61 @@
     });
   }
 
+  /* 사람별 관심 주제.
+   *
+   * 사람을 평가하는 화면처럼 읽힐 수 있어 조심해서 짰다. 셋을 지킨다.
+   *   - 발언 수 순위를 매기지 않는다(누가 말이 많았나를 겨루는 판이 아니다).
+   *   - '무엇에 관심'까지만 말하고 잘한다·못한다를 말하지 않는다.
+   *   - 본인이 빠질 수 있다. 빠지면 발행 데이터 자체에 안 실린다.
+   * 계산은 발행 단계에서 끝냈다(scripts/interests.py) — 참여한 주제의 분류를
+   * 방 평균과 비교하고, 태그는 여러 사람이 쓴 것의 값을 깎는다. */
+  function interestPanel() {
+    var data = A.interests || { people: [] };
+    var rows = data.people || [];
+    if (!rows.length) return "";
+    function person(p) {
+      var fields = (p.fields || []).map(function (f) {
+        return '<span class="int-field" style="--c:' + colorFor(f.category) + '">' +
+          esc(f.label) + "</span>";
+      }).join("");
+      var topics = (p.topics || []).map(function (t) {
+        return '<button class="tag-chip" data-int-nick="' + esc(p.nickname) +
+          '" data-int-tag="' + esc(t.tag) + '">' + esc(t.tag) + "</button>";
+      }).join("");
+      return '<div class="int-row"><button class="int-name" data-nick="' + esc(p.nickname) +
+        '"><span class="sidebar-avatar" style="' + avatarStyle(p.nickname) +
+        '" aria-hidden="true">' + esc(initial(p.nickname)) + "</span>" + esc(p.nickname) +
+        '<span class="int-n">주제 ' + p.thread_count + "개</span></button>" +
+        (fields ? '<div class="int-fields">' + fields + "</div>" : "") +
+        (topics ? '<div class="tag-cloud small">' + topics + "</div>" : "") + "</div>";
+    }
+    var top = rows.slice(0, 12), rest = rows.slice(12);
+    var body = top.map(person).join("");
+    if (rest.length) {
+      body += '<details class="more-fold"><summary>' + rest.length +
+        "명 더 보기</summary>" + rest.map(person).join("") + "</details>";
+    }
+    return '<div class="panel"><h3>사람별 관심 주제</h3>' +
+      '<p class="doc-note">그 사람이 참여한 대화에서 뽑았습니다. 방 전체가 많이 ' +
+      '이야기한 화제는 값을 낮춰, 그 사람에게 몰린 것만 남깁니다. 주제 ' +
+      (data.min_threads || 3) + "개 미만 참여자는 내지 않습니다." +
+      '<br>이 목록에서 빠지고 싶으면 <b>내 글 관리</b>에서 끄면 됩니다.</p>' +
+      body + "</div>";
+  }
+
+  function bindInterests(scope) {
+    Array.prototype.forEach.call(scope.querySelectorAll("[data-int-tag]"), function (b) {
+      b.onclick = function (e) {
+        e.stopPropagation();
+        state.pick = null;
+        state.nick = b.getAttribute("data-int-nick");
+        state.q = b.getAttribute("data-int-tag");
+        el.filter.value = state.nick; el.search.value = state.q;
+        setView("timeline");
+      };
+    });
+  }
+
   function renderStats() {
     var t = STATS.totals || {}, html = [];
     html.push('<div class="stat-cards">' + card(t.messages, "메시지") + card(t.participants, "참여자") +
@@ -1507,10 +1645,20 @@
       '<p class="hint" style="padding:8px 0 0;text-align:left;font-size:12px">' +
       "막대의 색은 주제입니다. 마우스를 올리면 건수가 보입니다.</p></div>");
 
+    html.push(interestPanel());
     html.push(myReport());
     el.view.innerHTML = html.join("");
     var go = document.getElementById("goMine");
     if (go) go.onclick = function () { setView("mine"); };
+    bindInterests(el.view);
+    Array.prototype.forEach.call(el.view.querySelectorAll("[data-nick]"), function (b) {
+      b.onclick = function () {
+        el.filter.value = b.getAttribute("data-nick");
+        state.nick = el.filter.value; state.q = ""; state.pick = null;
+        el.search.value = "";
+        setView("timeline");
+      };
+    });
   }
 
   // ---------- 라이트박스 ----------
@@ -1759,6 +1907,21 @@
       "</p>" +
       "</div>" +
 
+      /* 관심 주제 화면에서 빠지기.
+       * 화면에서만 감추는 것이 아니라 발행 데이터에서 빠진다 — 감추기만 하면
+       * 브라우저 개발자도구로 그대로 읽힌다. 반영은 다음 밤 갱신 때. */
+      '<div class="mine-card">' +
+      "<h3>사람별 관심 주제</h3>" +
+      '<p class="mine-note">통계 화면에 <b>사람마다 관심 화제</b>를 정리해 보여줍니다. ' +
+      "내 이름이 거기 나오지 않게 할 수 있습니다. 끄면 발행 데이터에서 아예 빠집니다 " +
+      "(내가 쓴 글 자체는 그대로 남습니다).</p>" +
+      '<label class="mine-toggle"><input type="checkbox" id="hideInterests"' +
+      (state.mine.hideInterests ? " checked" : "") + " /> " +
+      "<span>관심 주제 화면에 내 이름 내지 않기</span></label> " +
+      '<button class="btn" id="saveInterests">저장</button>' +
+      '<span class="mine-msg" id="intMsg"></span>' +
+      "</div>" +
+
       '<div class="mine-card">' +
       "<h3>이미 올린 글·사진·첨부 내리기</h3>" +
       (pendingCount
@@ -1831,13 +1994,31 @@
       var n = document.getElementById(id); if (n) n.textContent = text || "";
     };
 
+    var saveInt = document.getElementById("saveInterests");
+    if (saveInt) {
+      saveInt.onclick = function () {
+        var box = document.getElementById("hideInterests");
+        var hide = !!(box && box.checked);
+        setMsg("intMsg", "저장 중…");
+        api.savePreferences(state.mine.collection, hide).then(
+          function () {
+            state.mine.hideInterests = hide;
+            setMsg("intMsg", hide
+              ? "저장했습니다 — 다음 밤 갱신에서 빠집니다."
+              : "저장했습니다.");
+          },
+          function (e) { setMsg("intMsg", "저장 실패: " + (e.message || e)); }
+        );
+      };
+    }
+
     document.getElementById("saveMode").onclick = function () {
       var picked = el.view.querySelector('input[name="collectionMode"]:checked');
       if (!picked) return;
       var mode = picked.value;
       var save = function () {
         setMsg("modeMsg", "저장 중…");
-        api.saveCollection(mode).then(
+        api.savePreferences(mode, state.mine.hideInterests).then(
           function () { state.mine.collection = mode; setMsg("modeMsg", "저장했습니다."); },
           function (e) { setMsg("modeMsg", "저장 실패: " + (e.message || e)); }
         );
@@ -2567,6 +2748,7 @@
     if (!el.mobileMore) return;
     var html = [
       '<button type="button" data-view="graph">관계망</button>',
+      '<button type="button" data-view="tags">태그</button>',
       '<button type="button" data-view="files">첨부파일</button>',
       '<button type="button" data-view="stats">통계</button>',
     ];
@@ -2594,6 +2776,7 @@
     if (state.view === "summary") renderSummary();
     else if (state.view === "graph") renderGraph();
     else if (state.view === "timeline") renderTimeline();
+    else if (state.view === "tags") renderTags();
     else if (state.view === "gallery") renderGallery();
     else if (state.view === "files") renderFiles();
     else if (state.view === "stats") renderStats();

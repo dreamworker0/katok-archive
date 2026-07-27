@@ -120,8 +120,11 @@ service cloud.firestore {
       allow list: if isAdmin();
       allow create, update: if isMember()
         && callerEmail() == prefEmail
-        && request.resource.data.keys().hasOnly(['collection', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['collection', 'hideInterests', 'updatedAt'])
         && request.resource.data.collection in ['public', 'unpublished', 'none']
+        // hideInterests: '사람별 관심 주제' 화면에서 빼 달라는 의사(없으면 false).
+        && (!request.resource.data.keys().hasAny(['hideInterests'])
+            || request.resource.data.hideInterests is bool)
         && request.resource.data.updatedAt == request.time;
       allow delete: if false;
     }

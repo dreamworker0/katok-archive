@@ -93,6 +93,7 @@ async function main() {
         // 권한을 거둔 것과 "내 글 내려달라"는 의사는 별개이므로 계속 반영해야 한다.
         nicknames: nicknames.get(email) || [],
         collection: "public",
+        hide_interests: false,
         delete_all: false,
         delete_message_ids: [],
         requested_at: null,
@@ -114,6 +115,8 @@ async function main() {
     const data = d.data() || {};
     const row = ensure(d.id);
     row.collection = data.collection || "public";
+    // 관심 주제 화면에서 빠지겠다는 의사. 발행 단계에서 그 사람을 아예 안 싣는다.
+    row.hide_interests = data.hideInterests === true;
     row.updated_at = isoOf(data.updatedAt);
     fillNames(row, data);
   });
@@ -141,6 +144,7 @@ async function main() {
   for (const r of requests) {
     const bits = [];
     if (r.collection !== "public") bits.push(`동의=${r.collection}`);
+    if (r.hide_interests) bits.push("관심주제 비공개");
     if (r.delete_all) bits.push("전체삭제");
     if (r.delete_message_ids.length) bits.push(`개별삭제 ${r.delete_message_ids.length}건`);
     if (bits.length) {
@@ -196,6 +200,7 @@ function canonical(requests) {
         email: r.email,
         nicknames: [...(r.nicknames || [])].sort(),
         collection: r.collection || "public",
+        hide_interests: !!r.hide_interests,
         delete_all: !!r.delete_all,
         delete_message_ids: [...(r.delete_message_ids || [])].sort(),
       }))
