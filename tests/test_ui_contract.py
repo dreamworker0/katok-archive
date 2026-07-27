@@ -382,6 +382,23 @@ class MobileDensityContractTests(unittest.TestCase):
         block = self.css[self.css.index(".doc-toggle {"):]
         self.assertIn("min-height: 44px", block[:400])
 
+    def test_category_bar_lies_down_instead_of_disappearing(self):
+        """카테고리 바는 눕히되 없애지 않는다.
+
+        12개가 여러 줄로 접혀 426px 를 먹었다. 다만 카드를 접어 둔 이상 이 바가
+        주제로 가는 유일한 길이라, 숨기면 접힌 카드를 열 방법이 사라진다.
+        """
+        self.assertIn(".cat-nav { flex-wrap: nowrap; overflow-x: auto;", self.mobile)
+        self.assertIn(".cat-nav button { flex: 0 0 auto;", self.mobile)
+        # 숨기지 않았는지.
+        self.assertNotIn(".cat-nav { display: none", self.mobile)
+
+    def test_hero_art_steps_aside_on_mobile_only(self):
+        # 장식이라 alt 가 비어 있다 — 빼도 읽는 데 잃는 것이 없다. 데스크톱은 그대로.
+        self.assertIn(".archive-welcome__art { display: none; }", self.mobile)
+        before_mobile = self.css[:self.css.index("@media (max-width: 760px)")]
+        self.assertIn(".archive-welcome__art", before_mobile)
+
 
 class UiGateContractTests(unittest.TestCase):
     @classmethod

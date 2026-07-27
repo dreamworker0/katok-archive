@@ -752,9 +752,21 @@ img.img-error {
   .gate-state { grid-template-columns: 1fr; min-height: 0; }
   .gate-visual { min-height: 180px; }
   .gate-copy { padding: 28px 22px; }
-  .archive-welcome { grid-template-columns: 1fr; min-height: 0; border-radius: 22px; }
-  .archive-welcome__copy { padding: 34px 24px; }
-  .archive-welcome__art { min-height: 190px; order: -1; }
+  /* 히어로 그림은 세로 190px 를 먼저 먹고 본문을 아래로 민다. 첫 화면에서 실제로
+     찾는 것은 주제 목록이므로 모바일에서는 문구만 남긴다. 장식이라 alt 도 비어
+     있어서 빼도 읽는 데 잃는 것이 없다. 데스크톱은 그대로 둔다. */
+  .archive-welcome { grid-template-columns: 1fr; min-height: 0; border-radius: 22px;
+    margin-bottom: 18px; }
+  .archive-welcome__copy { padding: 24px 20px; }
+  .archive-welcome__art { display: none; }
+
+  /* 카테고리 바는 12개가 여러 줄로 접혀 426px 를 먹었다. 한 줄로 눕히고 옆으로
+     민다 — 접힌 카드에서 주제로 가는 유일한 길이라 없애지 않는다. 화면 끝까지
+     흘려 항목이 잘려 보이게 두는 것이 "옆으로 밀 수 있다" 는 신호다. */
+  .cat-nav { flex-wrap: nowrap; overflow-x: auto; margin: 0 -16px 18px;
+    padding: 0 16px 6px; scrollbar-width: none; }
+  .cat-nav::-webkit-scrollbar { display: none; }
+  .cat-nav button { flex: 0 0 auto; min-height: 36px; }
   .empty-state { grid-template-columns: 1fr; min-height: 0; }
   .empty-state__art { min-height: 160px; }
   .empty-state__copy { padding: 30px 24px; }
