@@ -39,6 +39,7 @@ LLM 장애가 파이프라인을 멈추지 않는다. LLM 이 필요한 곳은 �
 | `scripts/kakao_ocr.ps1` | 화면 글자를 좌표와 함께 읽기(진단용) |
 | `scripts/ingest_incremental.py` | txt → 새 메시지만 추출해 아카이브 갱신 |
 | `scripts/run_daily.ps1` | 위 단계를 순서대로 실행 |
+| `scripts/refresh_watcher.js` | 관리 탭의 '지금 갱신' 을 받아 위를 실행 (상주) |
 
 ## 메뉴를 클릭하지 않는다 — Ctrl+S 를 쓴다
 
@@ -144,6 +145,116 @@ Unregister-ScheduledTask -TaskName '카톡아카이브-일일갱신' -Confirm:$f
 > 새벽 시간대(예: 04:00)는 두 가지로 불리하다. ①그 시각엔 화면이 잠겨 있을
 > 확률이 높다. ②이미 날짜가 넘어가서, 내보내기가 카톡에 로드된 범위만 주는 특성상
 > 전날 대화를 놓칠 수 있다(실측: 16:20 내보내기 = 0.2 KB, 그날 것만).
+
+## 관리 탭의 '지금 갱신' 버튼
+
+23:40 을 기다리지 않고 관리자가 웹에서 갱신을 시작할 수 있다.
+
+```
+[관리 탭 '지금 갱신']
+   → requestRefresh (관리자만)  → settings/refresh 문서에 요청을 적는다
+[이 PC 의 refresh_watcher.js]   ← onSnapshot 으로 즉시 받는다
+   → run_daily.ps1 실행         → 상태를 running / done / failed 로 되쓴다
+[관리 탭]                        ← 상태를 실시간으로 표시 (진행 중엔 버튼 잠금)
+```
+
+### 왜 버튼이 직접 실행하지 않는가
+
+갱신의 본체는 **카톡 창에 Ctrl+S 를 보내고 로컬 `output/` 을 고치는 일**이다.
+클라우드에는 카톡도 `output/` 도 없다. 그래서 Function 은 요청만 적고, 실제 실행은
+이 PC 에 상주하는 감시 스크립트가 맡는다. 버튼은 "갱신한다"가 아니라
+**"갱신하라고 남긴다"** 에 가깝다 — 화면도 그렇게 보여준다.
+
+폴링이 아니라 리스너를 쓴다. 30초 폴링이면 아무 일 없는 날에도 하루 2,880 읽기가
+나가고 버튼 반응도 최대 30초 늦다. `onSnapshot` 은 바뀔 때만 들고 즉시 반응한다.
+
+### 상태
+
+| 상태 | 뜻 |
+|---|---|
+| `queued` | 요청을 적었다. PC 가 받으면 시작한다 |
+| `running` | 실행 중. 버튼이 잠긴다 |
+| `done` | 끝났다. 새 메시지 건수를 함께 보여준다 |
+| `failed` | 멈춘 단계와 사유를 보여준다 |
+| `skipped` | 이미 다른 갱신이 돌고 있어 건너뜀 |
+| `expired` | 6시간 넘게 묵은 요청이라 실행하지 않음 |
+
+감시는 5분마다 `watcherSeenAt` 을 쓴다. 화면은 12분까지 살아 있는 것으로 보고,
+그보다 오래 조용하면 **"PC 가 응답하지 않습니다"** 를 띄운다. 이게 없으면 눌러도
+아무 일이 없는데 이유를 알 수 없다.
+
+### 겹쳐 돌지 않는 이유
+
+실행 경로가 둘이 됐다 — 23:40 스케줄러와 버튼. 스케줄러의 `IgnoreNew` 는 자기
+작업만 막으므로 23:40 직전에 버튼을 누르면 둘이 동시에 발행에 들어갈 수 있다.
+
+그래서 `run_daily.ps1` 이 **`logs\run_daily.lock` 파일 핸들을 배타적으로 잡는다.**
+PID 파일이 아니라 핸들인 이유: 프로세스가 강제 종료돼도 OS 가 핸들을 닫아 잠금이
+저절로 풀린다 — 찌꺼기 때문에 다음 갱신이 영영 막히는 일이 없다. 잠겨 있으면
+**exit 75**(실패가 아니라 '겹쳐서 안 함')로 끝나고 화면에는 `skipped` 로 뜬다.
+
+### 멈춘 상태 해제
+
+PC 가 꺼지거나 감시가 죽으면 문서가 `queued`·`running` 으로 남는다. 오래되면
+(대기 30분 / 실행 90분) 화면에 **'멈춘 상태 해제하고 다시 요청'** 버튼이 나오고,
+`requestRefresh({force:true})` 로 밀어낸다. 실제로 돌고 있었다면 위의 파일 잠금이
+막으므로 강제 해제로 겹쳐 돌 일은 없다.
+
+### 감시 스크립트 등록
+
+```powershell
+node scripts\refresh_watcher.js --dry-run   # 무엇을 할지만 출력
+node scripts\refresh_watcher.js --once      # 대기 중인 요청 하나만 처리하고 끝
+npm run watch:refresh                       # 상주
+```
+
+작업 이름 **`카톡아카이브-갱신감시`** 로 등록되어 있다 (2026-07-27 등록).
+23:40 작업과 같은 이유로 **대화형 세션**이 필요하다 — 결국 카톡 창을 조작하기 때문이다.
+
+| 항목 | 값 | 이유 |
+|---|---|---|
+| 트리거 | 로그온 시 | 상주 프로세스라 세션이 열릴 때 한 번 뜨면 된다 |
+| 실행 | `C:\Program Files\nodejs\node.exe scripts\refresh_watcher.js` | **절대 경로.** 작업 스케줄러가 PATH 를 못 잡는 경우가 있다 |
+| 시간 제한 | **없음 (`PT0S`)** | 상주인데 기본 3일 제한에 걸려 조용히 죽으면 그날부터 버튼이 먹지 않는다 |
+| 다시 시작 | 5분 간격 3회 | 리스너가 끊겨 스스로 종료했을 때 다시 띄운다 |
+| 동시 실행 | `IgnoreNew` | 두 감시가 같은 요청을 잡아 카톡을 동시에 조작하지 않게 |
+| 권한 | Limited (관리자 아님) | 카톡과 같은 권한이어야 한다 |
+
+### 등록은 `schtasks /xml` 로 한다 — `Register-ScheduledTask` 는 안 된다
+
+`Register-ScheduledTask` 는 권한 상승 없이 부르면 **Access denied
+(HRESULT 0x80070005)** 로 실패한다(실측). `schtasks.exe /create /xml` 은 같은
+사용자·같은 설정으로 그냥 된다. 등록에 쓴 XML 은
+[`docs/assets/watcher-task.xml`](assets/watcher-task.xml) 에 있다.
+
+XML 안의 `__USER__` 를 등록하는 사람으로 바꿔 넣는다. 저장소에 계정명·호스트명을
+박아두지 않으려고 자리표로 뒀다 — 이 저장소는 개인정보를 담지 않는다.
+
+```powershell
+$tmp = Join-Path $env:TEMP 'watcher-task.xml'
+$xml = [System.IO.File]::ReadAllText('docs\assets\watcher-task.xml', [System.Text.Encoding]::Unicode).Replace('__USER__', "$env:USERDOMAIN\$env:USERNAME")
+[System.IO.File]::WriteAllText($tmp, $xml, [System.Text.Encoding]::Unicode)
+schtasks /create /tn '카톡아카이브-갱신감시' /xml $tmp /f
+```
+
+`WriteAllText` 로 **UTF-16** 으로 쓰는 것이 중요하다 — `schtasks` 가 요구한다.
+`Set-Content` 기본 인코딩으로 쓰면 읽지 못한다. 확인·해제·즉시 시작:
+
+```powershell
+Get-ScheduledTaskInfo -TaskName '카톡아카이브-갱신감시'
+```
+```powershell
+Start-ScheduledTask -TaskName '카톡아카이브-갱신감시'
+```
+```powershell
+Unregister-ScheduledTask -TaskName '카톡아카이브-갱신감시' -Confirm:$false
+```
+
+> `LastTaskResult` 가 **267009**(0x41301)면 실패가 아니라 **'지금 실행 중'** 이다.
+> 상주 작업이라 정상 상태가 그것이다.
+
+로그는 `logs\refresh-YYYYMMDD.log` 에 남는다. 감시가 살아 있는지는 관리 탭이
+`watcherSeenAt` 으로 보여주므로, 죽으면 화면에서 먼저 눈에 띈다.
 
 ### 무인 실행 전제
 - 카카오톡이 실행 중이고 해당 방 창이 열려 있어야 한다

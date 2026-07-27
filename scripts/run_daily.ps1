@@ -57,6 +57,25 @@ function Say { param([string]$m, [string]$lvl = 'INFO')
     Add-Content -Path $log -Value $line -Encoding utf8
 }
 
+# 한 번에 하나만 돈다 — 겹쳐 돌면 발행이 반쪽 상태로 섞인다.
+#
+# 실행 경로가 둘이 됐다: 매일 23:40 작업 스케줄러, 그리고 관리 탭의 '지금 갱신'
+# (refresh_watcher.js 가 이 스크립트를 부른다). 스케줄러의 IgnoreNew 는 자기
+# 작업만 막으므로, 23:40 직전에 버튼을 누르면 두 개가 동시에 발행에 들어간다.
+#
+# PID 파일이 아니라 파일 핸들을 잡는다. 프로세스가 죽으면 OS 가 핸들을 닫아
+# 잠금이 저절로 풀린다 — 강제 종료된 실행이 남긴 찌꺼기 때문에 다음 갱신이
+# 영영 막히는 일이 없다.
+$lockPath = Join-Path $LogDir 'run_daily.lock'
+try {
+    $lock = [System.IO.File]::Open($lockPath, 'OpenOrCreate', 'Write', 'None')
+} catch {
+    Say "다른 갱신이 이미 실행 중입니다 — 중단합니다." 'WARN'
+    # 75 는 '실패'가 아니라 '겹쳐서 안 함'이라는 뜻이다. 부르는 쪽이 구분해야
+    # 화면에 엉뚱한 실패로 뜨지 않는다.
+    exit 75
+}
+
 function Invoke-Step {
     param([string]$name, [scriptblock]$body)
     Say "--- $name ---"
@@ -147,4 +166,8 @@ Say "===== 일일 갱신 완료: 새 메시지 $added 건 발행 ====="
 if ($added -gt 0) {
     Say "주제 분류가 필요한 '미분류' 스레드가 생겼습니다 — 확인해 정리하세요."
 }
+
+# $lock 을 명시적으로 닫지 않는다. 위쪽 exit 경로가 여럿이라 한 군데서 닫아도
+# 새지 않게 만들 수 없고, 프로세스가 끝나면 OS 가 어차피 닫는다. 이 스크립트는
+# 항상 `powershell -File` 로 자기 프로세스에서 돈다.
 exit 0

@@ -42,7 +42,9 @@
     confirmSubmit: document.getElementById("confirmSubmit"),
   };
   var state = { view: "summary", q: "", nick: "", graph: null, session: null,
-                mine: null, admin: null, gview: "grid", tsort: "desc", pick: null };
+                mine: null, admin: null, gview: "grid", tsort: "desc", pick: null,
+                // 갱신 상태와 그 구독 해제 함수 (관리자 전용)
+                refresh: null, refreshUnsub: null };
   try {
     var savedG = localStorage.getItem("gallery-view");
     if (savedG === "list" || savedG === "grid") state.gview = savedG;
@@ -1904,6 +1906,182 @@
     };
   }
 
+  /* ---------- 지금 갱신 ----------
+   *
+   * 버튼은 갱신을 '실행'하지 않는다. requestRefresh 가 settings/refresh 에 요청을
+   * 적고, 그 PC 에 상주하는 감시 스크립트가 받아 run_daily.ps1 을 돌린다. 갱신의
+   * 본체가 카톡 창을 조작하는 일이라 클라우드에서는 할 수 없기 때문이다.
+   *
+   * 그래서 화면이 반드시 보여줘야 하는 것이 둘 있다.
+   *   1. PC 가 듣고 있는가 — 아니면 눌러도 아무 일이 없다. 하트비트로 판단한다.
+   *   2. 지금 어느 단계인가 — 몇 분 걸리는 일이라 상태가 안 보이면 관리자는
+   *      새로고침을 반복하고, 결국 "먹었나?" 하며 또 누른다.
+   */
+
+  // 감시 스크립트는 5분마다 하트비트를 쓴다. 두 번 놓칠 여유를 준다.
+  var WATCHER_ALIVE_MS = 12 * 60 * 1000;
+
+  function msAgo(value) {
+    if (!value) return null;
+    var t = Date.parse(String(value));
+    return isNaN(t) ? null : (Date.now() - t);
+  }
+
+  function agoText(value) {
+    var ms = msAgo(value);
+    if (ms === null) return "";
+    if (ms < 60000) return "방금";
+    var m = Math.floor(ms / 60000);
+    if (m < 60) return m + "분 전";
+    var h = Math.floor(m / 60);
+    if (h < 24) return h + "시간 전";
+    return Math.floor(h / 24) + "일 전";
+  }
+
+  function watcherAlive(r) {
+    var ms = msAgo(r && r.watcherSeenAt);
+    return ms !== null && ms < WATCHER_ALIVE_MS;
+  }
+
+  /** 상태가 '멈춰 있는' 것으로 보이는가 — 강제 해제 버튼을 낼지 정한다.
+   *
+   *  PC 가 꺼지거나 감시가 죽으면 문서가 영영 대기·진행 중으로 남는다. 되돌릴 길이
+   *  없으면 관리자는 콘솔을 열어 문서를 손으로 고쳐야 한다.
+   */
+  function refreshStuck(r) {
+    if (!r) return false;
+    if (r.status === "queued") {
+      return !watcherAlive(r) || msAgo(r.requestedAt) > 30 * 60 * 1000;
+    }
+    if (r.status === "running") {
+      return !watcherAlive(r) || msAgo(r.startedAt) > 90 * 60 * 1000;
+    }
+    return false;
+  }
+
+  function refreshCardBody(r) {
+    var status = (r && r.status) || "idle";
+    var busy = status === "queued" || status === "running";
+    var alive = watcherAlive(r);
+
+    var TONE = { done: "ok", failed: "bad", expired: "bad", skipped: "bad" };
+    var HEAD = {
+      idle: "아직 버튼으로 갱신한 기록이 없습니다.",
+      queued: "요청을 남겼습니다 — PC 가 받으면 시작합니다.",
+      running: "갱신하고 있습니다…",
+      done: "갱신을 마쳤습니다.",
+      failed: "갱신이 실패했습니다.",
+      skipped: "갱신을 건너뛰었습니다.",
+      expired: "요청이 만료됐습니다.",
+    };
+
+    var when = status === "running"
+      ? (r && r.startedAt && "시작 " + agoText(r.startedAt))
+      : (r && r.finishedAt && agoText(r.finishedAt));
+
+    var html = [
+      '<p class="rf-state ' + (TONE[status] || "") + '">' +
+      (busy ? '<span class="rf-spin" aria-hidden="true"></span>' : "") +
+      esc(HEAD[status] || status) +
+      (when ? ' <span class="adm-mail">' + esc(when) + "</span>" : "") + "</p>",
+    ];
+
+    if (r && r.message) {
+      html.push('<p class="mine-note">' + esc(r.message) + "</p>");
+    }
+
+    // PC 가 듣고 있는지는 대기 중일 때 가장 중요하다. 진행 중·끝난 뒤에는
+    // 굳이 걱정시키지 않는다.
+    if (!alive && (status === "idle" || status === "queued")) {
+      html.push('<p class="rf-warn">이 아카이브를 갱신하는 PC 가 응답하지 않습니다' +
+        (r && r.watcherSeenAt ? " (마지막 응답 " + esc(agoText(r.watcherSeenAt)) + ")" : "") +
+        ". PC 가 켜져 있고 로그인된 상태여야 갱신이 시작됩니다. " +
+        "요청은 남아 있으니 PC 가 깨어나면 이어서 실행됩니다.</p>");
+    } else if (alive && status !== "running") {
+      html.push('<p class="mine-note">PC 연결됨 · 마지막 응답 ' +
+        esc(agoText(r.watcherSeenAt)) + "</p>");
+    }
+
+    html.push('<div class="rf-act">' +
+      '<button class="btn rf-go"' + (busy ? " disabled" : "") + ">" +
+      (busy ? "갱신 중…" : "지금 갱신") + "</button>" +
+      (refreshStuck(r)
+        ? ' <button class="btn ghost rf-force">멈춘 상태 해제하고 다시 요청</button>'
+        : "") +
+      "</div>");
+
+    html.push('<p class="mine-note">카톡에서 대화를 내보내 새 글·사진·통계를 ' +
+      "지금 반영합니다. 주제 분류와 요지 산문은 사람이 정리해야 하므로 " +
+      "새 글은 ‘미분류’에 들어갑니다. PC 가 켜져 있고 카톡 방 창이 열려 있어야 합니다.</p>");
+
+    html.push('<p class="adm-msg" id="rfMsg"></p>');
+    return html.join("");
+  }
+
+  /** 카드만 다시 그린다. 관리 화면 전체를 그리면 열어둔 패널과 스크롤이 날아간다. */
+  function renderRefreshCard() {
+    var host = document.getElementById("admRefresh");
+    if (!host) return;
+    host.innerHTML = "<h3>지금 갱신</h3>" + refreshCardBody(state.refresh);
+
+    var msg = document.getElementById("rfMsg");
+    var go = host.querySelector(".rf-go");
+    var force = host.querySelector(".rf-force");
+
+    var send = function (isForce) {
+      if (msg) msg.textContent = "요청하는 중…";
+      if (go) go.disabled = true;
+      state.session.admin.requestRefresh(isForce).then(
+        function () { if (msg) msg.textContent = ""; },
+        function (e) {
+          if (msg) msg.textContent = "요청 실패: " + (e.message || String(e));
+          if (go) go.disabled = false;
+        }
+      );
+    };
+
+    if (go) {
+      go.onclick = function () {
+        confirmAction({
+          title: "지금 갱신할까요?",
+          description: "카톡에서 대화를 내보내 새 글을 반영하고 다시 발행합니다. " +
+            "몇 분 걸리고, 그동안 그 PC 의 카톡 창이 잠깐 조작됩니다.",
+          confirmLabel: "갱신하기",
+          tone: "neutral",
+        }, function () { send(false); });
+      };
+    }
+    if (force) {
+      force.onclick = function () {
+        confirmAction({
+          title: "멈춘 상태를 해제할까요?",
+          description: "진행 중으로 남은 기록을 밀어내고 새로 요청합니다. " +
+            "실제로 갱신이 돌고 있었다면 PC 쪽 잠금이 막아 주므로 겹쳐 돌지는 않습니다.",
+          confirmLabel: "해제하고 요청",
+        }, function () { send(true); });
+      };
+    }
+  }
+
+  function watchRefresh() {
+    if (state.refreshUnsub) return;
+    state.refreshUnsub = state.session.admin.watchRefresh(function (data, err) {
+      if (err) {
+        var m = document.getElementById("rfMsg");
+        if (m) m.textContent = "상태를 읽지 못했습니다: " + (err.message || String(err));
+        return;
+      }
+      state.refresh = data;
+      renderRefreshCard();
+    });
+  }
+
+  function unwatchRefresh() {
+    if (!state.refreshUnsub) return;
+    state.refreshUnsub();
+    state.refreshUnsub = null;
+  }
+
   function adminClaimRow(c, parts) {
     var hit = parts[c.nickname];
     var match = hit
@@ -1950,6 +2128,10 @@
       '<section class="adm">' +
       '<h2 class="mine-title">관리</h2>' +
 
+      // 내용은 renderRefreshCard 가 채운다 — 상태가 실시간으로 바뀌므로
+      // 관리 화면 전체와 다시 그리는 주기를 분리한다.
+      '<div class="mine-card" id="admRefresh"></div>' +
+
       '<div class="mine-card"><h3>열람 신청 ' + d.claims.length + "건</h3>" +
       (d.claims.length
         ? d.claims.map(function (c) { return adminClaimRow(c, parts); }).join("")
@@ -1963,7 +2145,8 @@
             return '<div class="adm-line"><b>' + esc(r.id) + "</b> — " + esc(n) + "</div>";
           }).join("")
         : '<p class="mine-note">요청이 없습니다.</p>') +
-      '<p class="mine-note">반영은 매일 23:40 자동 갱신 때 이뤄집니다. ' +
+      '<p class="mine-note">반영은 매일 23:40 자동 갱신 때, 또는 위 ‘지금 갱신’ 을 ' +
+      "누를 때 이뤄집니다. " +
       "남의 글을 지우려는 요청은 반영 단계에서 걸러지고 로그에 남습니다.</p></div>" +
 
       '<div class="mine-card"><h3>수집 동의 — 기본값이 아닌 ' + pending.length + "명</h3>" +
@@ -1989,7 +2172,8 @@
           }).join("")
         : '<p class="mine-note">뺀 주제가 없습니다. 주제 흐름 탭의 카드에서 뺄 수 있습니다.</p>') +
       '<p class="mine-note">뺀 주제는 발행본에서 사라져 아무에게도 보이지 않습니다. ' +
-      "원본은 남아 있어 되돌리면 다시 나옵니다. 반영은 오늘 밤 갱신 때입니다.</p>" +
+      "원본은 남아 있어 되돌리면 다시 나옵니다. " +
+      "반영은 오늘 밤 갱신 때, 또는 위 ‘지금 갱신’ 을 누를 때입니다.</p>" +
       '<p class="adm-msg" id="hideMsg"></p></div>' +
 
       '<div class="mine-card"><h3>멤버 ' + d.members.length + "명</h3>" +
@@ -2031,6 +2215,8 @@
       "</p><p class=\"adm-msg\" id=\"roleMsg\"></p></div>" +
       "</section>";
 
+    renderRefreshCard();
+    watchRefresh();
     bindAdminActions();
   }
 
@@ -2337,6 +2523,9 @@
 
   function setView(v) {
     if (state.graph && v !== "graph") { state.graph.destroy(); state.graph = null; }
+    // 관리 화면을 떠나면 갱신 상태 구독을 끊는다. 안 끊으면 다른 탭을 보는 동안에도
+    // 리스너가 살아 있고, 관리 화면에 다시 들어올 때마다 하나씩 더 붙는다.
+    if (v !== "admin") unwatchRefresh();
     state.view = v;
     setNavigationState(v);
     setMobileMore(false);

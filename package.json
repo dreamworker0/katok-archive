@@ -12,6 +12,8 @@
     "test": "node --test tests/*.test.js",
     "hosting": "python -m scripts.build_hosting",
     "claims": "node scripts/approve_claims.js",
+    "watch:refresh": "node scripts/refresh_watcher.js",
+    "watch:refresh:once": "node scripts/refresh_watcher.js --once",
     "deploy": "firebase deploy"
   },
   "dependencies": {

@@ -319,6 +319,23 @@
       setRole: function (email, role) {
         return call("setMemberRole", { email: email, role: role });
       },
+
+      /** '지금 갱신' 요청. 실행이 아니라 요청이다 — 이 PC 의 감시 스크립트가 받는다. */
+      requestRefresh: function (force) {
+        return call("requestRefresh", { force: force === true });
+      },
+
+      /** 갱신 상태를 실시간으로 구독한다. 해제 함수를 돌려준다.
+       *
+       *  왜 get 이 아니라 구독인가: 갱신은 몇 분 걸리고, 그 사이 화면이 멈춰 있으면
+       *  관리자는 새로고침을 반복하게 된다. 상태가 바뀔 때만 읽으므로 비용도 적다.
+       */
+      watchRefresh: function (onChange) {
+        return db.collection("settings").doc("refresh").onSnapshot(
+          function (d) { onChange(d.exists ? d.data() : null, null); },
+          function (e) { onChange(null, e); }
+        );
+      },
     };
   }
 

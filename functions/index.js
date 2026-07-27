@@ -11,9 +11,10 @@
  *   그 일을 하는 서버 조각이 필요하다 — 이 파일이 그것이다.
  *
  * 여기 있는 것
- *   approveClaim  관리자: 신청 승인 → members 문서 + 클레임 + 신청서 정리
- *   rejectClaim   관리자: 신청 반려
- *   ensureClaim   본인: members 에 있는데 클레임이 없으면 스스로 받아간다
+ *   approveClaim    관리자: 신청 승인 → members 문서 + 클레임 + 신청서 정리
+ *   rejectClaim     관리자: 신청 반려
+ *   requestRefresh  관리자: '지금 갱신' — 실행이 아니라 요청만 적는다(아래 설명)
+ *   ensureClaim     본인: members 에 있는데 클레임이 없으면 스스로 받아간다
  *
  * ensureClaim 이 필요한 이유
  *   멤버는 웹 승인 말고도 여러 경로로 생긴다 — config/members.json 을 손으로 고치고
@@ -317,6 +318,83 @@ exports.setThreadHidden = onCall(async (request) => {
   }
   await ref.set({ hidden: rest, updatedAt: new Date().toISOString() }, { merge: true });
   return { ok: true, threadId, hidden, count: rest.length };
+});
+
+/* ---------- 지금 갱신 ----------
+ *
+ * 왜 갱신을 여기서 실행하지 않는가
+ *   갱신의 본체는 카톡 창에 Ctrl+S 를 보내 대화를 내보내고, 로컬 output/ 을 고친 뒤
+ *   발행하는 일이다. 클라우드에는 카톡도 output/ 도 없다. 그래서 이 함수는 "요청을
+ *   적어두는" 일까지만 하고, 그 PC 에 상주하는 scripts/refresh_watcher.js 가
+ *   settings/refresh 를 보고 있다가 받아서 실행한다.
+ *
+ *   따라서 버튼은 "갱신한다"가 아니라 "갱신하라고 남긴다"에 가깝다. PC 가 꺼져
+ *   있으면 대기 상태로 남고, 오래 지나면 만료된다 — 화면이 그 사실을 그대로 보여준다.
+ *
+ * 겹쳐 돌지 못하게 막는 이유
+ *   두 개가 동시에 발행에 들어가면 발행본이 반쪽 상태로 섞인다. 그래서 대기·진행
+ *   중이면 새 요청을 거절한다. 다만 PC 가 꺼지거나 감시가 죽으면 상태가 영영
+ *   '진행 중'으로 남을 수 있어, 오래된 것은 자동으로 놓아주고 force 로 강제 해제할
+ *   길도 둔다. (run_daily.ps1 에도 파일 잠금이 있어 실제 동시 실행은 거기서 막힌다.)
+ */
+
+// 대기가 이만큼 지나면 'PC 가 못 받았다'로 보고 새 요청을 허용한다.
+const REFRESH_QUEUE_STALE_MS = 30 * 60 * 1000;
+// 실행이 이만큼 지나면 죽은 것으로 본다. 작업 스케줄러 시간 제한이 1시간이므로
+// 그보다 넉넉히 잡아, 살아 있는 실행을 죽었다고 오판하지 않는다.
+const REFRESH_RUN_STALE_MS = 90 * 60 * 1000;
+
+/** ISO 문자열이든 Timestamp 든 밀리초로. 못 읽으면 null (= 아주 오래된 것으로 취급). */
+function millisOf(value) {
+  if (!value) return null;
+  if (typeof value.toMillis === "function") return value.toMillis();
+  const t = Date.parse(String(value));
+  return Number.isNaN(t) ? null : t;
+}
+
+exports.requestRefresh = onCall(async (request) => {
+  const caller = await requireAdmin(request);
+  const force = !!(request.data && request.data.force === true);
+  const ref = db().collection("settings").doc("refresh");
+  const now = Date.now();
+
+  const outcome = await db().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const cur = snap.exists ? (snap.data() || {}) : {};
+    const status = cur.status || "idle";
+    const since = millisOf(status === "running" ? cur.startedAt : cur.requestedAt);
+    const age = since === null ? Infinity : now - since;
+
+    if (!force && status === "queued" && age < REFRESH_QUEUE_STALE_MS) {
+      throw new HttpsError("failed-precondition",
+        "이미 갱신을 요청해 두었습니다. PC 가 요청을 받으면 시작합니다.");
+    }
+    if (!force && status === "running" && age < REFRESH_RUN_STALE_MS) {
+      throw new HttpsError("failed-precondition",
+        "지금 갱신이 진행 중입니다. 끝난 뒤에 다시 눌러 주세요.");
+    }
+
+    // 감시 스크립트는 requestId 로 '이미 처리한 요청'을 가린다. 같은 값이 두 번
+    // 나오면 재시작한 감시가 끝난 일을 또 돌리므로, 매번 새로 만든다.
+    const requestId = "r-" + now;
+    tx.set(ref, {
+      requestId,
+      status: "queued",
+      requestedBy: caller,
+      requestedAt: new Date().toISOString(),
+      startedAt: null,
+      finishedAt: null,
+      exitCode: null,
+      newMessages: null,
+      message: "",
+      // 무엇을 밀어냈는지 남긴다 — 강제 해제가 잦으면 감시가 불안한 것이다.
+      tookOverFrom: (status === "queued" || status === "running") ? status : null,
+    }, { merge: true });
+
+    return { requestId, previous: status, previousAgeMs: age === Infinity ? null : age };
+  });
+
+  return { ok: true, ...outcome };
 });
 
 exports.ensureClaim = onCall(async (request) => {

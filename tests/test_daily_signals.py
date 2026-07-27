@@ -62,8 +62,15 @@ class FailSafeDirectionTests(unittest.TestCase):
 
     def test_missing_marker_is_logged_loudly(self):
         # 조용히 넘어가면 다음에도 같은 일이 반복된다.
-        self.assertEqual(4, DAILY.count("'WARN'"))
+        #
+        # 파일 전체의 WARN 개수를 세지 않는다. 무관한 경고(예: 갱신 잠금 충돌)가
+        # 하나 늘 때마다 깨지는 반면, 정작 '표식 누락이 조용해지는' 변경은 다른
+        # WARN 이 하나 늘어나 있으면 통과해 버린다. 두 블록을 직접 본다.
         self.assertIn("표식 없음", DAILY)
+        for marker in ("REQUESTS_CHANGED 표식 없음", "NEW_MESSAGES 표식 없음"):
+            with self.subTest(marker=marker):
+                block = DAILY[DAILY.index(marker):][:400]
+                self.assertEqual(2, block.count("'WARN'"))
 
 
 class EncodingSetupTests(unittest.TestCase):
@@ -98,6 +105,40 @@ class RunnerStillGuardsPublishingTests(unittest.TestCase):
             "멤버 요청 동기화", "증분 반영", "발행본 생성", "Firestore 적재"
         )]
         self.assertEqual(order, sorted(order))
+
+
+class SingleRunLockTests(unittest.TestCase):
+    """실행 경로가 둘이 됐다 — 23:40 스케줄러와 관리 탭의 '지금 갱신'.
+
+    스케줄러의 IgnoreNew 는 자기 작업만 막으므로, 23:40 직전에 버튼을 누르면 둘이
+    동시에 발행에 들어간다. 그래서 잠금은 run_daily.ps1 안에 있어야 한다.
+    """
+
+    def test_lock_is_an_exclusive_file_handle(self):
+        # PID 파일이 아니라 핸들이어야 한다. 프로세스가 강제 종료돼도 OS 가 닫아
+        # 잠금이 저절로 풀리므로, 찌꺼기 때문에 다음 갱신이 영영 막히지 않는다.
+        self.assertIn("[System.IO.File]::Open($lockPath, 'OpenOrCreate', 'Write', 'None')",
+                      DAILY)
+
+    def test_contention_exits_with_a_distinct_code(self):
+        # '실패' 와 '겹쳐서 안 함' 은 다르다. 부르는 쪽(refresh_watcher.js)이
+        # 구분해야 화면에 엉뚱한 실패로 뜨지 않는다.
+        block = DAILY[DAILY.index("$lockPath ="):]
+        self.assertIn("exit 75", block[:900])
+
+    def test_lock_is_taken_before_any_work(self):
+        body = DAILY[DAILY.index("$ErrorActionPreference"):]
+        lock = body.index("[System.IO.File]::Open($lockPath")
+        for step in ("멤버 요청 동기화", "증분 반영", "발행본 생성", "Firestore 적재"):
+            with self.subTest(step=step):
+                self.assertLess(lock, body.index("Invoke-Step '%s'" % step))
+
+    def test_watcher_agrees_on_the_code(self):
+        watcher = (ROOT / "scripts" / "refresh_watcher.js").read_text(encoding="utf-8")
+        self.assertIn("EXIT_ALREADY_RUNNING = 75", watcher)
+        # 겹침은 실패가 아니라 skipped 로 보고해야 한다
+        block = watcher[watcher.index("EXIT_ALREADY_RUNNING)"):][:600]
+        self.assertIn('status: "skipped"', block)
 
 
 if __name__ == "__main__":

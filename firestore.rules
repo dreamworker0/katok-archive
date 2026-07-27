@@ -62,8 +62,12 @@ service cloud.firestore {
 
     // ── 운영 설정: 관리자만 본다 ──
     //
-    // 발행에서 뺀 주제 목록. 뺀 주제는 발행본에 없으므로 이 목록이 없으면
-    // 되돌릴 방법이 사라진다. 쓰기는 setThreadHidden Function 으로만.
+    // settings/threads  발행에서 뺀 주제 목록. 뺀 주제는 발행본에 없으므로 이 목록이
+    //                   없으면 되돌릴 방법이 사라진다. 쓰기는 setThreadHidden 으로만.
+    // settings/refresh  '지금 갱신' 요청과 진행 상태. 관리 탭이 실시간으로 읽는다.
+    //                   쓰기는 requestRefresh Function 과 PC 의 감시 스크립트
+    //                   (Admin SDK — 규칙 우회)만 한다. 클라이언트가 직접 쓰면
+    //                   멤버 누구나 파이프라인을 마음대로 돌릴 수 있게 된다.
     match /settings/{docId} {
       allow read: if isAdmin();
       allow write: if false;

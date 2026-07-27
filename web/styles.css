@@ -309,6 +309,9 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
   border-radius: 10px; padding: 8px 13px; font-size: 12.5px; cursor: pointer; }
 .btn.ghost { background: var(--surface); color: var(--accent); }
 .btn.danger { border-color: var(--danger); background: var(--danger); color: #fff; }
+/* 처리 중이라 못 누르는 버튼. 이 표시가 없으면 눌러도 반응이 없는 버튼이 멀쩡해
+   보여서 사람들이 계속 누른다 — '지금 갱신'처럼 몇 분 걸리는 일에서 특히 나쁘다. */
+.btn:disabled { opacity: .55; cursor: progress; }
 
 .confirm-dialog {
   width: min(520px, calc(100vw - 32px)); margin: auto; padding: 0;
@@ -702,6 +705,25 @@ select.adm-pick { padding: 6px 9px; font: inherit; font-size: 13.5px; color: var
 .adm-tag { font-size: 11px; font-weight: 700; color: var(--accent-ink);
   background: var(--accent); border-radius: 6px; padding: 1px 6px; }
 .adm-msg { font-size: 13px; color: var(--ink-soft); margin: 10px 0 0; }
+
+/* 지금 갱신 — 상태가 실시간으로 바뀌는 카드 */
+.rf-state { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 0 0 8px; font-size: 14.5px; font-weight: 600; }
+.rf-state.ok { color: #16a34a; }
+.rf-state.bad { color: #dc2626; }
+.rf-state .adm-mail { font-weight: 400; }
+.rf-warn { margin: 0 0 12px; padding: 10px 12px; font-size: 13px; line-height: 1.7;
+  color: var(--ink); background: var(--surface-2);
+  border: 1px solid var(--line); border-left: 3px solid #dc2626; border-radius: 8px; }
+.rf-act { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 10px; }
+.rf-spin { width: 13px; height: 13px; flex: none; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--accent);
+  animation: rf-turn 0.9s linear infinite; }
+@keyframes rf-turn { to { transform: rotate(360deg); } }
+/* 갱신 중인 동안 계속 도는 표시라 오래 남는다 — 움직임을 꺼둔 사람에게는 멈춘다 */
+@media (prefers-reduced-motion: reduce) {
+  .rf-spin { animation: none; border-top-color: var(--line); }
+}
 
 /* 로그인 사용자 칩 */
 .session { display: inline-flex; align-items: center; gap: 6px; }
