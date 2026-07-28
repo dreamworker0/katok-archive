@@ -697,6 +697,35 @@ def rewrite_thin_reports(threads: list[dict], model: str, examples: list[dict],
                           min_by_id={t["id"]: need for t, need in thin[:limit]})
 
 
+def rewrite_long_quote_reports(threads: list[dict], model: str,
+                               examples: list[dict], dry_run: bool,
+                               limit: int = 5,
+                               timeout: int = TIMEOUT_SEC) -> int:
+    """인용이 {MAX}자를 넘는 보고서를 다시 쓴다. 다시 쓴 편수를 돌려준다.
+
+    이 아카이브는 요약을 발행하고 원문은 발행하지 않는다. 90~240자 인용은 요약이
+    아니라 원문 발행이다(2026-07-28 전수 검사: 규칙이 없던 시절 보고서 105편에
+    237건). 규칙이 들어간 뒤 다시 쓴 108편에는 0건이었으므로, 같은 프롬프트로
+    다시 쓰면 고쳐진다.
+    """
+    from scripts import audit_quotes
+
+    r = audit_quotes.audit()
+    long_by_thread: dict[str, int] = {}
+    for tid, _n, _head in r["too_long"]:
+        long_by_thread[tid] = long_by_thread.get(tid, 0) + 1
+    if not long_by_thread:
+        print("인용이 너무 긴 보고서가 없습니다.")
+        return 0
+
+    by_id = {t["id"]: t for t in threads}
+    order = sorted(long_by_thread.items(), key=lambda kv: -kv[1])
+    targets = [by_id[tid] for tid, _ in order[:limit] if tid in by_id]
+    print("인용이 %d자를 넘는 보고서 %d편(인용 %d건) — 이번에 최대 %d편을 다시 씁니다."
+          % (MAX_VERBATIM_CHARS, len(long_by_thread), len(r["too_long"]), limit))
+    return _write_reports(targets, model, examples, dry_run, timeout)
+
+
 def rewrite_unstructured_reports(threads: list[dict], model: str,
                                  examples: list[dict], dry_run: bool,
                                  limit: int = 5,
@@ -838,6 +867,8 @@ def main() -> int:
     # 흔들리기만 하고 값은 계속 든다. 사람이 필요할 때 부르는 일이다.
     ap.add_argument("--rewrite-thin", type=int, metavar="N", default=0,
                     help="분류 대신, 대화량에 비해 얇은 보고서 N편을 다시 쓴다")
+    ap.add_argument("--rewrite-long-quotes", type=int, metavar="N", default=0,
+                    help="분류 대신, 인용이 40자를 넘는 보고서 N편을 다시 쓴다")
     ap.add_argument("--rewrite-unstructured", type=int, metavar="N", default=0,
                     help="분류 대신, 구조 규칙(인용·절 나눔)을 어긴 보고서 N편을 다시 쓴다")
     ap.add_argument("--rewrite-ids", metavar="ID,ID", default="",
@@ -859,6 +890,19 @@ def main() -> int:
         need = dict((t["id"], n) for t, n in find_thin_reports([by_id[i] for i in want]))
         n = _write_reports([by_id[i] for i in want], args.model, examples,
                            args.dry_run, args.timeout, min_by_id=need)
+        if n and not args.dry_run:
+            save_json(TOPICS, topics)
+        emit("REWRITTEN", n)
+        return 0
+
+    if args.rewrite_long_quotes:
+        topics = load_json(TOPICS)
+        threads = topics.get("threads", [])
+        examples = [t for t in threads
+                    if not UNSORTED_RE.match(str(t.get("id") or ""))][:12]
+        n = rewrite_long_quote_reports(threads, args.model, examples, args.dry_run,
+                                       limit=args.rewrite_long_quotes,
+                                       timeout=args.timeout)
         if n and not args.dry_run:
             save_json(TOPICS, topics)
         emit("REWRITTEN", n)
