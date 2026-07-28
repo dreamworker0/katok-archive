@@ -548,6 +548,8 @@
         var at = picked.indexOf(tag);
         if (at !== -1) picked.splice(at, 1);
         else if (picked.length < TAG_PICK_MAX) picked.push(tag);
+        // 고른 태그를 주소에 남긴다 — 새로고침해도 남고, 링크로 줄 수 있다.
+        writeHash(true);
         renderTags();
       };
     });
@@ -555,6 +557,7 @@
       b.onclick = function () {
         var at = picked.indexOf(b.getAttribute("data-unpick"));
         if (at !== -1) picked.splice(at, 1);
+        writeHash(true);
         renderTags();
       };
     });
@@ -567,7 +570,9 @@
     }
     var clear = document.getElementById("tagClear");
     if (clear) {
-      clear.onclick = function () { state.tagPick = []; renderTags(); };
+      clear.onclick = function () {
+        state.tagPick = []; writeHash(true); renderTags();
+      };
     }
     var input = document.getElementById("tagFilter");
     var hits = document.getElementById("tagHits");
@@ -2938,6 +2943,88 @@
     updateThemeControls();
   }
 
+  /* ---------- 주소(URL) 라우팅 ----------
+   *
+   * 화면 상태가 주소에 없으면 F5 를 누르거나 뒤로 가기를 눌렀을 때 첫 화면으로
+   * 돌아간다. 읽던 자리를 잃는 것은 물론이고, 남에게 "여기 봐"라고 링크를 줄
+   * 수도 없다. 그래서 보고 있는 것을 주소에 적는다.
+   *
+   *   #/tags?t=clasp,앱스스크립트     태그 두 개를 골라 둔 태그 화면
+   *   #/timeline?q=파이어베이스        검색 결과
+   *   #/timeline?nick=김종원           참여자로 좁힌 목록
+   *   #/timeline&at=t-152             그 주제로 스크롤
+   *
+   * 해시(#)를 쓰는 이유: 정적 호스팅이라 서버 라우팅이 없다. `/tags` 같은 경로로
+   * 하면 새로고침 때 404 가 난다.
+   *
+   * 추림(pick)은 주소에 담지 않는다 — 주제 ID 수십 개가 주소에 들어가고, 발행본이
+   * 바뀌면 그 링크가 엉뚱한 것을 가리킨다. 태그로 고른 것은 태그 이름으로 담는다.
+   */
+  var routing = false;   // 주소를 우리가 바꿀 때 되읽기를 막는 표식
+
+  function stateToHash() {
+    var q = [];
+    if (state.view === "tags" && (state.tagPick || []).length) {
+      // 태그마다 따로 인코딩한다. 통째로 하면 쉼표가 %2C 로 변해 주소가 읽기
+      // 어려워진다 — 사람에게 건네는 링크이므로 눈으로 읽히는 편이 낫다.
+      q.push("t=" + state.tagPick.map(encodeURIComponent).join(","));
+    }
+    if (state.q) q.push("q=" + encodeURIComponent(state.q));
+    if (state.nick) q.push("nick=" + encodeURIComponent(state.nick));
+    return "#/" + state.view + (q.length ? "?" + q.join("&") : "");
+  }
+
+  function writeHash(replace) {
+    var next = stateToHash();
+    if (("#" + (location.hash || "").replace(/^#/, "")) === next) return;
+    routing = true;
+    try {
+      if (replace && history.replaceState) history.replaceState(null, "", next);
+      else if (history.pushState) history.pushState(null, "", next);
+      else location.hash = next;
+    } catch (e) { location.hash = next; }
+    // hashchange 는 다음 틱에 온다. 그때까지만 막는다.
+    setTimeout(function () { routing = false; }, 0);
+  }
+
+  function parseHash() {
+    var raw = (location.hash || "").replace(/^#\/?/, "");
+    if (!raw) return null;
+    var parts = raw.split("?");
+    var view = decodeURIComponent(parts[0] || "").split("/")[0];
+    var out = { view: view, q: "", nick: "", tags: [] };
+    (parts[1] || "").split("&").forEach(function (pair) {
+      if (!pair) return;
+      var eq = pair.indexOf("=");
+      var k = decodeURIComponent(eq < 0 ? pair : pair.slice(0, eq));
+      var v = eq < 0 ? "" : decodeURIComponent(pair.slice(eq + 1));
+      if (k === "q") out.q = v;
+      else if (k === "nick") out.nick = v;
+      else if (k === "t") {
+        // 위에서 이미 한 번 디코딩했으므로 쉼표로 갈라 쓰면 된다.
+        out.tags = v.split(",").filter(Boolean);
+      }
+    });
+    return out;
+  }
+
+  /** 주소에 적힌 것을 화면에 적용한다. 아는 화면이 아니면 무시한다. */
+  function applyHash() {
+    var r = parseHash();
+    if (!r || !r.view) return false;
+    // 없는 탭(예: 로그인 안 한 사람의 '내 글 관리')으로 보내지 않는다.
+    if (!document.querySelector('[data-view="' + r.view + '"]')) return false;
+    state.view = r.view;
+    state.q = r.q; state.nick = r.nick;
+    state.pick = null;
+    state.tagPick = r.tags.slice(0, TAG_PICK_MAX);
+    if (el.search) el.search.value = state.q;
+    if (el.filter) el.filter.value = state.nick;
+    setNavigationState(state.view);
+    render();
+    return true;
+  }
+
   function setView(v) {
     if (state.graph && v !== "graph") { state.graph.destroy(); state.graph = null; }
     // 관리 화면을 떠나면 갱신 상태 구독을 끊는다. 안 끊으면 다른 탭을 보는 동안에도
@@ -2946,6 +3033,7 @@
     state.view = v;
     setNavigationState(v);
     setMobileMore(false);
+    writeHash();
     render();
   }
   function render() {
@@ -3064,15 +3152,19 @@
         // 전체에서 하는 게 자연스러우므로 추림을 푼다.
         if (state.q) state.pick = null;
         if (state.view === "graph" && state.graph) { state.graph.search(state.q); return; }
-        // 첨부 탭은 자체 검색을 하므로 타임라인으로 튕기지 않는다
-        if (state.view === "files") { render(); return; }
-        if (state.view !== "timeline") setView("timeline"); else render();
+        // 검색어는 주소에 남긴다 — 새로고침해도 결과가 유지되고 링크로 줄 수 있다.
+        // 글자를 칠 때마다 히스토리를 쌓으면 뒤로 가기가 한 글자씩 되돌아가므로
+        // 같은 화면 안에서는 주소만 바꿔치기한다(replace).
+        if (state.view === "files") { writeHash(true); render(); return; }
+        if (state.view !== "timeline") setView("timeline");
+        else { writeHash(true); render(); }
       }, 180);
     });
     el.filter.addEventListener("change", function () {
       state.nick = el.filter.value;
       if (state.nick) state.pick = null;
-      if (state.view === "graph") setView("timeline"); else render();
+      if (state.view === "graph") setView("timeline");
+      else { writeHash(); render(); }
     });
     el.lightbox.addEventListener("click", function (e) {
       if (e.target === el.lightbox || e.target === el.lightboxClose) closeLightbox();
@@ -3101,8 +3193,21 @@
       ? savedFont : FONT_STEPS[0].id);
     if (el.fontBtn) el.fontBtn.addEventListener("click", cycleFont);
 
+    /* 뒤로 가기·앞으로 가기. hashchange 와 popstate 를 모두 듣는다 — pushState 로
+     * 바꾼 주소는 브라우저에 따라 popstate 만 오는 경우가 있다. 우리가 주소를
+     * 바꾼 직후에는 `routing` 표식으로 되읽기를 건너뛴다(같은 화면을 두 번 그리지
+     * 않게). */
+    function onRouteChange() { if (!routing) applyHash(); }
+    window.addEventListener("hashchange", onRouteChange);
+    window.addEventListener("popstate", onRouteChange);
+
     setNavigationState(state.view);
-    render();
+    // 주소에 화면이 적혀 있으면 그리로 간다(F5·공유 링크). 없으면 첫 화면을 그리고
+    // 주소에 적어 둔다 — 그래야 뒤로 가기가 아카이브 안에서 돈다.
+    if (!applyHash()) {
+      render();
+      writeHash(true);
+    }
   }
 
   // 보호모드(hosting)에서는 boot.js 가 로그인·데이터 로드를 끝낸 뒤 start() 를 부른다.

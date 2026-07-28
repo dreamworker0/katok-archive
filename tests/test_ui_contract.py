@@ -115,6 +115,46 @@ class TagPickContractTests(unittest.TestCase):
         self.assertIn(".tag-chip.on", self.css)
 
 
+class RoutingContractTests(unittest.TestCase):
+    """보고 있는 화면이 주소에 남아야 한다.
+
+    없으면 F5·뒤로 가기에서 첫 화면으로 튕기고, 남에게 링크를 줄 수도 없다.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+
+    def test_view_change_writes_the_address(self):
+        block = self.app[self.app.index("function setView(v)"):]
+        self.assertIn("writeHash()", block[:500])
+
+    def test_startup_reads_the_address_before_falling_back(self):
+        # 주소에 화면이 적혀 있으면 그리로 가야 한다
+        block = self.app[self.app.index("setNavigationState(state.view);\n    // 주소에"):]
+        self.assertIn("if (!applyHash())", block[:400])
+
+    def test_back_and_forward_are_both_handled(self):
+        for ev in ("hashchange", "popstate"):
+            with self.subTest(event=ev):
+                self.assertIn('addEventListener("%s", onRouteChange)' % ev, self.app)
+
+    def test_typing_does_not_pile_up_history(self):
+        """검색은 주소를 바꿔치기한다 — 한 글자마다 히스토리가 쌓이면 뒤로 가기가
+        글자 지우기가 된다."""
+        block = self.app[self.app.index('el.search.addEventListener("input"'):]
+        self.assertIn("writeHash(true)", block[:900])
+
+    def test_hash_routing_not_path_routing(self):
+        # 정적 호스팅이라 경로 라우팅은 새로고침에서 404 가 된다
+        self.assertIn('return "#/" + state.view', self.app)
+
+    def test_thread_ids_are_not_put_in_the_address(self):
+        block = self.app[self.app.index("function stateToHash()"):]
+        block = block[:block.index("\n  }")]
+        self.assertNotIn("pick", block, "추림(주제 ID 목록)은 주소에 담지 않는다")
+
+
 class InlineDisplayContractTests(unittest.TestCase):
     """CSS 기본이 `display: none` 인 요소는 **구체적인 값**으로 보여야 한다.
 
