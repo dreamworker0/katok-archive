@@ -271,6 +271,19 @@ Invoke-Step '발행본 생성' { python -m scripts.build_firestore_payload } | O
 Invoke-Step '테스트' { python -m unittest discover -s tests } | Out-Null
 Invoke-Step '테스트(적재)' { npm test --silent } | Out-Null
 
+#    인용이 실제 발언인지 원문과 대조한다. 원문을 발행하지 않는 아카이브에서 보고서는
+#    유일한 기록이고, 인용은 '이 사람이 이렇게 말했다'는 가장 강한 주장이다. 지어낸
+#    인용은 사람의 말을 왜곡해 남기므로 가장 되돌리기 어렵다.
+#    **갱신을 멈추지는 않는다** — 판정에 애매한 구석이 있어(같은 사람의 연속 발언을
+#    이어붙인 인용 등) 여기서 멈추면 정상인 날에도 발행이 막힌다. 로그로 알린다.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try { $quoteOut = & { python -m scripts.audit_quotes } 2>&1 }
+finally { $ErrorActionPreference = $prevEap }
+foreach ($l in $quoteOut) {
+    if ($l -match '못 찾은 인용|자 초과') { Say "    [인용 검사] $l" 'WARN' }
+}
+
 # 9) Firestore·Storage 적재
 Invoke-Step 'Firestore 적재' { node scripts\upload_firestore.js } | Out-Null
 
