@@ -91,7 +91,13 @@ class ContextAnchorTest(unittest.TestCase):
             ),
         )
 
-    def test_ambiguous_image_stays_unanchored(self):
+    def test_ambiguous_image_does_not_land_mid_report(self):
+        """애매하면 본문 **중간**에 놓지 않는다.
+
+        2026-07-28 방침 갱신: 짧은 보고서(문단 2개 이하)에서는 남은 자료를 글 끝에
+        붙인다 — 자료가 글과 떨어져 아래 상자로만 밀리는 것을 두 번 지적받았다.
+        다만 '어느 문단 뒤인가'를 함부로 고르지는 않는다. 이 검사가 그 보장이다.
+        """
         report = (
             "배포 화면을 함께 확인했다.\n\n"
             "배포 화면을 다시 확인했다."
@@ -121,9 +127,12 @@ class ContextAnchorTest(unittest.TestCase):
             },
         ]
 
-        self.assertEqual(place_context_anchors(report, messages), report)
+        out = place_context_anchors(report, messages)
+        self.assertTrue(out.rstrip().endswith("![[msg-000301]]"), out)
+        # 첫 문단 뒤에 끼어들지 않았는지 — 그 자리는 판단이 필요한 곳이다
+        self.assertNotIn("확인했다.\n\n![[msg-000301]]\n\n배포 화면을 다시", out)
 
-    def test_short_generic_link_message_does_not_force_a_match(self):
+    def test_short_generic_link_lands_at_the_end_not_in_the_middle(self):
         report = "관련 자료를 공유했다.\n\n다음 주제로 넘어갔다."
         messages = [
             {
@@ -135,7 +144,8 @@ class ContextAnchorTest(unittest.TestCase):
             }
         ]
 
-        self.assertEqual(place_context_anchors(report, messages), report)
+        out = place_context_anchors(report, messages)
+        self.assertTrue(out.rstrip().endswith("![[link:msg-000400]]"), out)
 
 
 class ContentCharsTest(unittest.TestCase):

@@ -391,7 +391,56 @@ def place_context_anchors(report: str, messages: list[dict]) -> str:
             continue
         markers.setdefault(candidates[0][1], []).append(f"![[{mid}]]")
 
+    markers = _place_leftovers_in_short_reports(report, messages, markers)
     return _insert_context_markers(report, markers)
+
+
+# 이보다 문단이 많은 보고서에는 기계로 자리를 정하지 않는다. 문단이 여럿이면
+# '어느 문단 뒤인가'가 판단이고, 틀린 자리에 사진이 놓이면 글이 거짓말을 한다.
+_SHORT_REPORT_BLOCKS = 2
+
+
+def _place_leftovers_in_short_reports(report: str, messages: list[dict],
+                                      markers: dict[int, list[str]]) -> dict[int, list[str]]:
+    """문단이 하나뿐인 보고서라면 남은 자료를 그 문단 뒤에 놓는다.
+
+    인용을 기준으로 붙이는 방식은 인용이 짧으면(18자 미만) 건너뛴다. 그래서 두 건
+    대화의 한 문단짜리 보고서에서 링크 하나가 글과 떨어져 아래 상자로 밀렸다 —
+    "링크가 글과 함께 있어야 하는 것 아닌가" 라는 지적이 정확히 이 경우다.
+
+    문단이 하나면 '그 뒤'가 유일한 답이라 판단할 것이 없다. 그래서 여기서만
+    기계로 놓는다(실측 2026-07-28: 하단에만 남은 109개 중 48개가 이 경우).
+    """
+    if not report:
+        return markers
+    placed = {v.strip("![]").removeprefix("link:")
+              for values in markers.values() for v in values}
+    manual = set(_ANY_ANCHOR.findall(report))
+
+    lines = report.replace("\r\n", "\n").split("\n")
+    # 자리표를 놓을 수 있는 곳 = 소제목이 아닌 글 덩어리의 마지막 줄
+    ends, run = [], None
+    for i, line in enumerate(lines):
+        if line.strip() and not line.lstrip().startswith("#"):
+            run = i
+        elif run is not None:
+            ends.append(run)
+            run = None
+    if run is not None:
+        ends.append(run)
+    if not ends or len(ends) > _SHORT_REPORT_BLOCKS:
+        return markers
+
+    target = ends[-1]
+    for message in messages:
+        mid = str(message.get("id") or "")
+        if not mid or mid in placed or mid in manual:
+            continue
+        if _is_media_message(message):
+            markers.setdefault(target, []).append(f"![[{mid}]]")
+        elif message.get("urls"):
+            markers.setdefault(target, []).append(f"![[link:{mid}]]")
+    return markers
 
 
 def min_body_for(message_count: int) -> int:

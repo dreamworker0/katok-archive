@@ -896,8 +896,12 @@
       else rest.push(m);
     });
 
+    /* 일부는 본문 사이에, 일부는 아래에 남으면 임의로 갈라 놓은 것처럼 보인다.
+     * 실제 기준은 '본문이 그 자료를 다뤘는가'다 — 그러니 그렇게 적는다. */
+    var someInline = rows.length > rest.length;
     host.innerHTML = rest.length
-      ? "<h4>이 주제에서 함께 공유된 자료</h4>" + mediaHtml(rest, false)
+      ? "<h4>" + (someInline ? "본문에서 다루지 않은 자료" : "이 주제에서 함께 공유된 자료") +
+        "</h4>" + mediaHtml(rest, false)
       : "";
     bindImages(box);
     bindFiles(box);
@@ -975,7 +979,11 @@
       detailBlock(t, lk.inline, lk.context) +
       (people ? '<div class="tc-people">' + people + "</div>" : "") +
       (links ? '<div class="tc-links"><p class="tc-links-label">' +
-        "이 주제에서 함께 공유된 자료</p>" + links + more + "</div>" : "") +
+        // 본문에 이미 걸린 링크가 있으면, 아래 목록은 '본문이 안 다룬 것'이다.
+        ((lk.inline.length || lk.context.length)
+          ? "본문에서 다루지 않은 링크"
+          : "이 주제에서 함께 공유된 자료") +
+        "</p>" + links + more + "</div>" : "") +
       // 관리자에게만 보인다. 잡담 주제를 보다가 그 자리에서 뺄 수 있어야 한다.
       (isAdmin()
         ? '<div class="tc-admin"><button class="btn ghost tc-hide" data-tid="' +

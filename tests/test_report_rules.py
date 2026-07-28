@@ -39,6 +39,40 @@ class RuleSourceTests(unittest.TestCase):
         self.assertIn(str(tr.SECTION_REQUIRED_FROM) + "건 이상", tr.REPORT_RULES)
 
 
+class ShortReportAssetTests(unittest.TestCase):
+    """문단이 하나뿐인 보고서는 자료가 글과 함께 있어야 한다.
+
+    인용 기준 배치는 인용이 짧으면 건너뛴다. 그래서 두 건 대화의 한 문단짜리
+    보고서에서 링크가 글과 떨어져 아래 상자로 밀렸다(2026-07-28 지적).
+    """
+
+    def test_link_lands_after_the_only_paragraph(self):
+        body = "김종원이 윤문 도구를 공유했다. 비용 문제를 해결했다고 한다."
+        msgs = [{"id": "msg-001510", "text": "https://urimal.vercel.app/ 써보세요",
+                 "urls": ["https://urimal.vercel.app/"], "kind": "text",
+                 "nickname": "김종원"}]
+        out = tr.place_context_anchors(body, msgs)
+        self.assertTrue(out.rstrip().endswith("![[link:msg-001510]]"), out)
+
+    def test_photo_lands_after_two_paragraphs_too(self):
+        body = "첫 문단이다.\n\n둘째 문단이다."
+        msgs = [{"id": "msg-000002", "kind": "image", "text": "", "nickname": "호야"}]
+        self.assertIn("![[msg-000002]]", tr.place_context_anchors(body, msgs))
+
+    def test_long_reports_are_left_to_judgment(self):
+        # 문단이 여럿이면 '어느 문단 뒤인가'가 판단이다. 기계가 아무 데나 놓으면
+        # 글이 거짓말을 한다 — 그럴 때는 자료를 글 끝에 두는 편이 낫다.
+        body = "\n\n".join("문단 %d 이다." % i for i in range(5))
+        msgs = [{"id": "msg-000003", "kind": "image", "text": "", "nickname": "호야"}]
+        self.assertNotIn("![[", tr.place_context_anchors(body, msgs))
+
+    def test_manual_anchor_is_not_duplicated(self):
+        body = "한 문단이다.\n\n![[msg-000004]]"
+        msgs = [{"id": "msg-000004", "kind": "image", "text": "", "nickname": "호야"}]
+        out = tr.place_context_anchors(body, msgs)
+        self.assertEqual(out.count("![[msg-000004]]"), 1, out)
+
+
 class StructureCheckTests(unittest.TestCase):
     def test_long_prose_without_quote_or_section_is_caught(self):
         gaps = tr.structure_gaps([
