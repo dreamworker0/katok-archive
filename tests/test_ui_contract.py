@@ -89,6 +89,37 @@ class ArchiveRebindContractTests(unittest.TestCase):
                                  "%s 를 init() 에서 다시 읽지 않는다" % name)
 
 
+class HiddenAttributeContractTests(unittest.TestCase):
+    """`el.hidden = true` 로 숨기는 요소는 CSS 가 그것을 이기지 않아야 한다.
+
+    실측 2026-07-28: `.tag-chip { display: inline-flex }` 가 브라우저 기본
+    `[hidden] { display: none }` 보다 세서, 태그 좁히기 검색이 아무 일도 하지
+    않았다(hidden 은 걸렸는데 칩이 그대로 보였다).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        cls.css = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
+
+    def test_js_hidden_targets_have_a_matching_css_rule(self):
+        # JS 가 `.hidden =` 로 숨기는 클래스들
+        classes = set()
+        for m in re.finditer(r"\.hidden = ", self.app):
+            head = self.app[max(0, m.start() - 400):m.start()]
+            classes.update(re.findall(r'querySelectorAll\("\.([a-z-]+)"\)', head))
+        self.assertTrue(classes, "숨기는 대상을 못 찾았다 — 검사 자체가 낡았다")
+        for name in sorted(classes):
+            with self.subTest(cls=name):
+                declares_display = re.search(
+                    r"\.%s\s*\{[^}]*display:" % re.escape(name), self.css)
+                if not declares_display:
+                    continue
+                self.assertRegex(
+                    self.css, r"\.%s\[hidden\]\s*\{[^}]*display:\s*none" % re.escape(name),
+                    ".%s 에 display 가 있으니 [hidden] 규칙도 있어야 한다" % name)
+
+
 class UiShellContractTests(unittest.TestCase):
     def parse(self, name):
         parser = Markup()

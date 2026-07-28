@@ -479,7 +479,7 @@
       "개 · 눌러서 그 태그가 붙은 주제만 봅니다</p></div>",
       '<label class="tag-search"><span class="sr-only">태그 검색</span>' +
       '<input id="tagFilter" type="search" placeholder="태그 이름으로 좁히기" ' +
-      'autocomplete="off" /></label>',
+      'autocomplete="off" /><span class="tag-hits" id="tagHits"></span></label>',
       '<div class="tag-cloud" id="tagCloud">' + rows.map(chip).join("") + "</div>",
     ];
     if (TAGIDX.hidden_tags) {
@@ -500,13 +500,21 @@
       };
     });
     var input = document.getElementById("tagFilter");
+    var hits = document.getElementById("tagHits");
     if (input) {
       input.oninput = function () {
-        var q = input.value.trim().toLowerCase();
+        // 표기 차이를 무시해 맞춘다 — '바이브 코딩' 이라 쳐도 '바이브코딩' 이 나온다.
+        var q = tagFold(input.value);
+        var shown = 0;
         Array.prototype.forEach.call(el.view.querySelectorAll(".tag-chip"), function (b) {
-          var hit = !q || b.getAttribute("data-tag").toLowerCase().indexOf(q) !== -1;
+          var hit = !q || tagFold(b.getAttribute("data-tag")).indexOf(q) !== -1;
           b.hidden = !hit;
+          if (hit) shown++;
         });
+        if (hits) {
+          hits.textContent = !q ? ""
+            : (shown ? shown + "개" : "맞는 태그가 없습니다");
+        }
       };
     }
   }
