@@ -39,7 +39,24 @@ BATCH = 40
 MAX_PER_THREAD = 2
 
 
-def build_prompt(rows: list[dict], categories: list[dict]) -> str:
+def build_prompt(rows: list[dict], categories: list[dict],
+                 encourage: bool = False) -> str:
+    """`encourage` 는 '다시 묻기' 용이다.
+
+    첫 판정에서 '대부분은 0개가 맞다'고 못박았더니 314개 중 112개만 보조 분류를
+    받았고, 대화 10건 넘는 주제 62개가 빈 채였다 — 그중에는 API 키 노출 사고(보안)나
+    앱스스크립트 팀 시스템(도구)처럼 두 분야를 실제로 걸친 것이 섞여 있었다.
+    다시 물을 때는 그 못박음을 뺀다. 기준 자체는 그대로다 — '상당히 다뤘는가'.
+    """
+    stance = ("- 보조 분류는 0개~%d개. 이 방의 대화는 두 분야를 실제로 걸치는 일이\n"
+              "  잦다. 걸쳤으면 달고, 아니면 달지 마세요." % MAX_PER_THREAD
+              if encourage else
+              "- 보조 분류는 0개~%d개. **대부분은 0개가 맞다.** 억지로 채우지 말 것."
+              % MAX_PER_THREAD)
+    return _prompt_body(rows, categories, stance)
+
+
+def _prompt_body(rows: list[dict], categories: list[dict], stance: str) -> str:
     cat_lines = "\n".join(f"  {c['id']}: {c['label']}" for c in categories)
     items = []
     for r in rows:
@@ -58,7 +75,7 @@ def build_prompt(rows: list[dict], categories: list[dict]) -> str:
 {cat_lines}
 
 규칙:
-- 보조 분류는 0개~{MAX_PER_THREAD}개. **대부분은 0개가 맞다.** 억지로 채우지 말 것.
+{stance}
 - 주 분류는 절대 다시 적지 말 것.
 - 그 분류를 찾는 사람이 이 주제를 보고 "찾던 게 이거다" 할 때만 달 것.
   주제가 그 분류의 내용을 실제로 **상당히** 담고 있어야 한다. 스쳐 지나가는
@@ -104,6 +121,8 @@ def parse_reply(text: str, valid_ids: set[str], cats: set[str],
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--all", action="store_true", help="이미 판정한 주제도 다시")
+    ap.add_argument("--recheck-empty", type=int, metavar="N", default=0,
+                    help="보조 분류가 없는 주제 중 대화 N건 이상인 것만 다시 판정")
     ap.add_argument("--dry-run", action="store_true", help="호출 없이 대상만 보기")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     args = ap.parse_args()
@@ -124,7 +143,11 @@ def main() -> int:
 
     rows = []
     for t in threads:
-        if t["id"] in asked:
+        if args.recheck_empty:
+            # 보조 분류가 비어 있고 대화가 어느 정도 있는 것만 다시 묻는다
+            if prev.get(t["id"]) or len(t.get("message_ids") or []) < args.recheck_empty:
+                continue
+        elif t["id"] in asked:
             continue
         r = reports.get(t["id"]) or {}
         rows.append({
@@ -144,7 +167,9 @@ def main() -> int:
     for i in range(0, len(rows), BATCH):
         batch = rows[i:i + BATCH]
         print(f"  {i + 1}~{i + len(batch)} 판정 중…")
-        reply = call_claude(build_prompt(batch, categories), args.model)
+        reply = call_claude(
+            build_prompt(batch, categories, encourage=bool(args.recheck_empty)),
+            args.model)
         if reply is None:
             print("  실패 — 여기까지만 저장하고 멈춥니다(다음 실행이 이어서 합니다).")
             break
