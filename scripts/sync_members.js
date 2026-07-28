@@ -35,6 +35,8 @@ const COMMENT = [
   "여기를 손으로 고쳐도 Firestore 로 올라가지 않는다 — 명부의 주인은 Firestore 다.",
   "멤버를 바꾸려면 관리 탭에서 승인하거나 scripts/approve_claims.js 를 쓴다.",
   "파이프라인은 닉네임 대조·이메일→표시명 매핑에만 이 파일을 읽는다.",
+  "예외: \"speaks\": false 는 Firestore 에 없는 로컬 표시다(대화에 안 나타나는 운영 계정).",
+  "이 표시는 동기화 때 그대로 유지된다 — 지우면 매일 밤 닉네임 경고가 되살아난다.",
 ];
 
 function init() {
@@ -91,6 +93,26 @@ async function main() {
   const beforeSet = new Set(before.map((m) => String(m.email || "").toLowerCase()));
   const afterSet = new Set(members.map((m) => m.email));
 
+  // 로컬 전용 표시를 살려 둔다.
+  //
+  // `speaks: false` 는 Firestore 에 없는 필드다 — 카톡 수집을 위해 컴퓨터에 로그인해
+  // 둔 계정처럼 '영영 대화에 안 나타나는 계정'을 표시해 매일 밤 같은 닉네임 경고가
+  // 뜨는 것을 막는다. 그런데 이 거울은 Firestore 필드만으로 다시 만들어지므로,
+  // 그대로 두면 그 표시가 동기화 한 번에 사라지고 경고가 되살아난다(실측 2026-07-29:
+  // 표시가 지워져 안전장치 테스트가 실패했다).
+  const localOnly = new Map(
+    before
+      .filter((m) => m && m.speaks === false)
+      .map((m) => [String(m.email || "").toLowerCase(), false])
+  );
+  const carried = [];
+  for (const m of members) {
+    if (localOnly.has(m.email)) {
+      m.speaks = false;
+      carried.push(m.email);
+    }
+  }
+
   console.log(`Firestore 멤버 ${members.length}명`);
   for (const m of members) {
     const isNew = !beforeSet.has(m.email);
@@ -102,6 +124,10 @@ async function main() {
   for (const m of before) {
     const email = String(m.email || "").toLowerCase();
     if (!afterSet.has(email)) console.log(`  - ${email} (Firestore 에 없어 거울에서 제거)`);
+  }
+  if (carried.length) console.log(`  (로컬 표시 유지: speaks=false ${carried.join(", ")})`);
+  for (const email of localOnly.keys()) {
+    if (!afterSet.has(email)) console.log(`  [주의] speaks=false 표시가 있던 ${email} 이 Firestore 에 없습니다`);
   }
 
   if (!members.length) {
