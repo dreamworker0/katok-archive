@@ -2949,20 +2949,22 @@
    * 돌아간다. 읽던 자리를 잃는 것은 물론이고, 남에게 "여기 봐"라고 링크를 줄
    * 수도 없다. 그래서 보고 있는 것을 주소에 적는다.
    *
-   *   #/tags?t=clasp,앱스스크립트     태그 두 개를 골라 둔 태그 화면
-   *   #/timeline?q=파이어베이스        검색 결과
-   *   #/timeline?nick=김종원           참여자로 좁힌 목록
-   *   #/timeline&at=t-152             그 주제로 스크롤
+   *   /tags?t=clasp,앱스스크립트     태그 두 개를 골라 둔 태그 화면
+   *   /timeline?q=파이어베이스        검색 결과
+   *   /timeline?nick=김종원           참여자로 좁힌 목록
    *
-   * 해시(#)를 쓰는 이유: 정적 호스팅이라 서버 라우팅이 없다. `/tags` 같은 경로로
-   * 하면 새로고침 때 404 가 난다.
+   * 처음에는 `#/tags` 처럼 해시로 했다. 정적 호스팅이라 `/tags` 로 새로고침하면
+   * 서버가 그런 파일을 찾다가 404 를 내기 때문이다. 지금은 호스팅 규칙(rewrites)이
+   * 없는 경로를 index.html 로 되돌리므로 `#` 이 필요 없다 — 사람에게 건네는
+   * 링크이니 읽히는 편이 낫다. 옛 `#/...` 링크는 아래에서 새 주소로 넘겨준다.
+   * (로컬 미리보기도 같게: scripts/serve_hosting.py 가 같은 되돌리기를 한다.)
    *
    * 추림(pick)은 주소에 담지 않는다 — 주제 ID 수십 개가 주소에 들어가고, 발행본이
    * 바뀌면 그 링크가 엉뚱한 것을 가리킨다. 태그로 고른 것은 태그 이름으로 담는다.
    */
   var routing = false;   // 주소를 우리가 바꿀 때 되읽기를 막는 표식
 
-  function stateToHash() {
+  function stateToPath() {
     var q = [];
     if (state.view === "tags" && (state.tagPick || []).length) {
       // 태그마다 따로 인코딩한다. 통째로 하면 쉼표가 %2C 로 변해 주소가 읽기
@@ -2971,41 +2973,47 @@
     }
     if (state.q) q.push("q=" + encodeURIComponent(state.q));
     if (state.nick) q.push("nick=" + encodeURIComponent(state.nick));
-    return "#/" + state.view + (q.length ? "?" + q.join("&") : "");
+    return "/" + state.view + (q.length ? "?" + q.join("&") : "");
   }
 
   function writeHash(replace) {
-    var next = stateToHash();
-    if (("#" + (location.hash || "").replace(/^#/, "")) === next) return;
+    var next = stateToPath();
+    if (location.pathname + location.search === next) return;
     routing = true;
     try {
       if (replace && history.replaceState) history.replaceState(null, "", next);
       else if (history.pushState) history.pushState(null, "", next);
-      else location.hash = next;
-    } catch (e) { location.hash = next; }
-    // hashchange 는 다음 틱에 온다. 그때까지만 막는다.
+    } catch (e) { /* 주소를 못 바꿔도 화면은 돌아간다 */ }
     setTimeout(function () { routing = false; }, 0);
   }
 
-  function parseHash() {
-    var raw = (location.hash || "").replace(/^#\/?/, "");
-    if (!raw) return null;
-    var parts = raw.split("?");
-    var view = decodeURIComponent(parts[0] || "").split("/")[0];
-    var out = { view: view, q: "", nick: "", tags: [] };
-    (parts[1] || "").split("&").forEach(function (pair) {
+  function parseQuery(search, out) {
+    (search || "").replace(/^\?/, "").split("&").forEach(function (pair) {
       if (!pair) return;
       var eq = pair.indexOf("=");
       var k = decodeURIComponent(eq < 0 ? pair : pair.slice(0, eq));
-      var v = eq < 0 ? "" : decodeURIComponent(pair.slice(eq + 1));
+      var v = eq < 0 ? "" : decodeURIComponent(pair.slice(eq + 1).replace(/\+/g, " "));
       if (k === "q") out.q = v;
       else if (k === "nick") out.nick = v;
-      else if (k === "t") {
-        // 위에서 이미 한 번 디코딩했으므로 쉼표로 갈라 쓰면 된다.
-        out.tags = v.split(",").filter(Boolean);
-      }
+      else if (k === "t") out.tags = v.split(",").filter(Boolean);
     });
     return out;
+  }
+
+  function parseHash() {
+    var out = { view: "", q: "", nick: "", tags: [] };
+    // 옛 링크: #/tags?t=... — 새 주소로 넘겨준다(아래 applyHash 가 replaceState).
+    var hash = (location.hash || "").replace(/^#\/?/, "");
+    if (hash) {
+      var hp = hash.split("?");
+      out.view = decodeURIComponent(hp[0] || "").split("/")[0];
+      out.legacy = true;
+      return parseQuery(hp[1] || "", out);
+    }
+    var seg = (location.pathname || "/").split("/").filter(Boolean);
+    if (!seg.length) return null;
+    out.view = decodeURIComponent(seg[0]);
+    return parseQuery(location.search, out);
   }
 
   /** 주소에 적힌 것을 화면에 적용한다. 아는 화면이 아니면 무시한다. */
@@ -3022,6 +3030,9 @@
     if (el.filter) el.filter.value = state.nick;
     setNavigationState(state.view);
     render();
+    // 옛 해시 링크로 들어왔으면 새 주소로 바꿔 둔다 — 다음 새로고침·공유부터
+    // 깔끔한 주소가 되고, 히스토리에 옛 주소를 남기지 않는다.
+    if (r.legacy) writeHash(true);
     return true;
   }
 

@@ -17,6 +17,7 @@ Firebase Hosting 예약 URL(/__/firebase/...)은 여기 없으므로 404 다. �
 """
 from __future__ import annotations
 
+import re
 import sys
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -29,6 +30,18 @@ DEFAULT_PORT = 8900
 
 # firebase.json 의 헤더와 같은 뜻으로 맞춘다.
 NO_CACHE_SUFFIXES = (".js", ".css", ".html", ".webmanifest")
+
+
+_VIEWS: set[str] = set()
+
+
+def view_names() -> set[str]:
+    """화면 이름(index.html 의 data-view). 한 번 읽어 둔다."""
+    global _VIEWS
+    if not _VIEWS:
+        html = (HOSTING / "index.html").read_text(encoding="utf-8")
+        _VIEWS = set(re.findall(r'data-view="([a-z]+)"', html))
+    return _VIEWS
 
 
 class HostingHandler(SimpleHTTPRequestHandler):
@@ -45,6 +58,23 @@ class HostingHandler(SimpleHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
         self.send_header("Cross-Origin-Opener-Policy", "same-origin-allow-popups")
         super().end_headers()
+
+    def send_head(self):
+        """화면 경로는 index.html 로 되돌린다 — firebase.json 의 rewrites 와 같은 뜻.
+
+        화면마다 주소를 갖게 한 뒤로(`/tags`, `/mine`) 그 주소로 새로고침하면 서버가
+        그런 파일을 찾다가 404 를 낸다. 배포본에서는 호스팅 규칙이 이것을 대신하므로,
+        로컬 미리보기도 같게 맞춰야 확인이 의미가 있다.
+
+        **아는 화면 이름만** 되돌린다. 모든 경로를 되돌리면 없는 그림·스크립트까지
+        200 과 함께 HTML 을 받아, 무엇이 빠졌는지 알 수 없게 된다(실측: `/nope.png`
+        가 200 이 됐다). 목록은 index.html 의 data-view 에서 읽어 한 곳만 고치면
+        양쪽이 함께 맞게 한다.
+        """
+        path = self.path.split("?", 1)[0].split("#", 1)[0]
+        if path.strip("/") in view_names():
+            self.path = "/index.html"
+        return super().send_head()
 
     def log_message(self, fmt, *args):  # 404 만 보고 나머지는 조용히
         if args and str(args[1]).startswith("4"):

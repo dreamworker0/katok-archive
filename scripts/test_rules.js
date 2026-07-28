@@ -32,83 +32,130 @@ const PROJECT = JSON.parse(fs.readFileSync(KEY, "utf8")).project_id;
 const MEMBER = "member@example.com";
 const OUTSIDER = "nobody@example.com";
 
-/** 멤버로 로그인한 요청의 auth 부분. 규칙의 isMember() 가 보는 것과 같게 맞춘다. */
-function auth(email, claims) {
+/** 로그인한 요청의 auth 부분.
+ *
+ *  **Firestore 규칙의 `isMember()` 는 커스텀 클레임을 보지 않는다** — `members`
+ *  명부에 그 이메일 문서가 있는지 `exists()` 로 본다(저장소 규칙은 클레임을 쓰는데,
+ *  두 방식이 서비스마다 다르다). 그래서 여기서는 클레임이 아니라 아래 `mocks()` 로
+ *  명부에 있는지 없는지를 흉내 낸다.
+ */
+function auth(email) {
   return {
     uid: "uid-" + email,
-    token: Object.assign(
-      { email, email_verified: true, sub: "uid-" + email, firebase: { sign_in_provider: "google.com" } },
-      claims || {}
-    ),
+    token: {
+      email,
+      email_verified: true,
+      sub: "uid-" + email,
+      firebase: { sign_in_provider: "google.com" },
+    },
   };
+}
+
+/** 규칙 안의 exists()/get() 을 흉내 낸다. 검증 API 에는 실제 DB 가 없다. */
+function mocks(email, isMember, role) {
+  const p = "/databases/(default)/documents/members/" + email;
+  return [
+    { function: "exists", args: [{ exactValue: p }], result: { value: !!isMember } },
+    {
+      function: "get",
+      args: [{ exactValue: p }],
+      result: { value: { data: { role: role || "user" } } },
+    },
+  ];
 }
 
 /** 테스트 한 건. `name` 은 우리가 읽기 위한 것이라 API 로 보내지 않는다
  *  (보내면 400 Unknown name — 실측 2026-07-28). */
-function testCase(name, expectation, request) {
-  return { name, expectation, request };
+function testCase(name, expectation, request, functionMocks) {
+  return { name, expectation, request, functionMocks };
 }
 
 function forApi(c) {
-  return { expectation: c.expectation, request: c.request };
+  const out = { expectation: c.expectation, request: c.request };
+  if (c.functionMocks) out.functionMocks = c.functionMocks;
+  return out;
 }
 
 const NOW = "2026-07-28T12:00:00Z";
 
-/** preferences 문서에 쓰는 요청. */
-function prefWrite(email, data, asEmail, claims) {
+/** preferences 문서에 쓰는 요청.
+ *
+ *  쓰려는 값은 `resource.data` 로 넘긴다 — 이 API 의 request 는 규칙 안의 `request`
+ *  변수와 같은 모양이라, `data` 로 넘기면 규칙의 `request.resource.data` 가 없어서
+ *  "Property resource is undefined" 가 난다(실측).
+ */
+function prefWrite(email, data, asEmail) {
   return {
     method: "update",
     path: "/databases/(default)/documents/preferences/" + email,
-    data,
-    auth: auth(asEmail || email, claims === undefined ? { member: true } : claims),
+    resource: { data },
+    auth: auth(asEmail || email),
     time: NOW,
   };
 }
+
+const IN = mocks(MEMBER, true);          // 명부에 있는 멤버
+const OUT = mocks(MEMBER, false);        // 명부에 없는 사람
 
 const CASES = [
   // ── '관심 주제 빠지기' 스위치가 실제로 저장되는가 ──
   testCase(
     "멤버가 수집 설정과 관심주제 숨김을 함께 저장한다",
     "ALLOW",
-    prefWrite(MEMBER, { collection: "public", hideInterests: true, updatedAt: NOW })
+    prefWrite(MEMBER, { collection: "public", hideInterests: true, updatedAt: NOW }),
+    IN
   ),
   testCase(
     "관심주제 숨김을 끈 상태로도 저장된다",
     "ALLOW",
-    prefWrite(MEMBER, { collection: "unpublished", hideInterests: false, updatedAt: NOW })
+    prefWrite(MEMBER, { collection: "unpublished", hideInterests: false, updatedAt: NOW }),
+    IN
   ),
   // 예전 형태(두 필드)도 계속 되어야 한다 — 옛 화면이 남아 있을 수 있다
   testCase(
     "hideInterests 없이 예전 형태로도 저장된다",
     "ALLOW",
-    prefWrite(MEMBER, { collection: "public", updatedAt: NOW })
+    prefWrite(MEMBER, { collection: "public", updatedAt: NOW }),
+    IN
   ),
   // ── 막아야 하는 것 ──
   testCase(
     "hideInterests 가 불리언이 아니면 막는다",
     "DENY",
-    prefWrite(MEMBER, { collection: "public", hideInterests: "yes", updatedAt: NOW })
+    prefWrite(MEMBER, { collection: "public", hideInterests: "yes", updatedAt: NOW }),
+    IN
   ),
   testCase(
     "모르는 필드를 끼워 넣으면 막는다",
     "DENY",
-    prefWrite(MEMBER, { collection: "public", hideInterests: true, updatedAt: NOW, admin: true })
+    prefWrite(MEMBER, { collection: "public", hideInterests: true, updatedAt: NOW, admin: true }),
+    IN
   ),
   testCase(
     "남의 문서에는 쓰지 못한다",
     "DENY",
-    prefWrite(OUTSIDER, { collection: "public", hideInterests: true, updatedAt: NOW }, MEMBER)
+    prefWrite(OUTSIDER, { collection: "public", hideInterests: true, updatedAt: NOW }, MEMBER),
+    IN
   ),
   testCase(
-    "멤버 클레임이 없으면 막는다",
+    "명부에 없는 사람은 막는다",
     "DENY",
-    prefWrite(MEMBER, { collection: "public", hideInterests: true, updatedAt: NOW }, MEMBER, {})
+    prefWrite(MEMBER, { collection: "public", hideInterests: true, updatedAt: NOW }),
+    OUT
   ),
   testCase(
     "collection 값이 목록에 없으면 막는다",
     "DENY",
-    prefWrite(MEMBER, { collection: "secret", hideInterests: true, updatedAt: NOW })
+    prefWrite(MEMBER, { collection: "secret", hideInterests: true, updatedAt: NOW }),
+    IN
+  ),
+  // updatedAt 을 서버 시각이 아닌 값으로 위조하면 막는다(규칙이 request.time 을 요구)
+  testCase(
+    "updatedAt 을 다른 시각으로 위조하면 막는다",
+    "DENY",
+    prefWrite(MEMBER, { collection: "public", hideInterests: true,
+                        updatedAt: "2020-01-01T00:00:00Z" }),
+    IN
   ),
 ];
 

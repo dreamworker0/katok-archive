@@ -145,12 +145,34 @@ class RoutingContractTests(unittest.TestCase):
         block = self.app[self.app.index('el.search.addEventListener("input"'):]
         self.assertIn("writeHash(true)", block[:900])
 
-    def test_hash_routing_not_path_routing(self):
-        # 정적 호스팅이라 경로 라우팅은 새로고침에서 404 가 된다
-        self.assertIn('return "#/" + state.view', self.app)
+    def test_path_routing_with_a_server_rewrite(self):
+        """경로 주소(`/tags`)를 쓴다 — `#` 없이. 그러려면 없는 경로를 index.html 로
+        되돌리는 규칙이 **양쪽 서버**에 있어야 한다. 하나만 있으면 배포본이나
+        로컬 미리보기 한쪽에서 새로고침이 404 가 된다."""
+        self.assertIn('return "/" + state.view', self.app)
+        fb = json.loads((ROOT / "firebase.json").read_text(encoding="utf-8"))
+        for site in fb["hosting"]:
+            with self.subTest(site=site["site"]):
+                rules = site.get("rewrites", [])
+                self.assertEqual(len(rules), 1, "화면 경로만 되돌려야 한다")
+                src = rules[0]["source"]
+                self.assertEqual(rules[0]["destination"], "/index.html")
+                # 모든 경로를 되돌리면 없는 그림까지 200+HTML 이 되어, 무엇이
+                # 빠졌는지 알 수 없다(실측 `/nope.png` 200).
+                self.assertNotEqual(src, "**")
+                for view in VIEWS:
+                    with self.subTest(view=view):
+                        self.assertIn(view, src, "새 화면을 rewrites 에 안 넣었다")
+        serve = (ROOT / "scripts" / "serve_hosting.py").read_text(encoding="utf-8")
+        self.assertIn("path.strip(\"/\") in view_names()", serve)
+
+    def test_old_hash_links_still_open(self):
+        # 이미 나눠준 `#/mine` 같은 링크가 깨지면 안 된다
+        self.assertIn("out.legacy = true", self.app)
+        self.assertIn("if (r.legacy) writeHash(true)", self.app)
 
     def test_thread_ids_are_not_put_in_the_address(self):
-        block = self.app[self.app.index("function stateToHash()"):]
+        block = self.app[self.app.index("function stateToPath()"):]
         block = block[:block.index("\n  }")]
         self.assertNotIn("pick", block, "추림(주제 ID 목록)은 주소에 담지 않는다")
 

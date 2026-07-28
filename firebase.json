@@ -3,19 +3,38 @@
     {
       "site": "sw-ai-archive",
       "public": "hosting",
-      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
       "headers": [
         {
           "source": "**/*.@(js|css|html)",
-          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache"
+            }
+          ]
         },
         {
           "source": "/",
-          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache"
+            }
+          ]
         },
         {
           "source": "/sw.js",
-          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache"
+            }
+          ]
         },
         {
           "source": "/manifest.webmanifest",
@@ -24,13 +43,19 @@
               "key": "Content-Type",
               "value": "application/manifest+json; charset=utf-8"
             },
-            { "key": "Cache-Control", "value": "no-cache" }
+            {
+              "key": "Cache-Control",
+              "value": "no-cache"
+            }
           ]
         },
         {
           "source": "/icons/**",
           "headers": [
-            { "key": "Cache-Control", "value": "public, max-age=604800" }
+            {
+              "key": "Cache-Control",
+              "value": "public, max-age=604800"
+            }
           ]
         },
         {
@@ -41,25 +66,50 @@
               "value": "same-origin-allow-popups"
             }
           ]
+        }
+      ],
+      "rewrites": [
+        {
+          "source": "/@(admin|files|gallery|graph|mine|stats|summary|tags|timeline)",
+          "destination": "/index.html"
         }
       ]
     },
     {
       "site": "katok-crawling-project",
       "public": "hosting",
-      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
       "headers": [
         {
           "source": "**/*.@(js|css|html)",
-          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache"
+            }
+          ]
         },
         {
           "source": "/",
-          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache"
+            }
+          ]
         },
         {
           "source": "/sw.js",
-          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache"
+            }
+          ]
         },
         {
           "source": "/manifest.webmanifest",
@@ -68,13 +118,19 @@
               "key": "Content-Type",
               "value": "application/manifest+json; charset=utf-8"
             },
-            { "key": "Cache-Control", "value": "no-cache" }
+            {
+              "key": "Cache-Control",
+              "value": "no-cache"
+            }
           ]
         },
         {
           "source": "/icons/**",
           "headers": [
-            { "key": "Cache-Control", "value": "public, max-age=604800" }
+            {
+              "key": "Cache-Control",
+              "value": "public, max-age=604800"
+            }
           ]
         },
         {
@@ -86,12 +142,22 @@
             }
           ]
         }
+      ],
+      "rewrites": [
+        {
+          "source": "/@(admin|files|gallery|graph|mine|stats|summary|tags|timeline)",
+          "destination": "/index.html"
+        }
       ]
     }
   ],
   "functions": {
     "source": "functions",
-    "ignore": ["node_modules", ".git", "*.log"]
+    "ignore": [
+      "node_modules",
+      ".git",
+      "*.log"
+    ]
   },
   "firestore": {
     "rules": "firestore.rules",
