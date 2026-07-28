@@ -35,6 +35,29 @@ class WriteSiteSafetyTests(unittest.TestCase):
                         "patch 할 것" % path.name)
 
 
+class UploadCoverageTests(unittest.TestCase):
+    """발행본이 가리키는 자료는 **전부** 업로드 목록에 들어야 한다.
+
+    실측 2026-07-28: `videos` 를 빠뜨려 동영상 4개가 저장소에 올라간 적이 없었다.
+    화면은 칸에 미리보기만 걸고, 눌러도 파일이 없어 재생되지 않았다 — 화면 코드는
+    정상이었으므로 '왜 안 되지'가 오래 남을 종류의 사고다.
+    """
+
+    def test_upload_list_covers_images_thumbs_and_videos(self):
+        src = (ROOT / "scripts" / "build_firestore_payload.py").read_text(encoding="utf-8")
+        block = src[src.index("used_images: list[str] = []"):]
+        block = block[:block.index("used_files")]
+        for field in ("images", "thumbs", "videos"):
+            with self.subTest(field=field):
+                self.assertIn('m.get("%s")' % field, block,
+                              "업로드 목록이 %s 를 빠뜨린다" % field)
+
+    def test_uploader_knows_video_content_types(self):
+        src = (ROOT / "scripts" / "upload_firestore.js").read_text(encoding="utf-8")
+        # mp4 를 image/jpeg 로 올리면 브라우저가 재생하지 않는다
+        self.assertIn('".mp4": "video/mp4"', src)
+
+
 class DailyOrderTests(unittest.TestCase):
     """검사는 적재보다 **먼저** 돌아야 막을 수 있다."""
 

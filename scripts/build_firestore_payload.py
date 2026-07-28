@@ -320,13 +320,18 @@ def build_payload() -> dict:
     members = load_members()
     my_messages = build_my_messages(data["messages"], members)
 
-    # 발행본에 실제로 등장하는 이미지만 업로드 대상으로 삼는다
+    # 발행본에 실제로 등장하는 이미지·동영상만 업로드 대상으로 삼는다
     used_images: list[str] = []
     seen_img = set()
     for m in data["messages"]:
         # 원본과 갤러리용 작은 사진을 함께 올린다. 화면은 칸에 작은 것을 걸고
         # 누를 때 원본을 받으므로, 둘 중 하나만 올라가면 그 자리가 비어 보인다.
-        for p in (m.get("images") or []) + (m.get("thumbs") or []):
+        #
+        # `videos` 를 빠뜨렸었다(2026-07-28 발견). 그래서 동영상은 칸에 미리보기만
+        # 걸리고 눌러도 파일이 없어 재생되지 않았다 — 화면 코드는 정상이었고
+        # 저장소에 파일이 올라간 적이 없었던 것이다.
+        for p in ((m.get("images") or []) + (m.get("thumbs") or [])
+                  + (m.get("videos") or [])):
             if p not in seen_img:
                 seen_img.add(p)
                 used_images.append(p)

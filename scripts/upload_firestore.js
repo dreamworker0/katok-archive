@@ -323,7 +323,11 @@ async function uploadImages(bucket, images, remoteSize) {
     const dest = rel.replace(/^assets\//, "");
     const ext = path.extname(rel).toLowerCase();
     // 갤러리용 작은 사진은 webp 다. 타입을 틀리게 주면 브라우저가 그림으로 읽지 않는다.
-    const TYPES = { ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif" };
+    // 동영상도 이 목록으로 올라간다 — mp4 를 image/jpeg 로 올리면 재생되지 않는다.
+    const TYPES = {
+      ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif",
+      ".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm",
+    };
     await bucket.upload(path.join(ROOT, rel), {
       destination: dest,
       metadata: {
