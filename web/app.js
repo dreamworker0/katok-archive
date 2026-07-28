@@ -1872,7 +1872,10 @@
     if (img.getAttribute("data-video") && full && window.ArchiveImages) {
       el.lightboxImg.style.display = "none";
       var v = ensureLightboxVideo();
-      v.style.display = "";
+      /* `""` 로 두면 안 된다 — 인라인 스타일이 사라져 CSS 의 기본값
+       * `#lightboxVideo { display: none }` 이 다시 이긴다. 그러면 요소는 숨은 채
+       * 재생돼 **소리는 나고 화면은 안 보인다**(2026-07-28 실측). */
+      v.style.display = "block";
       v.removeAttribute("src");
       v.poster = img.src || "";
       el.lightbox.classList.add("on");

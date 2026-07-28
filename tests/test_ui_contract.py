@@ -115,6 +115,34 @@ class TagPickContractTests(unittest.TestCase):
         self.assertIn(".tag-chip.on", self.css)
 
 
+class InlineDisplayContractTests(unittest.TestCase):
+    """CSS 기본이 `display: none` 인 요소는 **구체적인 값**으로 보여야 한다.
+
+    실측 2026-07-28: 동영상을 열 때 `v.style.display = ""` 로 되돌렸더니 인라인
+    스타일이 사라져 `#lightboxVideo { display: none }` 이 다시 이겼다. 숨은
+    `<video>` 도 재생은 되므로 **소리는 나고 화면은 안 보였다** — 원인을 찾기
+    어려운 종류의 증상이다.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        cls.css = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
+
+    def test_ids_hidden_by_css_are_shown_with_an_explicit_value(self):
+        hidden_ids = set(re.findall(r"#([A-Za-z][\w-]*)\s*\{[^}]*display:\s*none",
+                                    self.css))
+        self.assertIn("lightboxVideo", hidden_ids, "검사가 낡았다 — CSS 가 바뀌었다")
+        for name in sorted(hidden_ids):
+            if name not in self.app:
+                continue
+            with self.subTest(id=name):
+                # 그 요소를 다루는 코드가 빈 문자열로 되돌리지 않는지
+                self.assertNotRegex(
+                    self.app, r'%s[^;]{0,200}style\.display = ""' % re.escape(name),
+                    "#%s 는 CSS 가 숨기고 있어 빈 값으로는 다시 보이지 않는다" % name)
+
+
 class HiddenAttributeContractTests(unittest.TestCase):
     """`el.hidden = true` 로 숨기는 요소는 CSS 가 그것을 이기지 않아야 한다.
 
