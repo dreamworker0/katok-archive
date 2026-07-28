@@ -69,6 +69,37 @@ class UploadCoverageTests(unittest.TestCase):
                 self.assertIn('remoteIndex(bucket, "%s")' % prefix, src)
 
 
+class PreferenceRuleTests(unittest.TestCase):
+    """'관심 주제 빠지기' 스위치가 규칙에 막히지 않는지.
+
+    규칙이 막으면 저장이 조용히 실패하고 화면은 "저장했습니다"라고 말한다 — 사람이
+    눌러 보기 전까지 아무도 모른다. 제대로 검증하려면 `scripts/test_rules.js`
+    (권한 필요)를 써야 하고, 여기서는 규칙 글이 그 필드를 허용하는지만 본다.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        src = (ROOT / "firestore.rules").read_text(encoding="utf-8")
+        start = src.index("match /preferences/")
+        cls.block = src[start:src.index("match /", start + 10)]
+
+    def test_hide_interests_is_an_allowed_field(self):
+        self.assertIn("hideInterests", self.block)
+        self.assertIn("hasOnly(['collection', 'hideInterests', 'updatedAt'])", self.block)
+
+    def test_hide_interests_must_be_a_boolean(self):
+        self.assertIn("hideInterests is bool", self.block)
+
+    def test_client_sends_exactly_the_allowed_fields(self):
+        """화면이 보내는 필드와 규칙이 허용하는 필드가 같아야 한다."""
+        boot = (ROOT / "web" / "boot.js").read_text(encoding="utf-8")
+        block = boot[boot.index("savePreferences"):]
+        block = block[:block.index("},")]
+        for field in ("collection", "hideInterests", "updatedAt"):
+            with self.subTest(field=field):
+                self.assertIn(field, block)
+
+
 class DailyOrderTests(unittest.TestCase):
     """검사는 적재보다 **먼저** 돌아야 막을 수 있다."""
 
