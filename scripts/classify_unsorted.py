@@ -63,6 +63,7 @@ from scripts.topic_reports import (
     content_chars,
     load_reports,
     parse_report,
+    place_context_anchors,
     sanitize_anchors,
     structure_gaps,
     thin_reports,
@@ -707,6 +708,19 @@ def rewrite_unstructured_reports(threads: list[dict], model: str,
     시절에 쓰인 보고서를 사람이 불러 정리하는 용도다.
     """
     reports = load_reports()
+
+    # 발행 때와 **같은 기준**으로 봐야 한다. 자료(사진·링크) 수를 세지 않으면
+    # '자료 자리 없음'이 안 보여서, 정작 가장 큰 문제인 '자료가 글 끝에만 모인
+    # 보고서'를 이 명령이 건드리지 못한다(실측: 127개가 그 상태인데 목록에 안 떴다).
+    # 자동으로 붙는 자리표도 반영한다 — 이미 잘 붙는 주제를 다시 쓸 이유는 없다.
+    want = {mid for t in threads for mid in (t.get("message_ids") or [])}
+    msgs_by_thread: dict[str, list[dict]] = {}
+    if want:
+        found = {m["id"]: m for m in read_messages(want)}
+        for t in threads:
+            msgs_by_thread[t["id"]] = [found[i] for i in (t.get("message_ids") or [])
+                                       if i in found]
+
     rows = []
     for t in threads:
         if UNSORTED_RE.match(str(t.get("id") or "")):
@@ -714,7 +728,18 @@ def rewrite_unstructured_reports(threads: list[dict], model: str,
         r = reports.get(t["id"])
         if not r:
             continue
-        rows.append({**t, "report": r["report"], "count": len(t.get("message_ids") or [])})
+        tmsgs = msgs_by_thread.get(t["id"], [])
+        assets = sum(
+            (1 if (m.get("kind") in ("image", "file") or m.get("is_file_share")) else 0)
+            + len(m.get("urls") or [])
+            for m in tmsgs
+        )
+        rows.append({
+            **t,
+            "report": place_context_anchors(r["report"], tmsgs),
+            "count": len(t.get("message_ids") or []),
+            "asset_count": assets,
+        })
     gaps = structure_gaps(rows)
     if not gaps:
         print("구조 규칙을 어긴 보고서가 없습니다.")
@@ -737,6 +762,12 @@ def _write_reports(targets: list[dict], model: str, examples: list[dict],
     """
     wrote = 0
     for t in targets:
+        # dry-run 은 대상만 보여주고 끝낸다. 예전에는 LLM 을 부른 뒤에 dry-run 을
+        # 판정해서, 값은 그대로 쓰고 결과만 버렸다 — 미리보기가 유료면 미리보기가
+        # 아니다(실측 2026-07-28: 15편 미리보기에 약 $3).
+        if dry_run:
+            print(f"  [dry-run] {t['id']} — {t.get('title')}")
+            continue
         msgs = read_messages(set(t.get("message_ids") or []))
         if not msgs:
             print(f"  건너뜀({t['id']}): 메시지를 찾지 못했습니다.")
@@ -760,10 +791,6 @@ def _write_reports(targets: list[dict], model: str, examples: list[dict],
             "keywords": kws[:6],
             "report": str(data.get("report") or "").strip(),
         }
-        if dry_run:
-            print(f"  [dry-run] {t['id']} 본문 {len(payload['report'])}자 "
-                  f"· 태그 {', '.join(payload['keywords'])}")
-            continue
         why = write_report(t["id"], {**payload, "id": t["id"]}, raw, msgs)
         if why:
             print(f"  보고서 못 씀({t['id']}): {why}")
