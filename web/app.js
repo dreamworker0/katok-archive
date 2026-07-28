@@ -277,9 +277,12 @@
       (linkHtml ? '<div class="doc-section"><h4>🔗 공유 링크</h4><div class="link-list">' + linkHtml + "</div></div>" : "") +
       (threads ? '<div class="doc-section thread-list"><h4>🧵 소속 대화 주제 ' + threadList.length +
         "개</h4>" + threads + "</div>" : "") +
-      (also ? '<div class="doc-section thread-list"><h4>↔️ 여기서도 볼 만한 주제 ' +
-        alsoRows.length + '개</h4><p class="doc-note">다른 분류에 속하지만 이 주제도 ' +
-        '함께 다룬 대화입니다.</p>' + also + "</div>" : "");
+      /* 접어 둔다. 소속 주제 목록 아래에 곁 주제 44개가 그대로 펼쳐지면, 찾아온
+       * 분류의 목록이 어디서 끝나는지 알 수 없다 — 곁길은 찾을 때만 열면 된다. */
+      (also ? '<div class="doc-section thread-list">' +
+        '<details class="more-fold"><summary>↔️ 여기서도 볼 만한 주제 ' +
+        alsoRows.length + '개</summary><p class="doc-note">다른 분류에 속하지만 ' +
+        '이 주제도 함께 다룬 대화입니다.</p>' + also + "</details></div>" : "");
 
     return '<article class="doc" id="doc-' + cid + '" style="--c:' + col + '">' +
       '<div class="doc-head"><span class="doc-bar"></span>' +
