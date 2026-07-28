@@ -265,6 +265,17 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .tag-chip::before { content: "#"; opacity: .45; }
 .tag-chip:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 .tag-chip .tag-n { font-size: .72em; color: var(--ink-faint); }
+.tag-chip.on { color: #fff; background: var(--accent); border-color: var(--accent); }
+.tag-chip.on .tag-n { color: rgba(255, 255, 255, .75); }
+.tag-chip[disabled] { opacity: .35; cursor: default; }
+.tag-chip[disabled]:hover { color: var(--ink); border-color: var(--line);
+  background: var(--card); }
+/* 고른 태그와 결과 수 — 목록 위에 붙어 따라온다 */
+.tag-bar { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap;
+  align-items: center; gap: 8px; margin: 0 0 10px; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.tag-bar-n { font-size: 13px; font-weight: 600; color: var(--ink-soft);
+  margin-left: auto; }
 
 /* ---------- 사람별 관심 주제 ---------- */
 .int-row { padding: 10px 0; border-top: 1px solid var(--line); display: grid; gap: 6px; }

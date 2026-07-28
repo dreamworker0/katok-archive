@@ -89,6 +89,32 @@ class ArchiveRebindContractTests(unittest.TestCase):
                                  "%s 를 init() 에서 다시 읽지 않는다" % name)
 
 
+class TagPickContractTests(unittest.TestCase):
+    """태그를 여러 개 골라 겹치는 주제를 보는 기능의 뼈대."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        cls.css = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
+
+    def test_pick_limit_is_stated_once_and_shown_to_the_user(self):
+        self.assertIn("var TAG_PICK_MAX = 3", self.app)
+        # 화면 안내문도 같은 값을 쓴다 — 숫자를 두 곳에 적으면 어긋난다
+        self.assertIn('"개 · 최대 " + TAG_PICK_MAX', self.app)
+
+    def test_intersection_not_union(self):
+        # 고른 태그가 **모두** 붙은 주제만 남아야 한다
+        block = self.app[self.app.index("function tagPickIds()"):]
+        self.assertIn("sets.every(", block[:600])
+
+    def test_dead_combinations_are_disabled_before_the_user_taps(self):
+        self.assertIn("disabled", self.app[self.app.index("function renderTags()"):][:3000])
+        self.assertIn(".tag-chip[disabled]", self.css)
+
+    def test_selected_state_has_its_own_look(self):
+        self.assertIn(".tag-chip.on", self.css)
+
+
 class HiddenAttributeContractTests(unittest.TestCase):
     """`el.hidden = true` 로 숨기는 요소는 CSS 가 그것을 이기지 않아야 한다.
 

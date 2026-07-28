@@ -15,6 +15,8 @@
    * 운행일지'처럼 띄어쓰기가 다를 수 있다. */
   var TAG_THREADS = {};
   function tagFold(s) { return String(s || "").replace(/[\s\-_.]+/g, "").toLowerCase(); }
+  // 태그를 한 번에 몇 개까지 겹쳐 볼 수 있나. 넷 이상 겹치면 거의 0건이 된다.
+  var TAG_PICK_MAX = 3;
   THREADS.forEach(function (t) {
     (t.tags || t.keywords || []).forEach(function (k) {
       var key = tagFold(k);
@@ -57,6 +59,8 @@
   };
   var state = { view: "summary", q: "", nick: "", graph: null, session: null,
                 mine: null, admin: null, gview: "grid", tsort: "desc", pick: null,
+                // 태그 화면에서 고른 태그(최대 TAG_PICK_MAX 개)
+                tagPick: [],
                 // 갱신 상태와 그 구독 해제 함수 (관리자 전용)
                 refresh: null, refreshUnsub: null };
   try {
@@ -314,7 +318,7 @@
    *  (요지 산문에만 나오는 표현)은 그때만 글자 검색으로 넘긴다. */
   function openKeyword(word) {
     var ids = TAG_THREADS[tagFold(word)];
-    if (ids && ids.length) pickThreads(ids, word, "tag");
+    if (ids && ids.length) pickThreads(ids, "#" + word, "tag");
     else runSearch(word);
   }
 
@@ -458,6 +462,16 @@
    * 한 번만 쓰인 태그 800여 개는 목록에 올리지 않는다. 다 늘어놓으면 목록이
    * 아니라 벽이 되고, 그 태그는 어차피 주제 하나로만 이어진다(검색으로 찾는다).
    */
+  /** 고른 태그들이 **모두** 붙은 주제. 하나도 안 골랐으면 null. */
+  function tagPickIds() {
+    var picked = state.tagPick || [];
+    if (!picked.length) return null;
+    var sets = picked.map(function (t) { return TAG_THREADS[tagFold(t)] || []; });
+    return sets[0].filter(function (id) {
+      return sets.every(function (s) { return s.indexOf(id) !== -1; });
+    });
+  }
+
   function renderTags() {
     var rows = (TAGIDX.tags || []).filter(function (r) { return !r.person; });
     var people = (TAGIDX.tags || []).filter(function (r) { return r.person; });
@@ -466,17 +480,47 @@
         "주제 보고서에 태그가 붙으면 이곳에 모입니다.");
       return;
     }
+    var picked = state.tagPick || (state.tagPick = []);
+    var full = picked.length >= TAG_PICK_MAX;
+    var hitIds = tagPickIds() || [];
     var max = rows[0].count;
+
     function chip(r) {
+      var on = picked.indexOf(r.tag) !== -1;
+      // 지금 고른 것들과 함께 붙은 주제가 없으면 눌러도 빈 목록이다 — 미리 막는다.
+      var dead = !on && picked.length &&
+        !hitIds.some(function (id) {
+          return (TAG_THREADS[tagFold(r.tag)] || []).indexOf(id) !== -1;
+        });
       // 많이 쓰인 태그가 눈에 먼저 들어오게 글자 크기를 조금 키운다(1.0~1.5배).
       var scale = (1 + 0.5 * (r.count - 1) / Math.max(1, max - 1)).toFixed(2);
-      return '<button class="tag-chip" data-tag="' + esc(r.tag) + '" data-ids="' +
-        esc((r.thread_ids || []).join(",")) + '" style="font-size:' + scale + 'em">' +
+      return '<button class="tag-chip' + (on ? " on" : "") + '" data-tag="' +
+        esc(r.tag) + '" style="font-size:' + scale + 'em"' +
+        (dead || (full && !on) ? " disabled" : "") + '>' +
         esc(r.tag) + '<span class="tag-n">' + r.count + "</span></button>";
     }
+
+    /* 고른 태그와 결과 수를 늘 보여 준다. 고르는 동안 몇 건인지 모르면 '보기'를
+     * 눌러야 알게 되고, 0건이면 헛수고가 된다. */
+    var bar = "";
+    if (picked.length) {
+      bar = '<div class="tag-bar">' +
+        picked.map(function (t) {
+          return '<button class="tag-chip on" data-unpick="' + esc(t) + '">' +
+            esc(t) + '<span class="tag-n">×</span></button>';
+        }).join("") +
+        '<span class="tag-bar-n">' +
+        (hitIds.length ? "주제 " + hitIds.length + "개"
+                       : "함께 붙은 주제가 없습니다") + "</span>" +
+        (hitIds.length ? '<button class="btn" id="tagGo">보기</button>' : "") +
+        '<button class="btn ghost" id="tagClear">비우기</button></div>';
+    }
+
     var html = [
       '<div class="gal-head"><p class="room-sub">태그 ' + rows.length +
-      "개 · 눌러서 그 태그가 붙은 주제만 봅니다</p></div>",
+      "개 · 최대 " + TAG_PICK_MAX +
+      "개까지 골라 겹치는 주제를 볼 수 있습니다</p></div>",
+      bar,
       '<label class="tag-search"><span class="sr-only">태그 검색</span>' +
       '<input id="tagFilter" type="search" placeholder="태그 이름으로 좁히기" ' +
       'autocomplete="off" /><span class="tag-hits" id="tagHits"></span></label>',
@@ -493,12 +537,35 @@
     }
     el.view.innerHTML = html.join("");
 
+    // 누르면 고른다(바로 넘어가지 않는다). 두세 개 겹쳐 보려면 골라야 하기 때문에,
+    // 한 개짜리도 같은 길로 간다 — 두 규칙이 섞이면 무엇이 일어날지 알 수 없다.
     Array.prototype.forEach.call(el.view.querySelectorAll("[data-tag]"), function (b) {
       b.onclick = function () {
-        var ids = (b.getAttribute("data-ids") || "").split(",").filter(Boolean);
-        pickThreads(ids, b.getAttribute("data-tag"), "tag");
+        var tag = b.getAttribute("data-tag");
+        var at = picked.indexOf(tag);
+        if (at !== -1) picked.splice(at, 1);
+        else if (picked.length < TAG_PICK_MAX) picked.push(tag);
+        renderTags();
       };
     });
+    Array.prototype.forEach.call(el.view.querySelectorAll("[data-unpick]"), function (b) {
+      b.onclick = function () {
+        var at = picked.indexOf(b.getAttribute("data-unpick"));
+        if (at !== -1) picked.splice(at, 1);
+        renderTags();
+      };
+    });
+    var go = document.getElementById("tagGo");
+    if (go) {
+      go.onclick = function () {
+        pickThreads(hitIds, picked.map(function (t) { return "#" + t; }).join(" + "),
+                    "tag");
+      };
+    }
+    var clear = document.getElementById("tagClear");
+    if (clear) {
+      clear.onclick = function () { state.tagPick = []; renderTags(); };
+    }
     var input = document.getElementById("tagFilter");
     var hits = document.getElementById("tagHits");
     if (input) {
@@ -532,7 +599,8 @@
     var pickHead = "";
     if (state.pick) {
       if (state.pick.kind === "tag") {
-        pickHead = "🏷️ 태그 <b>#" + esc(state.pick.label) + "</b> 가 붙은 주제 ";
+        // 라벨에 '#' 이 이미 들어 있다(여러 개면 '#a + #b').
+        pickHead = "🏷️ 태그 <b>" + esc(state.pick.label) + "</b> 가 붙은 주제 ";
       } else if (state.pick.kind === "subject") {
         pickHead = "🧩 <b>" + esc(state.pick.label) + "</b> 를 다룬 주제 ";
       } else {
