@@ -8,7 +8,11 @@
   inbox/*.txt (또는 --file)
     → 파싱(기존 scripts.kakao_parser 재사용)
     → 이미 있는 마지막 메시지 이후만 추출
-    → messages.jsonl · participants.json · images.jsonl · conversation.md 갱신
+    → messages.jsonl · participants.json · images.jsonl 갱신
+      (conversation.md 는 **만들지 않는다.** 이 주석이 만든다고 적어 둔 탓에 아무도
+       갱신하지 않는 원문 사본이 output/ 에 유령으로 남아 있었다 — 2026-07-27 에
+       멈춘 채였고 2026-07-28 에 backup-3a-20260728/ 로 옮겼다. 원문의 정본은
+       messages.jsonl 하나다.)
     → 새 메시지를 주제 스레드에 배정 (미분류 폴백 포함)
     → 처리한 txt 의 SHA-256 기록 (중복 처리 방지)
 

@@ -18,6 +18,7 @@ from collections import Counter, OrderedDict, defaultdict
 from pathlib import Path
 
 from scripts import interests as interestlib
+from scripts import jsonio
 from scripts import tags as taglib
 from scripts.topic_reports import (
     apply_reports,
@@ -40,19 +41,10 @@ STATIC_FILES = ("index.html", "app.js", "styles.css", "graph.js", "images.js", "
 STATIC_DIRS = ("art",)
 
 
-def _read_jsonl(path: Path) -> list[dict]:
-    rows = []
-    with path.open(encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                rows.append(json.loads(line))
-    return rows
-
-
-def _read_json(path: Path) -> dict:
-    with path.open(encoding="utf-8") as fh:
-        return json.load(fh)
+# 예전 이름을 그대로 남긴다 — 여덟 모듈과 테스트가 이 이름으로 부른다.
+# 실제 구현은 scripts/jsonio.py 에 있다(그쪽 주석에 옮긴 이유가 있다).
+_read_jsonl = jsonio.read_jsonl
+_read_json = jsonio.read_json
 
 
 def load_secondary(path: Path | None = None) -> dict:
@@ -628,33 +620,39 @@ def build_data(
     }
 
 
-def write_site(data: dict) -> None:
-    if SITE.exists():
-        shutil.rmtree(SITE)
-    SITE.mkdir(parents=True)
+def write_site(data: dict, dest: Path | None = None) -> None:
+    """미리보기 사이트를 만든다. `dest` 를 주면 그곳에 쓴다.
+
+    `dest` 를 받는 이유: 이 함수는 **대상 폴더를 통째로 지우고** 다시 만든다.
+    테스트가 인자 없이 부르면 사람이 보고 있던 진짜 `site/` 가 사라진다 —
+    하루에 세 번 물렸다. 테스트는 임시 폴더를 준다.
+    """
+    site = dest or SITE
+    if site.exists():
+        shutil.rmtree(site)
+    site.mkdir(parents=True)
 
     # data.js
     payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-    (SITE / "data.js").write_text(
+    (site / "data.js").write_text(
         "window.ARCHIVE = " + payload + ";\n", encoding="utf-8"
     )
 
     # 정적 파일 복사
     for name in STATIC_FILES:
-        shutil.copyfile(WEB / name, SITE / name)
+        shutil.copyfile(WEB / name, site / name)
     for name in STATIC_DIRS:
-        shutil.copytree(WEB / name, SITE / name)
+        shutil.copytree(WEB / name, site / name)
 
     # 이미지 복사 (다운로드된 것만 존재)
     if ASSETS_IMAGES.exists():
-        dest = SITE / "assets" / "images"
-        shutil.copytree(ASSETS_IMAGES, dest)
+        shutil.copytree(ASSETS_IMAGES, site / "assets" / "images")
     # 갤러리용 작은 사진. 빠뜨리면 미리보기에서 갤러리가 통째로 비어 보이는데,
     # 배포본은 Storage 에서 받으므로 로컬에서만 그렇다 — 알아채기 어렵다.
     if ASSETS_THUMBS.exists():
-        shutil.copytree(ASSETS_THUMBS, SITE / "assets" / "thumbs")
+        shutil.copytree(ASSETS_THUMBS, site / "assets" / "thumbs")
     if ASSETS_VIDEOS.exists():
-        shutil.copytree(ASSETS_VIDEOS, SITE / "assets" / "videos")
+        shutil.copytree(ASSETS_VIDEOS, site / "assets" / "videos")
 
 
 PERSON_VALUE_CAP = 300     # 발언이 아무리 많아도 노드가 화면을 잡아먹지 않게

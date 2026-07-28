@@ -9,8 +9,8 @@
   5. 주제 분류 (LLM, 비치명적)                 classify_unsorted.py
   6. 갤러리용 작은 사진 생성                   build_thumbnails.py
   7. 발행본 재생성                             build_firestore_payload.py
-  8. Firestore·Storage 적재                    upload_firestore.js
-  9. 테스트로 정합성 확인                      unittest
+  8. 테스트로 정합성 확인 (적재 전에)          unittest
+  9. Firestore·Storage 적재                    upload_firestore.js
 
 설계
   - 각 단계는 실패하면 즉시 중단한다. 반쪽 상태로 발행하지 않는다.
@@ -262,12 +262,17 @@ Invoke-Step '작은 사진 생성' { python -m scripts.build_thumbnails } | Out-
 # 7) 발행본 재생성
 Invoke-Step '발행본 생성' { python -m scripts.build_firestore_payload } | Out-Null
 
-# 8) Firestore·Storage 적재
-Invoke-Step 'Firestore 적재' { node scripts\upload_firestore.js } | Out-Null
-
-# 9) 정합성 확인 — 파이썬(발행본 무결성) + 노드(증분 적재 규칙)
+# 8) 정합성 확인 — 파이썬(발행본 무결성) + 노드(증분 적재 규칙)
+#
+#    **적재보다 먼저** 돈다. 예전에는 적재 뒤였는데, 그러면 검사가 잘못된 발행을
+#    막지 못한다 — 이미 올라간 뒤에 "틀렸다"고 말하는 셈이다(2026-07-27 사람 노드
+#    누락이 정확히 그 꼴이었다). Invoke-Step 이므로 실패하면 여기서 멈추고, 그날의
+#    발행은 건너뛴다. 원본은 그대로 남으므로 고친 뒤 다시 돌리면 된다.
 Invoke-Step '테스트' { python -m unittest discover -s tests } | Out-Null
 Invoke-Step '테스트(적재)' { npm test --silent } | Out-Null
+
+# 9) Firestore·Storage 적재
+Invoke-Step 'Firestore 적재' { node scripts\upload_firestore.js } | Out-Null
 
 Say "===== 일일 갱신 완료: 새 메시지 $added 건 발행 ====="
 if ($added -gt 0) {

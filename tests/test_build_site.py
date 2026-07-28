@@ -2,6 +2,7 @@
 """build_site 데이터 조립 및 topics 커버리지 검증."""
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -137,17 +138,23 @@ class BuildDataTest(unittest.TestCase):
         )
 
     def test_data_js_is_valid_json_payload(self):
-        """write_site 가 만든 data.js 가 유효한 JSON을 담는지 검증."""
-        build_site.write_site(self.data)
-        text = (ROOT / "site" / "data.js").read_text(encoding="utf-8")
-        self.assertTrue(text.startswith("window.ARCHIVE = "))
-        payload = text[len("window.ARCHIVE = "):].rstrip().rstrip(";")
-        parsed = json.loads(payload)
-        self.assertEqual(len(parsed["messages"]), len(self.messages))
-        # 정적 파일·이미지도 복사되었는지
-        for name in build_site.STATIC_FILES:
-            self.assertTrue((ROOT / "site" / name).exists(), name)
-        self.assertTrue((ROOT / "site" / "assets" / "images").exists())
+        """write_site 가 만든 data.js 가 유효한 JSON을 담는지 검증.
+
+        임시 폴더에 쓴다 — write_site 는 대상을 통째로 지우므로, 진짜 `site/` 에
+        쓰면 사람이 보고 있던 미리보기가 테스트 때문에 사라진다.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            site = Path(tmp) / "site"
+            build_site.write_site(self.data, site)
+            text = (site / "data.js").read_text(encoding="utf-8")
+            self.assertTrue(text.startswith("window.ARCHIVE = "))
+            payload = text[len("window.ARCHIVE = "):].rstrip().rstrip(";")
+            parsed = json.loads(payload)
+            self.assertEqual(len(parsed["messages"]), len(self.messages))
+            # 정적 파일·이미지도 복사되었는지
+            for name in build_site.STATIC_FILES:
+                self.assertTrue((site / name).exists(), name)
+            self.assertTrue((site / "assets" / "images").exists())
 
 
 class KnowledgeTest(unittest.TestCase):
@@ -210,16 +217,19 @@ class KnowledgeTest(unittest.TestCase):
                 self.assertIn(l["nickname"], nicks)
 
     def test_data_js_contains_knowledge_and_digests(self):
-        build_site.write_site(self.data)
-        text = (ROOT / "site" / "data.js").read_text(encoding="utf-8")
-        payload = text[len("window.ARCHIVE = "):].rstrip().rstrip(";")
-        parsed = json.loads(payload)
-        self.assertIn("knowledge", parsed)
-        self.assertIn("digests", parsed)
-        self.assertEqual(len(parsed["knowledge"]["nodes"]), len(self.knowledge["nodes"]))
-        self.assertEqual(len(parsed["digests"]), len(self.topics["categories"]))
-        # graph.js 도 함께 배포되는지
-        self.assertTrue((ROOT / "site" / "graph.js").exists())
+        with tempfile.TemporaryDirectory() as tmp:
+            site = Path(tmp) / "site"
+            build_site.write_site(self.data, site)
+            text = (site / "data.js").read_text(encoding="utf-8")
+            payload = text[len("window.ARCHIVE = "):].rstrip().rstrip(";")
+            parsed = json.loads(payload)
+            self.assertIn("knowledge", parsed)
+            self.assertIn("digests", parsed)
+            self.assertEqual(len(parsed["knowledge"]["nodes"]),
+                             len(self.knowledge["nodes"]))
+            self.assertEqual(len(parsed["digests"]), len(self.topics["categories"]))
+            # graph.js 도 함께 배포되는지
+            self.assertTrue((site / "graph.js").exists())
 
 
 if __name__ == "__main__":
