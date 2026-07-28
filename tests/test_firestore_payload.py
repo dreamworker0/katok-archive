@@ -166,6 +166,30 @@ class MemberNicknameTest(unittest.TestCase):
         self.assertEqual(len(warnings), 1)
         self.assertIn("미연결", warnings[0])
 
+    def test_non_speaking_account_is_not_warned_about(self):
+        """대화에 참여하지 않는 운영 계정은 경고 대상이 아니다.
+
+        카톡 수집을 위해 컴퓨터에 로그인해 둔 계정('문가은')은 영영 참여자 명단에
+        없다. 그대로 두면 매일 밤 같은 경고가 뜨고, 늘 뜨는 경고는 아무도 안 본다.
+        """
+        members = [{"email": "d@x.com", "nicknames": ["문가은"], "speaks": False}]
+        self.assertEqual(bfp.check_member_nicknames(members, self.PARTICIPANTS), [])
+
+    def test_speaks_defaults_to_true(self):
+        # 표시가 없으면 참여하는 사람으로 본다 — 조용히 넘어가는 쪽이 기본이면 안 된다
+        members = [{"email": "e@x.com", "nicknames": ["없는이름"]}]
+        self.assertEqual(len(bfp.check_member_nicknames(members, self.PARTICIPANTS)), 1)
+
+    def test_load_members_carries_the_flag(self):
+        loaded = bfp.load_members()
+        by_email = {m["email"]: m for m in loaded}
+        target = by_email.get("member2@example.org")
+        if target:   # 실제 명부에 있을 때만 (config 는 환경마다 다르다)
+            self.assertFalse(target["speaks"], "수집용 계정은 speaks=false 여야 한다")
+        for m in loaded:
+            with self.subTest(email=m["email"]):
+                self.assertIn("speaks", m)
+
     def test_multiple_names_all_known_is_clean(self):
         """이름을 바꾼 사람은 두 표시명이 모두 명단에 있다."""
         members = [{"email": "d@x.com", "nicknames": ["김종원", "한도윤"]}]

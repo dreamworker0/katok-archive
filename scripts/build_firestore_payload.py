@@ -215,6 +215,9 @@ def load_members() -> list[dict]:
             "nickname": nicknames[0] if nicknames else "",
             "nicknames": nicknames,
             "role": role,
+            # 대화에 참여하지 않는 운영 계정은 false. 표시명 대조 경고를 넘긴다
+            # (check_member_nicknames 의 주석 참고). 기본은 참여하는 사람.
+            "speaks": m.get("speaks") is not False,
         })
     return members
 
@@ -227,10 +230,17 @@ def check_member_nicknames(members: list[dict], participants: dict) -> list[str]
 
     아직 발언한 적 없는 사람은 명단에 없는 게 정상이다 — 경고는 "확인해보라"는
     뜻이지 오류가 아니다.
+
+    다만 **원래 발언하지 않는 계정**도 있다. 카톡 수집을 위해 컴퓨터에 로그인해 둔
+    계정('문가은')이 그렇다 — 이 계정은 대화에 참여하지 않으므로 명단에 영영 없고,
+    그대로 두면 매일 밤 같은 경고가 뜬다. 늘 뜨는 경고는 곧 아무도 안 보는 경고가
+    되므로, `config/members.json` 에서 `"speaks": false` 로 표시하면 넘어간다.
     """
     known = {p["nickname"] for p in participants.get("participants", [])}
     warnings = []
     for m in members:
+        if m.get("speaks") is False:
+            continue
         if not m["nicknames"]:
             warnings.append("%s: 표시명 미연결 (개인화 기능이 동작하지 않음)" % m["email"])
             continue
