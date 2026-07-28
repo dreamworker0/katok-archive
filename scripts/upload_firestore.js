@@ -444,8 +444,12 @@ async function main() {
     // 갤러리용 작은 사진은 thumbs/ 밑에 따로 있다. 이 목록을 안 받으면 '이미 있음'
     // 판정을 못 해 매일 밤 312장을 다시 올린다.
     const thumbRemote = await remoteIndex(bucket, "thumbs/");
+    // 동영상도 같다. 이 목록이 없으면 '이미 있음' 판정을 못 해 매일 밤 14MB 를
+    // 다시 올린다(2026-07-28 실측 — 위 thumbs 주석과 똑같은 함정에 또 빠졌다).
+    const videoRemote = await remoteIndex(bucket, "videos/");
     const fileRemote = await remoteIndex(bucket, "files/");
-    const imgSize = new Map([...imgRemote.size, ...thumbRemote.size]);
+    const imgSize = new Map([...imgRemote.size, ...thumbRemote.size,
+                             ...videoRemote.size]);
     await uploadImages(bucket, images, imgSize);
     if (files.length) await uploadFiles(bucket, files, fileRemote.size);
 
@@ -455,6 +459,7 @@ async function main() {
     } else {
       await pruneOrphans(bucket, "images/", images, "images", imgRemote.objects);
       await pruneOrphans(bucket, "thumbs/", images, "thumbs", thumbRemote.objects);
+      await pruneOrphans(bucket, "videos/", images, "videos", videoRemote.objects);
       await pruneOrphans(bucket, "files/", files, "files", fileRemote.objects);
     }
   }

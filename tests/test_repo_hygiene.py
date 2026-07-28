@@ -57,6 +57,17 @@ class UploadCoverageTests(unittest.TestCase):
         # mp4 를 image/jpeg 로 올리면 브라우저가 재생하지 않는다
         self.assertIn('".mp4": "video/mp4"', src)
 
+    def test_uploader_indexes_every_storage_prefix_it_uploads_to(self):
+        """올리는 곳은 원격 목록도 받아야 한다.
+
+        목록이 없으면 '이미 있음' 판정을 못 해 매일 밤 같은 파일을 다시 올린다.
+        thumbs 에서 한 번 겪고 주석까지 남겼는데 videos 에서 똑같이 겪었다(14MB/일).
+        """
+        src = (ROOT / "scripts" / "upload_firestore.js").read_text(encoding="utf-8")
+        for prefix in ("images/", "thumbs/", "videos/", "files/"):
+            with self.subTest(prefix=prefix):
+                self.assertIn('remoteIndex(bucket, "%s")' % prefix, src)
+
 
 class DailyOrderTests(unittest.TestCase):
     """검사는 적재보다 **먼저** 돌아야 막을 수 있다."""
