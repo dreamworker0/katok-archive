@@ -2914,6 +2914,18 @@
     STATS = A.stats || {};
     DIGESTS = A.digests || {};
     KNOW = A.knowledge || { nodes: [], edges: [] };
+    TAGIDX = A.tag_index || { tags: [], total_tags: 0, hidden_tags: 0, min_count: 2 };
+    // 파일 위쪽에서 만든 것은 보호모드에서 늘 비어 있다(그때는 ARCHIVE 가 없다).
+    // 여기서 다시 만들지 않으면 태그 화면이 영원히 "아직 모인 태그가 없어요" 다.
+    THREAD_BY_ID = {}; TAG_THREADS = {};
+    THREADS.forEach(function (t) {
+      THREAD_BY_ID[t.id] = t;
+      (t.tags || t.keywords || []).forEach(function (k) {
+        var key = tagFold(k);
+        if (!TAG_THREADS[key]) TAG_THREADS[key] = [];
+        if (TAG_THREADS[key].indexOf(t.id) === -1) TAG_THREADS[key].push(t.id);
+      });
+    });
     CAT_LABEL = {}; CATS.forEach(function (c) { CAT_LABEL[c.id] = c.label; });
 
     state.session = session || null;

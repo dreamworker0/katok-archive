@@ -85,6 +85,31 @@ class StructureCheckTests(unittest.TestCase):
         self.assertEqual(tr.structure_gaps([
             {"id": "t-1", "count": 30, "report": body}]), [])
 
+    def test_long_prose_from_a_short_conversation_is_caught(self):
+        """건수만 보면 새는 구멍 — 대화 5건인데 한 문단 450자.
+
+        2026-07-28 지적: 대화 5건이라 인용(6건)·절 나눔(10건) 기준을 둘 다 비껄러
+        나갔다. 짧은 대화라도 길게 쓰면 구조가 필요하다.
+        """
+        sentence = "한 문단으로 길게 이어 쓴 글이다. "
+        # 250자를 넘기면 인용부터 요구한다
+        gaps = tr.structure_gaps([{"id": "t-347", "count": 5, "report": sentence * 18}])
+        self.assertEqual(gaps[0][2], "인용")
+        # 400자를 넘기면 절·목록까지 요구한다
+        gaps = tr.structure_gaps([{"id": "t-347", "count": 5, "report": sentence * 30}])
+        self.assertEqual(gaps[0][2], "인용·절 나눔")
+
+    def test_list_counts_as_structure_even_without_headings(self):
+        # 절 대신 목록으로 갈라 썼으면 그것도 눈으로 짚을 구조다.
+        body = "짧은 도입.\n\n> 인용\n\n" + "\n".join("- 항목 %d" % i for i in range(8)) + \
+            "\n\n" + "마무리 문단이다. " * 20
+        self.assertEqual(tr.structure_gaps([
+            {"id": "t-1", "count": 5, "report": body}]), [])
+
+    def test_rules_state_the_length_thresholds_too(self):
+        self.assertIn(str(tr.QUOTE_REQUIRED_CHARS) + "자", tr.REPORT_RULES)
+        self.assertIn(str(tr.SECTION_REQUIRED_CHARS) + "자", tr.REPORT_RULES)
+
     def test_short_conversations_are_not_required_to_have_structure(self):
         self.assertEqual(tr.structure_gaps([
             {"id": "t-1", "count": 3, "report": "두 문장으로 충분하다."}]), [])

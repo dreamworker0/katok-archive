@@ -71,6 +71,11 @@ MAX_VERBATIM_CHARS = 40
 QUOTE_REQUIRED_FROM = 6     # 대화 6건 이상이면 인용이 하나는 있어야 한다
 SECTION_REQUIRED_FROM = 10  # 대화 10건 이상이면 절을 나눈다
 
+# 건수만 보면 새는 구멍이 있다. 대화 5건인데 한 문단 450자로 쓴 보고서가 두 기준을
+# 모두 비껄러 나갔다(2026-07-28 지적). 짧은 대화라도 길게 쓰면 구조가 필요하다.
+QUOTE_REQUIRED_CHARS = 250    # 본문 250자 넘으면 인용이 하나는 있어야 한다
+SECTION_REQUIRED_CHARS = 400  # 본문 400자 넘으면 절·목록·표 중 하나는 있어야 한다
+
 # 보고서 본문 규칙 — **원본은 여기 하나다.**
 #
 # 예전에는 규칙이 두 곳에 따로 있었다. 밤 자동 갱신이 쓰는 분류 프롬프트에는
@@ -83,14 +88,17 @@ REPORT_RULES = f"""- 사실만 씁니다. 대화에 없는 내용을 채우지 �
 
 ### 인용 — 자료가 본문 사이로 들어오는 통로다
 - 결정적인 **짧은 말**을 인용(`>`)으로 옮기세요. 한 편에 1~3개. 말투·이모티콘까지
-  그대로. 대화 {QUOTE_REQUIRED_FROM}건 이상이면 인용이 하나는 있어야 합니다.
+  그대로. **대화 {QUOTE_REQUIRED_FROM}건 이상이거나 본문이 {QUOTE_REQUIRED_CHARS}자를
+  넘으면** 인용이 하나는 있어야 합니다.
 - **한 인용은 {MAX_VERBATIM_CHARS}자를 넘기지 마세요.** 긴 글은 인용하지 말고
   요약하세요. 이 아카이브는 요약을 발행하고 원문은 발행하지 않습니다. 긴 글을
   통째로 옮기면 그건 원문 발행이고, 검사에서 걸려 보고서가 버려집니다.
 - 긴 글에서 꼭 살리고 싶은 표현이 있으면 그 **한 구절만** 따오세요.
 
 ### 절 — 흐름이 눈에 보이게 나눈다
-- 대화 {SECTION_REQUIRED_FROM}건 이상이면 `## 짧은 제목` 으로 절을 나눕니다.
+- **대화 {SECTION_REQUIRED_FROM}건 이상이거나 본문이 {SECTION_REQUIRED_CHARS}자를
+  넘으면** `## 짧은 제목` 으로 절을 나누거나 `-` 목록으로 갈라 쓰세요. 한 문단이
+  400자를 넘으면 읽는 사람이 눈으로 짚을 곳이 없습니다.
   문제 제기 → 시도 → 막힌 곳 → 해결 같은 흐름이면 그대로 절이 됩니다.
 - 짚을 것이 여럿이면 `-` 목록으로, 견주는 것이면 표로 쓰세요.
 - 정말 중요한 한두 곳만 `**굵게**`. 남용하면 아무것도 강조되지 않습니다.
@@ -161,10 +169,15 @@ def structure_gaps(threads: list[dict]) -> list[tuple[str, int, str]]:
         if not body:
             continue
         count = t.get("count") or len(t.get("message_ids") or [])
+        # 자리표·소제목을 뺀 실제 글 길이로 본다.
+        length = content_chars(re.sub(r"^!\[\[.*?\]\]\s*$", "", body, flags=re.M))
         missing = []
-        if count >= QUOTE_REQUIRED_FROM and not re.search(r"^>", body, re.M):
+        if ((count >= QUOTE_REQUIRED_FROM or length >= QUOTE_REQUIRED_CHARS)
+                and not re.search(r"^>", body, re.M)):
             missing.append("인용")
-        if count >= SECTION_REQUIRED_FROM and not re.search(r"^##\s", body, re.M):
+        # 절 대신 목록·표로 갈라 썼으면 그것도 구조다.
+        if ((count >= SECTION_REQUIRED_FROM or length >= SECTION_REQUIRED_CHARS)
+                and not re.search(r"^(##\s|[-*]\s|\|)", body, re.M)):
             missing.append("절 나눔")
         # 자료가 있는데 자리표가 하나도 없으면 사진·링크가 전부 글 끝으로 밀린다.
         if t.get("asset_count") and not _ANY_ANCHOR.search(body):

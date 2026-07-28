@@ -61,6 +61,34 @@ class Markup(HTMLParser):
             self.images.append(attrs)
 
 
+class ArchiveRebindContractTests(unittest.TestCase):
+    """ARCHIVE 에서 뽑아 둔 값은 `init()` 에서 **다시** 읽어야 한다.
+
+    보호모드(hosting)에서는 app.js 가 boot.js 보다 먼저 실행되므로 파일 위쪽의
+    `window.ARCHIVE` 는 늘 비어 있다. boot.js 가 Firestore 로드를 끝낸 뒤 init() 을
+    부르는데, 거기서 다시 읽지 않은 변수는 영원히 빈 값으로 남는다.
+
+    실측 2026-07-28: TAGIDX·THREAD_BY_ID·TAG_THREADS 를 빠뜨려 태그 화면이 "아직
+    모인 태그가 없어요", 분류 카드의 '곁 주제' 가 안 보였다. 데이터는 Firestore 에
+    정상으로 올라가 있었다.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        cls.init = cls.app[cls.app.index("function init(session)"):]
+
+    def test_every_archive_derived_global_is_rebound_in_init(self):
+        head = self.app[:self.app.index("function init(session)")]
+        # 파일 위쪽에서 window.ARCHIVE(=A) 로 만든 전역들
+        names = set(re.findall(r"var ([A-Z][A-Z_0-9]*) = A\.", head))
+        names |= {"THREAD_BY_ID", "TAG_THREADS"}  # A 로 만든 파생 색인
+        for name in sorted(names):
+            with self.subTest(name=name):
+                self.assertRegex(self.init, r"\b%s = " % name,
+                                 "%s 를 init() 에서 다시 읽지 않는다" % name)
+
+
 class UiShellContractTests(unittest.TestCase):
     def parse(self, name):
         parser = Markup()
