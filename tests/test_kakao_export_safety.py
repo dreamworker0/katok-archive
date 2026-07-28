@@ -49,6 +49,78 @@ class ClickTargetIsVerifiedTests(unittest.TestCase):
         self.assertIn("항상 위", block)
 
 
+class RoomWindowIsOpenedSafelyTests(unittest.TestCase):
+    """방 창이 없으면 직접 연다 (2026-07-28 밤 갱신이 이것 때문에 통째로 빠졌다).
+
+    방을 여는 경로는 대화방을 다루므로 내보내기만큼 위험하다. 특히 '키를 보내지
+    않는다' 는 리팩터링으로 조용히 되돌리기 쉬운 계약이다 — 검색창에 방 이름을
+    타이핑하는 구현이 더 직관적으로 보이기 때문이다. 그 구현은 포커스가 대화방
+    입력칸에 있으면 방 이름을 40명 방에 메시지로 전송한다.
+    """
+
+    def test_recovery_exists(self):
+        self.assertIn("function Open-RoomWindow", EXPORT)
+        self.assertIn("$win = Open-RoomWindow", EXPORT)
+
+    def test_tray_icon_is_not_clicked(self):
+        # 트레이 아이콘은 숨김 영역·아이콘 순서·배율에 따라 자리가 바뀐다.
+        # 숨겨진 메인 창에 ShowWindow 를 부르는 것이 같은 일을 좌표 없이 한다.
+        self.assertIn("public static IntPtr KakaoMain()", EXPORT)
+        for forbidden in ("Shell_TrayWnd", "NotifyIconOverflowWindow", "TrayNotifyWnd"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, EXPORT)
+
+    def test_no_enter_key_anywhere(self):
+        # Enter 는 목록에서 동작하지 않았고(실측), 잘못 가면 메시지를 전송한다.
+        for forbidden in ("0x0D", "{ENTER}", "VK_RETURN"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, EXPORT)
+
+    def test_no_typing_into_kakao(self):
+        """방 이름을 타이핑해 검색하는 구현을 막는다.
+
+        문자열 부재로 쓰면 헛짚는다 — 'SendKeys 를 쓰지 않는 이유' 를 적은 주석에도
+        그 이름이 들어 있다(이 파일 MenuIsNeverTouchedTests 의 교훈과 같다).
+        그래서 '방을 여는 함수 본문에 키를 보내는 호출이 없다' 로 좁혀서 적는다.
+        """
+        body = EXPORT[EXPORT.index("function Open-RoomWindow"):]
+        end = body.index("\nfunction ", 1)
+        body = body[:end]
+        for call in ("keybd_event", "SendKeys", "CtrlS()", "Set-Clipboard", "SendWait"):
+            with self.subTest(call=call):
+                self.assertNotIn(call, body)
+        # 그리고 왜 그런지가 남아 있어야 한다 — 사라지면 다음 사람이 타이핑으로 되돌린다.
+        self.assertIn("메시지로 전송", EXPORT)
+
+    def test_row_is_chosen_by_reading_the_screen(self):
+        # 채팅 목록은 접근성 API 에 항목이 0개다. 몇 번째 행인지 추정해 클릭하면
+        # 엉뚱한 방을 연다 — 클릭할 행의 글자를 먼저 읽는다.
+        self.assertIn("kakao_ocr.ps1", EXPORT)
+        self.assertIn("function Get-RowMatchScore", EXPORT)
+
+    def test_row_click_is_guarded_by_pid_check(self):
+        self.assertIn("$pidAtRow = [Win32]::PidAt($cx, $cy)", EXPORT)
+        guard = EXPORT.index("$pidAtRow = [Win32]::PidAt($cx, $cy)")
+        self.assertLess(guard, EXPORT.index("[Win32]::MouseDoubleClick()"))
+
+    def test_success_is_decided_by_the_window_title(self):
+        # OCR 은 글자를 틀린다(실측: '바이브코딩' -> '바이브코팅'). 근사 일치로 고른 뒤
+        # 제목이 정확히 같은 창이 떴는지로만 성공을 판정해야 Ctrl+S 가 남의 방에 가지 않는다.
+        block = EXPORT[EXPORT.index("[Win32]::MouseDoubleClick()"):][:900]
+        self.assertIn("Get-RoomWindow", block)
+
+    def test_scroll_does_not_move_the_real_cursor(self):
+        # 실제 휠 입력은 이 컨트롤에서 무시된다(실측). 컨트롤에 WM_MOUSEWHEEL 을
+        # 직접 보내므로 스크롤이 다른 창에 닿을 수 없다.
+        self.assertIn("0x020A", EXPORT)
+        self.assertNotIn("mouse_event(0x0800", EXPORT)
+
+    def test_failure_still_aborts_with_a_screenshot(self):
+        # 복구가 실패하면 예전 동작으로 돌아가야 한다 — 나빠지는 경우를 만들지 않는다.
+        block = EXPORT[EXPORT.index("$win = Open-RoomWindow"):][:900]
+        self.assertIn("Stop-Safely", block)
+
+
 class LoggingNeverAbortsTheRunTests(unittest.TestCase):
     """진단을 남기려고 둔 코드가 실행을 멈춰서는 안 된다.
 

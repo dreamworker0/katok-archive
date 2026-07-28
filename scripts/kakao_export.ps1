@@ -19,15 +19,30 @@
     4) 저장 대화상자는 접근성 API 로 다룬다(좌표 클릭 없음)
     5) 파일이 실제로 생기고 크기가 안정될 때까지 확인
 
+방 창이 없으면 직접 연다 (2026-07-29 추가)
+  2026-07-28 밤 갱신이 통째로 빠졌다. 방 창이 없어서 첫 줄에서 중단했다.
+  방 창은 사람이 닫지 않아도 사라진다(실측) — '열어두면 된다' 는 전제로는
+  매일 자동 실행이 성립하지 않으므로 없으면 열고 진행한다. Open-RoomWindow 참고.
+    · 트레이 아이콘을 클릭하지 않는다 (숨겨진 메인 창에 ShowWindow)
+    · 키를 보내지 않는다 (Enter 는 동작하지 않고, 타이핑은 메시지 전송 위험)
+    · 클릭할 행은 OCR 로 읽어 고르고, 열린 창의 제목으로 최종 확인
+  실패하면 예전과 똑같이 화면을 남기고 중단한다.
+
 사용
-  powershell -File scripts\kakao_export.ps1            # 내보내기 실행
-  powershell -File scripts\kakao_export.ps1 -Discover  # 창·단축키 확인만 (전송 안 함)
+  powershell -File scripts\kakao_export.ps1              # 내보내기 실행
+  powershell -File scripts\kakao_export.ps1 -Discover    # 창 확인·방 열기까지만 (Ctrl+S 안 보냄)
+  powershell -File scripts\kakao_export.ps1 -NoAutoOpen  # 방 창이 없으면 그냥 중단 (예전 동작)
 #>
 param(
     [switch]$Discover,
     [string]$Room = '바이브코딩,업무자동화 화상회의모임',
     [string]$LogDir = 'logs',
-    [string]$InboxDir = 'inbox'
+    [string]$InboxDir = 'inbox',
+    # 방 창이 없을 때 채팅 목록을 몇 화면까지 훑을지. 방은 최근 대화 순으로
+    # 자리가 바뀌므로 맨 위에 있다고 가정하지 않는다.
+    [int]$MaxScrollPages = 5,
+    # 방 창이 없어도 직접 열지 않고 중단한다(예전 동작).
+    [switch]$NoAutoOpen
 )
 
 $ErrorActionPreference = 'Stop'
@@ -35,13 +50,63 @@ Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.For
 
 if (-not ('Win32' -as [type])) {
     Add-Type -TypeDefinition @"
-using System;using System.Runtime.InteropServices;
+using System;using System.Text;using System.Runtime.InteropServices;
 public class Win32 {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h,int c);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);
   [DllImport("user32.dll")] static extern void mouse_event(uint f,uint x,uint y,uint d,int e);
   public static void MouseClick(){ mouse_event(0x0002,0,0,0,0); mouse_event(0x0004,0,0,0,0); }
+
+  // 채팅 목록에서 방을 여는 동작. 카톡 목록은 더블클릭으로 방 창을 띄운다(실측).
+  public static void MouseDoubleClick(){
+    mouse_event(0x0002,0,0,0,0); mouse_event(0x0004,0,0,0,0);
+    System.Threading.Thread.Sleep(80);
+    mouse_event(0x0002,0,0,0,0); mouse_event(0x0004,0,0,0,0);
+  }
+  // 채팅 목록 스크롤.
+  //
+  // 실제 휠 입력(mouse_event)은 이 컨트롤에서 완전히 무시된다(실측 2026-07-29:
+  // 커서를 목록 위에 올리고 15번 굴려도 화면이 한 픽셀도 바뀌지 않았다).
+  // WM_VSCROLL·PageDown·End 도 듣지 않는다. WM_MOUSEWHEEL 을 컨트롤 핸들로
+  // 직접 보내는 것만 동작한다.
+  //
+  // 이 방식은 더 안전하기도 하다 — 커서를 어디에도 올리지 않으므로 스크롤이
+  // 다른 창에 닿을 수 없다. lParam 은 WM_MOUSEWHEEL 규약상 화면 좌표다.
+  public static void ScrollList(IntPtr list, int notches, bool down, int screenX, int screenY){
+    IntPtr wp = (IntPtr)((down ? -120 : 120) << 16);
+    IntPtr lp = (IntPtr)((screenY << 16) | (screenX & 0xFFFF));
+    for (int i = 0; i < notches; i++) {
+      PostMessage(list, 0x020A, wp, lp);      // WM_MOUSEWHEEL
+      System.Threading.Thread.Sleep(80);
+    }
+  }
+
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc p,IntPtr l);
+  [DllImport("user32.dll")] public static extern int GetClassName(IntPtr h,StringBuilder s,int m);
+  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h,StringBuilder s,int m);
+  public delegate bool EnumProc(IntPtr h,IntPtr l);
+
+  // 카카오톡의 '메인 창'(채팅 목록) 핸들.
+  //
+  // 트레이로 내려간 상태에서도 이 창은 최상위 창으로 살아 있고 숨겨져 있을 뿐이다(실측).
+  // 트레이 아이콘 클릭이 하는 일이 바로 이 창의 ShowWindow 이므로, 핸들로 직접 부르면
+  // 알림 영역 좌표·아이콘 순서·숨김 영역에 전혀 의존하지 않는다.
+  public static IntPtr KakaoMain(){
+    IntPtr found = IntPtr.Zero;
+    EnumWindows(delegate(IntPtr h, IntPtr l){
+      uint pid; GetWindowThreadProcessId(h, out pid);
+      try { if (System.Diagnostics.Process.GetProcessById((int)pid).ProcessName != "KakaoTalk") return true; }
+      catch { return true; }
+      var c = new StringBuilder(256); GetClassName(h, c, 256);
+      var t = new StringBuilder(512); GetWindowText(h, t, 512);
+      if (c.ToString() == "EVA_Window_Dblclk" && t.ToString() == "카카오톡") { found = h; return false; }
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
   [DllImport("user32.dll")] static extern void keybd_event(byte k,byte s,uint f,IntPtr e);
   // Windows 는 포그라운드가 아닌 프로세스의 SetForegroundWindow 를 거부한다.
   // Alt 를 한 번 눌러주면 포그라운드 전환이 허용되는 것이 표준 우회법이다.
@@ -174,6 +239,191 @@ function Get-RoomWindow {
     $cond = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::NameProperty, $Room)
     $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $cond)
+}
+
+function Restore-KakaoMainWindow {
+    <#
+      트레이로 내려간 카카오톡 메인 창을 되살려 최상단으로 올린다.
+
+      트레이 아이콘을 클릭하지 않는다. 알림 영역은 이 일에서 가장 깨지기 쉬운
+      부분이다 — 아이콘이 숨김 영역(오버플로)으로 들어가면 좌표가 사라지고,
+      다른 앱이 아이콘을 넣고 빼면 자리가 밀리고, 화면 배율에 따라 어긋난다.
+      메인 창은 트레이 상태에서도 최상위 창으로 살아 있고 '숨겨져' 있을 뿐이므로
+      (실측 2026-07-29) 핸들로 ShowWindow 를 부르면 같은 결과를 좌표 없이 얻는다.
+    #>
+    $mh = [Win32]::KakaoMain()
+    if ($mh -eq [IntPtr]::Zero) { return [IntPtr]::Zero }
+    if (-not [Win32]::IsWindowVisible($mh)) {
+        Write-Log "  메인 창이 트레이에 숨어 있습니다 — ShowWindow 로 되살립니다"
+        [void][Win32]::ShowWindow($mh, 5)          # SW_SHOW
+        Start-Sleep -Milliseconds 900
+    }
+    for ($i = 1; $i -le 5; $i++) {
+        if ([Win32]::ForceForeground($mh)) { return $mh }
+        Start-Sleep -Milliseconds 400
+        if ([Win32]::GetForegroundWindow() -eq $mh) { return $mh }
+    }
+    Write-Log "  메인 창을 최상단으로 올리지 못했습니다" 'WARN'
+    [IntPtr]::Zero
+}
+
+function Get-RowMatchScore {
+    <#
+      OCR 로 읽은 목록 한 줄이 방 이름의 앞부분인지 0~1 로 점수를 낸다.
+
+      정확 일치를 쓸 수 없다. 목록의 방 이름은 폭에 맞춰 잘리고(...), OCR 은
+      글자를 틀린다 — 실측에서 '바이브코딩' 을 '바이브코팅' 으로 읽었다.
+      그래서 기호·공백을 뗀 뒤 글자 단위 일치율로 판정하고, 최종 확인은
+      '열린 창의 제목이 방 이름과 정확히 같은지' 로 한다. 근사 판정이 틀리면
+      엉뚱한 창이 열리지만 제목 검사에서 걸러지므로 Ctrl+S 까지 가지 않는다.
+    #>
+    param([string]$Text, [string]$Target)
+    $a = ($Text -replace '[^\p{L}\p{N}]', '')
+    $b = ($Target -replace '[^\p{L}\p{N}]', '')
+    if ($a.Length -lt 6 -or $b.Length -eq 0) { return 0.0 }
+    if ($a.Length -gt $b.Length) { $a = $a.Substring(0, $b.Length) }
+    $same = 0
+    for ($i = 0; $i -lt $a.Length; $i++) { if ($a[$i] -eq $b[$i]) { $same++ } }
+    [double]$same / $a.Length
+}
+
+function Open-RoomWindow {
+    <#
+      방 창이 없을 때, 트레이 상태의 카톡에서 방 창을 열어 반환한다. 실패하면 $null.
+
+      왜 필요한가
+        방 창은 사람 손 없이도 사라진다(실측 2026-07-29: 관찰 중에 없어졌다).
+        2026-07-28 밤 갱신은 이 때문에 통째로 빠졌다. '창을 열어두면 된다' 는
+        전제는 유지될 수 없으므로, 없으면 직접 연다.
+
+      키를 보내지 않는다
+        Enter 로 목록의 선택 항목을 여는 것은 동작하지 않았다(실측).
+        방 이름을 검색창에 타이핑하는 방법도 쓰지 않는다 — 포커스가 대화방
+        입력칸에 있으면 그 글자가 방에 메시지로 전송된다. 되돌릴 수 없는 사고다.
+        더블클릭만으로 되므로, 이 경로는 키보드 입력을 아예 쓰지 않는다.
+
+      클릭할 자리는 OCR 로 먼저 읽는다
+        채팅 목록은 EVA_VH_ListControl_Dblclk 한 덩어리로, 접근성 API 에 항목이
+        0개다(실측). 몇 번째 행인지 알 수 없으므로 목록 영역을 OCR 해서 방 이름이
+        보이는 줄의 y 좌표를 얻는다. 이 저장소가 메뉴를 다룰 때 쓰던 원칙과 같다.
+    #>
+    Write-Log "방 창 복구 시도 — 트레이 상태의 카카오톡에서 방을 엽니다"
+
+    $mh = Restore-KakaoMainWindow
+    if ($mh -eq [IntPtr]::Zero) {
+        Write-Log "  카카오톡 메인 창을 찾지 못했습니다(카톡이 실행 중이 아닐 수 있음)" 'WARN'
+        return $null
+    }
+
+    $root = [System.Windows.Automation.AutomationElement]::RootElement
+    $main = $root.FindFirst([System.Windows.Automation.TreeScope]::Children,
+        (New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::NameProperty, '카카오톡')))
+    if ($null -eq $main) { Write-Log "  메인 창이 접근성 API 에 보이지 않습니다" 'WARN'; return $null }
+    $kakaoPid = $main.Current.ProcessId
+
+    # 채팅 목록 컨트롤 위치
+    $list = $null
+    $all = $main.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+        [System.Windows.Automation.Condition]::TrueCondition)
+    for ($i = 0; $i -lt $all.Count; $i++) {
+        if ($all.Item($i).Current.ClassName -eq 'EVA_VH_ListControl_Dblclk') { $list = $all.Item($i); break }
+    }
+    if ($null -eq $list) {
+        Write-Log "  채팅 목록을 찾지 못했습니다 — 잠금 화면이나 로그아웃 상태일 수 있습니다" 'WARN'
+        return $null
+    }
+    $lr = $list.Current.BoundingRectangle
+    $lh = [IntPtr]$list.Current.NativeWindowHandle
+    $cx = [int]($lr.X + $lr.Width / 2)
+    $mid = [int]($lr.Y + $lr.Height / 2)
+    Write-Log ("  채팅 목록: x={0} y={1} w={2} h={3}" -f [int]$lr.X, [int]$lr.Y, [int]$lr.Width, [int]$lr.Height)
+
+    # 목록을 맨 위로 되돌린다 — 스크롤은 컨트롤에 메시지를 보내는 것이라 안전하다
+    [Win32]::ScrollList($lh, 25, $false, $cx, $mid)
+    Start-Sleep -Milliseconds 600
+
+    # 목록을 OCR 해서 방 이름 줄을 찾는다.
+    #
+    # 방이 목록 맨 위에 있다고 가정하지 않는다. 목록은 최근 대화 순이라 자리가 매일
+    # 바뀌고, 한 화면에 안 보일 수도 있다. 그래서 위에서부터 한 화면씩 훑는다.
+    # 스크롤은 휠이므로 훑는 동안 아무 것도 열리지 않는다.
+    . (Join-Path $PSScriptRoot 'kakao_ocr.ps1')
+    $best = $null; $bestScore = 0.0
+    for ($page = 0; $page -lt $MaxScrollPages; $page++) {
+        # 그려지기 전에 캡처하면 몇 줄만 읽힌다(실측: 20줄이 나올 자리에서 1줄).
+        # 줄 수가 터무니없이 적으면 한 번 더 읽는다.
+        $lines = Get-ScreenOcr -X ([int]$lr.X) -Y ([int]$lr.Y) -Width ([int]$lr.Width) -Height ([int]$lr.Height) -Scale 2
+        if ($lines.Count -lt 5) {
+            Start-Sleep -Milliseconds 800
+            $lines = Get-ScreenOcr -X ([int]$lr.X) -Y ([int]$lr.Y) -Width ([int]$lr.Width) -Height ([int]$lr.Height) -Scale 2
+        }
+        $pageBest = $null; $pageScore = 0.0
+        foreach ($l in $lines) {
+            $s = Get-RowMatchScore -Text $l.text -Target $Room
+            if ($s -gt $pageScore) { $pageScore = $s; $pageBest = $l }
+        }
+        Write-Log ("  목록 {0}쪽: {1}줄, 최고 일치율 {2:P0}" -f ($page + 1), $lines.Count, $pageScore)
+        if ($pageScore -gt $bestScore) { $bestScore = $pageScore; $best = $pageBest }
+        if ($bestScore -ge 0.8) { break }
+
+        # 다음 화면으로. 더 스크롤할 것이 없으면 화면이 그대로이므로 그때 멈춘다.
+        $sig = ($lines | ForEach-Object { $_.text }) -join '|'
+        [Win32]::ScrollList($lh, 4, $true, $cx, $mid)
+        Start-Sleep -Milliseconds 700
+        $after = Get-ScreenOcr -X ([int]$lr.X) -Y ([int]$lr.Y) -Width ([int]$lr.Width) -Height ([int]$lr.Height) -Scale 2
+        if ((($after | ForEach-Object { $_.text }) -join '|') -eq $sig) {
+            Write-Log "  목록 끝 — 더 훑을 화면이 없습니다"
+            break
+        }
+    }
+    if ($null -eq $best -or $bestScore -lt 0.8) {
+        Write-Log ("  목록에서 '{0}' 을 찾지 못했습니다 (최고 일치율 {1:P0}, {2}쪽까지 확인)" -f
+            $Room, $bestScore, $MaxScrollPages) 'WARN'
+        return $null
+    }
+    Write-Log ("  후보 줄: '{0}' (일치율 {1:P0}, y={2})" -f $best.text, $bestScore, $best.y)
+
+    # 클릭할 자리가 실제로 카톡인지 확인 — '항상 위' 창이 덮고 있으면 클릭하지 않는다.
+    # 변수 이름이 아래 Ctrl+S 쪽 가드($pidAt)와 겹치지 않게 둔다 — 안전장치 계약
+    # 테스트가 '첫 번째 $pidAt 가드' 를 Ctrl+S 가드로 보고 검사한다.
+    $cy = [int]$best.y
+    $pidAtRow = [Win32]::PidAt($cx, $cy)
+    if ($pidAtRow -ne $kakaoPid) {
+        $who = '알 수 없음'
+        if ($pidAtRow -ne 0) { try { $who = (Get-Process -Id $pidAtRow -ErrorAction Stop).ProcessName } catch {} }
+        Write-Log ("  클릭 자리($cx, $cy)가 다른 창에 덮여 있습니다 — '$who'(PID $pidAtRow). " +
+            "'항상 위'로 떠 있는 창(작업 관리자 등)일 수 있습니다. 클릭하지 않습니다") 'WARN'
+        return $null
+    }
+
+    Write-Log "  더블클릭으로 방 열기 ($cx, $cy)"
+    [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($cx, $cy)
+    Start-Sleep -Milliseconds 250
+    [Win32]::MouseDoubleClick()
+
+    # 제목이 정확히 일치하는 창이 떴는지로만 성공을 판정한다
+    $deadline = (Get-Date).AddSeconds(12)
+    while ((Get-Date) -lt $deadline) {
+        $w = Get-RoomWindow
+        if ($null -ne $w) { Write-Log "  방 창 열림 확인: '$($w.Current.Name)'"; return $w }
+        Start-Sleep -Milliseconds 500
+    }
+
+    # 실패 — 엉뚱한 방이 열렸다면 닫아서 원래 상태로 되돌린다
+    Write-Log "  방 창이 열리지 않았습니다" 'WARN'
+    $kids = $root.FindAll([System.Windows.Automation.TreeScope]::Children,
+        [System.Windows.Automation.Condition]::TrueCondition)
+    for ($i = 0; $i -lt $kids.Count; $i++) {
+        $e = $kids.Item($i)
+        if ($e.Current.ProcessId -eq $kakaoPid -and
+            $e.Current.ClassName -eq 'EVA_Window_Dblclk' -and
+            $e.Current.Name -and $e.Current.Name -ne '카카오톡' -and $e.Current.Name -ne $Room) {
+            Write-Log "  잘못 열린 창을 닫습니다: '$($e.Current.Name)'"
+            [void][Win32]::PostMessage([IntPtr]$e.Current.NativeWindowHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+        }
+    }
+    $null
 }
 
 function Find-ByClassAndId {
@@ -310,9 +560,25 @@ $script:LogFile = Join-Path $script:LogDirResolved ("kakao-export-{0}.log" -f (G
 
 Write-Log "=== 대화 내보내기 시작 (Discover=$Discover) ==="
 
-# 1) 방 창 확인
+# 1) 방 창 확인 — 없으면 직접 연다
+#
+# 2026-07-28 밤 갱신이 통째로 빠진 원인이 이것이다. 방 창은 사람이 닫지 않아도
+# 사라지므로(실측) '열어두면 된다' 는 전제로는 매일 자동 실행이 성립하지 않는다.
+# 복구가 실패하면 예전과 똑같이 화면을 남기고 중단한다 — 나빠지는 경우는 없다.
 $win = Get-RoomWindow
-if ($null -eq $win) { Stop-Safely "'$Room' 창을 찾을 수 없습니다. 카카오톡에서 해당 방을 열어두세요." }
+if ($null -eq $win) {
+    if ($NoAutoOpen) {
+        Stop-Safely "'$Room' 창을 찾을 수 없습니다(-NoAutoOpen). 카카오톡에서 해당 방을 열어두세요."
+    }
+    Write-Log "'$Room' 창이 없습니다 — 직접 열어 봅니다" 'WARN'
+    try { $win = Open-RoomWindow } catch {
+        Write-Log "  복구 중 오류: $($_.Exception.Message)" 'WARN'
+        $win = $null
+    }
+}
+if ($null -eq $win) {
+    Stop-Safely "'$Room' 창을 찾을 수 없고, 카카오톡에서 직접 여는 것도 실패했습니다. 남긴 화면을 확인하세요."
+}
 $h = [IntPtr]$win.Current.NativeWindowHandle
 $r = $win.Current.BoundingRectangle
 Write-Log "창 확인: '$($win.Current.Name)' (x=$([int]$r.X) y=$([int]$r.Y) w=$([int]$r.Width) h=$([int]$r.Height))"
