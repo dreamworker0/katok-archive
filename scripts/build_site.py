@@ -19,6 +19,7 @@ from pathlib import Path
 
 from scripts import interests as interestlib
 from scripts import jsonio
+from scripts import pii
 from scripts import tags as taglib
 from scripts.topic_reports import (
     apply_reports,
@@ -318,6 +319,45 @@ def build_media(messages: list[dict]) -> list[dict]:
         out.append(item)
     return out
 
+
+
+def hide_pii_media(media: list[dict], hidden: set[str]) -> list[dict]:
+    """개인정보가 찍힌 사진을 발행본에서 빼고 '가려진 자리'만 남긴다.
+
+    경로만 지우고 끝내면 갤러리에서 그 칸이 조용히 사라진다. 그러면 "여기 사진이
+    있었는데 왜 없지" 를 아무도 알 수 없고, 고장과 구분되지 않는다. 몇 장이 가려졌
+    는지 세어 두어 화면이 자리표를 그릴 수 있게 한다.
+
+    작은 사진(thumbs)도 함께 뺀다 — 같은 그림을 줄인 것이라 글자가 그대로 남는다.
+
+    `kind` 를 보지 않고 `images` 가 있는지만 본다. 미디어 목록과 '내 글' 목록이
+    모양은 다르지만 사진을 담는 필드는 같아서, 한 함수로 둘 다 다룰 수 있다.
+    본인 글에서도 같은 처리가 필요하다 — 감춘 사진은 올라가지도 않으므로, 그냥
+    두면 본인 화면에서 404 로 깨져 보이고 왜 그런지 알 수 없다.
+    """
+    out = []
+    for item in media:
+        # 동영상은 OCR 대상이 아니다(프레임을 뜯어야 한다). 지금은 그대로 둔다.
+        srcs = item.get("images") or []
+        if not srcs:
+            out.append(item)
+            continue
+        thumbs = item.get("thumbs") or srcs
+        keep_src, keep_thumb, dropped = [], [], 0
+        for i, src in enumerate(srcs):
+            if src in hidden:
+                dropped += 1
+                continue
+            keep_src.append(src)
+            keep_thumb.append(thumbs[i] if i < len(thumbs) else src)
+        if not dropped:
+            out.append(item)
+            continue
+        ni = dict(item)
+        ni["images"], ni["thumbs"] = keep_src, keep_thumb
+        ni["pii_hidden"] = dropped
+        out.append(ni)
+    return out
 
 
 def build_data(
@@ -745,8 +785,22 @@ def main() -> None:
                       files, load_secondary())
     # 화면은 원문이 아니라 스레드 요약과 결과물을 쓴다. 배포본과 같은 모양으로 맞춘다.
     data["threads"] = enrich_threads(data["threads"], data["messages"])
-    data["media"] = build_media(data["messages"])
+    # 미리보기도 배포본과 같은 정책으로 감춘다 — 다르면 미리보기로 확인한 것이
+    # 배포될 모습이 아니게 된다. (판정 파일이 없으면 아무것도 감추지 않는다)
+    from scripts import scan_image_pii
+    data["media"] = hide_pii_media(build_media(data["messages"]),
+                                   scan_image_pii.hidden_paths())
+    hidden_shots = sum(m.get("pii_hidden") or 0 for m in data["media"])
+    if hidden_shots:
+        print("개인정보가 찍힌 사진 %d장 감춤" % hidden_shots)
     data.pop("messages", None)
+    # 개인정보를 가린다. 원문(messages)을 뺀 **뒤에** 훑는 것이 중요하다 — 미리보기
+    # 에는 본인 글 구분이 없으므로 남는 것은 모두 '모두가 보는 것' 이고, 배포본과
+    # 같은 정책이 적용돼야 미리보기로 확인한 것이 곧 배포될 모습이 된다.
+    data, hits = pii.mask_tree(data)
+    if hits:
+        print("개인정보 %d건 가림 (%s)"
+              % (len([h for h in hits if h.grade == "certain"]), pii.summarize(hits)))
     write_site(data)
 
     t = data["stats"]["totals"]

@@ -8,6 +8,7 @@
   4. inbox/*.txt 를 증분 반영                  ingest_incremental.py
   5. 주제 분류 (LLM, 비치명적)                 classify_unsorted.py
   6. 갤러리용 작은 사진 생성                   build_thumbnails.py
+  6b. 사진 속 개인정보 검사                     ocr_images.ps1 + scan_image_pii.py
   7. 발행본 재생성                             build_firestore_payload.py
   8. 테스트로 정합성 확인 (적재 전에)          unittest
   9. Firestore·Storage 적재                    upload_firestore.js
@@ -258,6 +259,21 @@ if ($null -ne $secCode -and $secCode -ne 0) {
 #    받는 셈이다(실측 2026-07-27: 사진 312장이 462MB, 작은 사진으로는 5MB).
 #    이미 있는 것은 건너뛰므로 새로 들어온 사진만 만든다 — 조용한 날은 거의 0초다.
 Invoke-Step '작은 사진 생성' { python -m scripts.build_thumbnails } | Out-Null
+
+# 6b) 사진 속 개인정보 검사 — 발행본을 만들기 **전**이어야 한다
+#
+#     판정 결과(output/image_pii.json)를 build_firestore_payload 가 읽어 업로드
+#     목록에서 뺀다. 뒤에 두면 그날 사진이 검사 없이 올라간다.
+#
+#     이미 읽은 사진은 건너뛰므로 새로 들어온 것만 OCR 한다(조용한 날 거의 0초).
+#
+#     실패하면 **멈춘다**. 분류·보조분류와 다르게 삼키지 않는다 — 그 둘은 없으면
+#     곁길이 안 생길 뿐이지만, 이 검사가 빠진 채 발행하면 검사받지 않은 새 사진이
+#     그대로 올라간다. 되돌릴 수 없는 쪽이므로 발행을 하루 미루는 편이 맞다.
+Invoke-Step '사진 개인정보 검사' {
+    powershell -ExecutionPolicy Bypass -File scripts\ocr_images.ps1
+    if ($LASTEXITCODE -eq 0) { python -m scripts.scan_image_pii }
+} | Out-Null
 
 # 7) 발행본 재생성
 Invoke-Step '발행본 생성' { python -m scripts.build_firestore_payload } | Out-Null

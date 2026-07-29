@@ -26,7 +26,7 @@ import shutil
 from collections import Counter
 from pathlib import Path
 
-from scripts import build_site, member_requests
+from scripts import build_site, member_requests, pii, scan_image_pii
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
@@ -326,9 +326,21 @@ def build_payload() -> dict:
     #   - 관리자 전체 열람   messagesSource (규칙이 관리자만 허용)
     #   - 본인 글 관리       messagesSource 중 본인 표시명 것만 (클레임으로 판정)
     threads_pub = build_site.enrich_threads(data["threads"], data["messages"])
-    media = build_site.build_media(data["messages"])
+
+    # 개인정보가 찍힌 사진은 발행하지 않는다. 판정은 OCR 로 미리 해 둔 것을 읽는다
+    # (scripts/ocr_images.ps1 → scripts/scan_image_pii.py). 판정 파일이 없으면
+    # 아무것도 감추지 않는다 — 검사를 아직 안 돌렸다고 발행이 멈추면 안 된다.
+    hidden_images = scan_image_pii.hidden_paths()
+    media = build_site.hide_pii_media(
+        build_site.build_media(data["messages"]), hidden_images)
     members = load_members()
-    my_messages = build_my_messages(data["messages"], members)
+    my_messages = {
+        # 본인 글의 본문은 가리지 않지만, 사진은 본인 것도 발행되지 않는다 —
+        # Storage 규칙은 '멤버냐'만 보므로 올리는 순간 방 전체에 보인다. 대신
+        # 왜 안 보이는지 화면에 적힐 수 있게 표시를 남긴다(원본은 로컬에 있다).
+        email: build_site.hide_pii_media(items, hidden_images)
+        for email, items in build_my_messages(data["messages"], members).items()
+    }
 
     # 발행본에 실제로 등장하는 이미지·동영상만 업로드 대상으로 삼는다
     used_images: list[str] = []
@@ -340,8 +352,26 @@ def build_payload() -> dict:
         # `videos` 를 빠뜨렸었다(2026-07-28 발견). 그래서 동영상은 칸에 미리보기만
         # 걸리고 눌러도 파일이 없어 재생되지 않았다 — 화면 코드는 정상이었고
         # 저장소에 파일이 올라간 적이 없었던 것이다.
-        for p in ((m.get("images") or []) + (m.get("thumbs") or [])
-                  + (m.get("videos") or [])):
+        #
+        # 감출 사진은 **여기서** 빠져야 한다. 화면 발행본(media)에서만 빼고 올려
+        # 두면 Storage 주소를 아는 사람은 화면을 거치지 않고 그대로 받는다 —
+        # 관심 주제 빠지기에서 배운 것과 같은 함정이다. 원본이 감춰지면 그 짝인
+        # 작은 사진도 함께 빠져야 한다(같은 그림이라 글자가 그대로 남아 있다).
+        srcs = m.get("images") or []
+        thumbs = m.get("thumbs") or []
+        paths = []
+        for i, src in enumerate(srcs):
+            if src in hidden_images:
+                continue
+            paths.append(src)
+            if i < len(thumbs):
+                paths.append(thumbs[i])
+        # 동영상은 사진 목록과 짝이 아니다(images 가 비어 있다). 그 포스터까지
+        # 잃지 않도록, 사진이 없는 메시지의 작은 사진은 그대로 올린다.
+        if not srcs:
+            paths += thumbs
+        paths += m.get("videos") or []
+        for p in paths:
             if p not in seen_img:
                 seen_img.add(p)
                 used_images.append(p)
@@ -371,22 +401,41 @@ def build_payload() -> dict:
         "schema_version": 1,
     }
 
+    graph = {
+        "nodes": data["knowledge"].get("nodes", []),
+        "edges": data["knowledge"].get("edges", []),
+    }
+
+    # ── 개인정보 가리기 ──
+    #
+    # 모두가 보는 것(요약·보고서·요지·미디어·관계망·태그)에서만 가린다. 빼는 곳이
+    # 둘 있다:
+    #   my_messages     본인 글은 본인에게 원문으로 보여야 한다. 무엇을 지울지
+    #                   고르려면 봐야 하고, 자기 연락처를 자기가 보는 건 문제가 아니다.
+    #   messages_source 규칙이 관리자만 허용하는 원장이다. 여기까지 가리면 관리자가
+    #                   "원래 뭐였나" 를 확인할 길이 없어져 오탐을 못 되돌린다.
+    allow = pii.load_allow()
+    threads_pub, h1 = pii.mask_tree(threads_pub, allow)
+    digests_pub, h2 = pii.mask_tree(data["digests"], allow)
+    media, h3 = pii.mask_tree(media, allow)
+    graph, h4 = pii.mask_tree(graph, allow)
+    meta, h5 = pii.mask_tree(meta, allow)
+    pii_hits = h1 + h2 + h3 + h4 + h5
+
     return {
         "meta": meta,
         "threads": threads_pub,
         "media": media,
         "my_messages": my_messages,
-        "digests": data["digests"],
-        "graph": {
-            "nodes": data["knowledge"].get("nodes", []),
-            "edges": data["knowledge"].get("edges", []),
-        },
+        "digests": digests_pub,
+        "graph": graph,
         "messages_source": messages_raw,
         "members": members,
         "member_warnings": check_member_nicknames(members, participants),
         "images": used_images,
         "files": used_files,
         "exclusion_report": report,
+        "pii_hits": pii_hits,
     }
 
 
@@ -448,6 +497,24 @@ def main() -> None:
                   "나눠 담아야 합니다." % (name, size // 1024))
         else:
             print("%s/all %dKB" % (name, size // 1024))
+    hidden_shots = sum(m.get("pii_hidden") or 0 for m in payload["media"])
+    if hidden_shots:
+        print("개인정보가 찍힌 사진 %d장 발행 제외 (업로드 목록에서도 뺐습니다)"
+              % hidden_shots)
+
+    hits = payload["pii_hits"]
+    if hits:
+        certain = [h for h in hits if h.grade == "certain"]
+        likely = [h for h in hits if h.grade == "likely"]
+        print("개인정보 %d건 가림 (%s)" % (len(certain), pii.summarize(hits)))
+        # 경고 등급은 사람이 봐야 한다 — 가리지 않았으므로 그대로 발행된다.
+        for h in likely[:10]:
+            print("[개인정보 확인] %s %s — 근처에 연락처를 뜻하는 말이 없어 "
+                  "가리지 않았습니다. 개인정보면 config/pii_allow.json 반대편, 즉 "
+                  "원문 제외 규칙을 쓰세요." % (h.kind, h.value))
+    else:
+        print("개인정보 검사: 가릴 것 없음")
+
     for w in payload["member_warnings"]:
         print("[닉네임 확인] %s" % w)
     if r["dropped_count"]:

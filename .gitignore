@@ -36,6 +36,10 @@ serviceAccountKey.json
 /output/exclusions.json
 /config/collection-policy.json
 
+# 개인정보 가리기 예외 — 감추지 않을 연락처를 적는 곳이라 그 자체가 연락처 목록이다.
+# (예시는 config/pii_allow.example.json)
+/config/pii_allow.json
+
 # 의존성
 node_modules/
 

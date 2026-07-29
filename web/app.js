@@ -921,6 +921,13 @@
             '" data-full="' + esc(src) + '" alt="" title="' +
             esc(m.nickname + " · " + m.date) + '" />');
         });
+        // 개인정보가 찍혀 발행에서 뺀 사진. 칸을 아예 없애면 "여기 사진이 있었는데"
+        // 를 알 수 없고 고장과 구분되지 않으므로, 왜 없는지 적은 자리를 남긴다.
+        for (var h = 0; h < (m.pii_hidden || 0); h++) {
+          imgs.push('<div class="img-hidden" title="' +
+            esc(m.nickname + " · " + m.date) +
+            '"><span>🔒</span><small>개인정보가 있어<br />감춘 사진</small></div>');
+        }
       } else if (m.kind === "file") {
         var nm = m.file ? m.file.name : (m.name || "");
         files.push('<div class="tcf">' + fileIcon(nm) +
@@ -1188,10 +1195,15 @@
   // ---------- 갤러리 ----------
   function renderGallery() {
     var items = [];
+    // 개인정보가 찍혀 발행에서 뺀 사진 수. 갤러리에는 자리표를 수십 개 늘어놓지
+    // 않고(그 자체가 소음이다) 머리에 한 줄로 알린다 — 숫자가 안 맞는 이유는
+    // 어딘가에 적혀 있어야 한다.
+    var hiddenShots = 0;
     MEDIA.forEach(function (m) {
       if (state.nick && m.nickname !== state.nick) return;
       // 동영상도 갤러리에 있다(2026-07-27 부터 수집). 칸에는 포스터를 걸고,
       // 누를 때 원본을 받는다 — 목록만 훑어도 15MB 씩 빠지면 안 된다.
+      hiddenShots += m.pii_hidden || 0;
       var srcs = m.kind === "video" ? m.videos : m.images;
       if (!srcs || !srcs.length) return;
       var th = m.thumbs || [];
@@ -1210,7 +1222,9 @@
     items.sort(function (a, b) { return mediaKey(b).localeCompare(mediaKey(a)); });
     var list = state.gview === "list";
     var html = ['<div class="gal-head">',
-      '<p class="room-sub">보관된 사진 ' + items.length + "장</p>",
+      '<p class="room-sub">보관된 사진 ' + items.length + "장" +
+        (hiddenShots ? ' <span class="gal-hidden">🔒 개인정보가 있어 감춘 사진 ' +
+          hiddenShots + "장은 빠져 있습니다</span>" : "") + "</p>",
       '<div class="gal-modes">',
       '<button class="gal-mode' + (list ? "" : " on") + '" data-gview="grid" title="바둑판">▦ 그리드</button>',
       '<button class="gal-mode' + (list ? " on" : "") + '" data-gview="list" title="목록">☰ 리스트</button>',
@@ -2009,6 +2023,13 @@
               '" alt="" title="클릭하면 크게 봅니다" />';
           }).join("") +
           '<span class="mine-zoom">클릭하면 크게 보기</span></span>'
+        : m.pii_hidden
+        // 개인정보가 찍혀 발행에서 뺀 사진. 본인 것이라도 올라가지 않는다 —
+        // Storage 규칙은 '멤버냐'만 보므로 올리면 방 전체에 보인다. '수집 대기'로
+        // 보이면 언젠가 채워질 것처럼 읽히므로 이유를 적는다.
+        ? '<span class="mine-muted">🔒 사진' +
+          (m.pii_hidden > 1 ? " " + m.pii_hidden + "장" : "") +
+          " (개인정보가 있어 발행하지 않았습니다)</span>"
         : '<span class="mine-muted">🖼 사진' +
           (m.image_count > 1 ? " " + m.image_count + "장" : "") +
           // 유실은 기다려도 오지 않는다. 대기라고 쓰면 언젠가 채워질 것처럼 읽힌다.
