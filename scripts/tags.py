@@ -14,6 +14,8 @@
 
 사람 이름 태그는 따로 표시해 둔다(`people`) — 사람은 참여자 화면에서 찾는 것이
 맞고, 주제 태그 입구에 이름이 섞이면 프로파일링처럼 보인다.
+
+좁은 태그는 넓은 태그로도 찾히게 한다(`rollup_parent_tags`) — 아래 설명 참조.
 """
 from __future__ import annotations
 
@@ -27,10 +29,34 @@ ALIAS_PATH = ROOT / "config" / "tag_aliases.json"
 
 _FOLD = re.compile(r"[\s\-_.]+")
 
+# 조각만 로마자인 태그를 위한 음역 대응. 'Gemini 3 Pro' 와 '제미나이 3 프로' 는
+# 같은 것인데 통일표는 태그 **전체**가 같을 때만 맞으므로 이런 조합을 한 줄씩
+# 적어야 했다(버전이 늘 때마다 또 적어야 한다). 조각 단위로 대응시키면 표가
+# 필요 없다 — 'Ontology-Playground' 가 '온톨로지'에 닿는 것도 이 몫이다.
+#
+# 조각(공백·하이픈으로 끊은 낱말) **전체**가 같을 때만 바꾼다. 'pro' → '프로' 를
+# 글자 단위로 바꾸면 '프로젝트'·'프로그램'까지 건드린다.
+TRANSLIT = {
+    "gemini": "제미나이", "claude": "클로드", "opus": "오퍼스", "sonnet": "소네트",
+    "ontology": "온톨로지", "playground": "플레이그라운드", "modeling": "모델링",
+    "tutorial": "튜토리얼", "workspace": "워크스페이스", "studio": "스튜디오",
+    "code": "코드", "pro": "프로", "plus": "플러스", "max": "맥스", "flash": "플래시",
+    "github": "깃허브", "youtube": "유튜브", "python": "파이썬", "discord": "디스코드",
+    "facebook": "페이스북", "hackathon": "해커톤", "agent": "에이전트",
+    "vercel": "버셀", "firebase": "파이어베이스", "cloudflare": "클라우드플레어",
+    "codex": "코덱스", "perplexity": "퍼플렉시티", "lovable": "러버블",
+    "azure": "애저", "chatgpt": "챗gpt", "google": "구글", "notebooklm": "노트북lm",
+}
+
 
 def fold(tag: str) -> str:
-    """비교용 열쇠. 'AI Studio' 와 'ai-studio' 가 같아진다."""
-    return _FOLD.sub("", (tag or "").strip()).lower()
+    """비교용 열쇠. 'AI Studio' 와 'ai-studio' 가 같아진다.
+
+    조각이 `TRANSLIT` 에 있으면 한글 표기로 맞춘 뒤 붙인다 — 'Claude Code' 와
+    '클로드 코드'가 같아진다.
+    """
+    parts = [p for p in _FOLD.split((tag or "").strip().lower()) if p]
+    return "".join(TRANSLIT.get(p, p) for p in parts)
 
 
 def load_aliases(path: Path | None = None) -> dict[str, str]:
@@ -149,6 +175,50 @@ def attach_tags(threads: list[dict], participants: dict | None = None,
     for th in threads:
         th["tags"] = canonical_tags(th.get("keywords") or [], tag_map)
     return tag_map
+
+
+def rollup_parent_tags(threads: list[dict], participants: dict | None = None,
+                       min_count: int = 2, min_len: int = 3
+                       ) -> list[tuple[str, str]]:
+    """좁은 태그에 넓은 태그를 덧붙인다. 붙인 (주제 id, 태그) 목록.
+
+    'MS 온톨로지 플레이그라운드' 주제의 태그는 '온톨로지 모델링'인데 앞서 쌓인
+    '온톨로지' 3건과 만나지 못했다 — 표기 통일은 공백·대소문자만 보므로
+    '온톨로지모델링' 과 '온톨로지' 는 남남이다. 그래서 태그 하나짜리 고립 주제가
+    된다(실측: 1,047개 태그가 1건뿐이다).
+
+    좁은 태그를 넓은 태그로 **바꾸지** 않고 넓은 태그를 **덧붙인다**. '온톨로지
+    모델링'의 정확함을 잃지 않으면서 '온톨로지'로도 찾힌다.
+
+    두 가지 방벽을 둔다.
+
+    * 부모는 `min_count` 건 이상 쓰인 태그만 — 한 번 쓰인 말이 부모가 되면
+      아무 말이나 부모가 된다.
+    * 부모는 fold 길이 `min_len` 이상 — 'AI'·'앱' 이 온 태그의 부모가 되는 것을
+      막는다.
+
+    사람 이름은 부모로 쓰지 않는다. 이름 태그는 참여자 화면 몫이고(`person`),
+    '김종원' 이 '김종원 수정판'을 빨아들여도 얻는 것이 없다.
+    """
+    counts: Counter[str] = Counter(
+        t for th in threads for t in (th.get("tags") or []))
+    people = person_names(participants or {})
+    base = [t for t, n in counts.items()
+            if n >= min_count and len(fold(t)) >= min_len and t not in people]
+    keys = {t: fold(t) for t in base}
+
+    added: list[tuple[str, str]] = []
+    for th in threads:
+        own = list(th.get("tags") or [])
+        have = set(own)
+        for t in own:
+            ft = fold(t)
+            for b in base:
+                if keys[b] != ft and keys[b] in ft and b not in have:
+                    th["tags"].append(b)
+                    have.add(b)
+                    added.append((th["id"], b))
+    return added
 
 
 def build_tag_index(threads: list[dict], participants: dict | None = None,

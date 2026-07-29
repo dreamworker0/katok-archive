@@ -413,8 +413,14 @@ def quoted_whole_messages(body: str, msgs: list[dict]) -> list[str]:
 
 
 def write_report(thread_id: str, thread: dict, raw_chars: int,
-                 msgs: list[dict] | None = None) -> str | None:
+                 msgs: list[dict]) -> str | None:
     """보고서 md 를 쓴다. 못 쓰면 이유를 돌려준다(None 이면 성공).
+
+    `msgs` 는 **반드시** 그 주제의 메시지여야 한다. 기본값 `None` 을 두었더니 밤
+    분류 쪽 호출부가 안 넘긴 채로 지나갔고, `sanitize_anchors` 가 '자료가 하나도
+    없다'고 보아 본문의 자리표를 전부 지웠다 — 링크·사진이 글 끝으로 밀리는 것이
+    고쳐지지 않던 원인이다(2026-07-29). 빈 목록이 맞는 상황이면 호출부가 `[]` 를
+    분명히 적는다.
 
     보고서는 화면의 실제 내용 단위다 — 제목·요지·**키워드(태그)**·본문 산문이
     여기서 나오고, apply_reports() 가 그것을 스레드에 얹는다. 보고서가 없으면
@@ -1061,8 +1067,15 @@ def main() -> int:
     # apply_reports 가 조용히 무시해 무해하지만, 반대(스레드만 있고 보고서 없음)는
     # 화면에 태그도 본문도 없는 주제로 보인다 — 그쪽이 눈에 띄는 손해다.
     wrote = 0
+    # 그 주제의 메시지를 함께 넘긴다. 안 넘기면 `sanitize_anchors` 가 '이 대화에
+    # 자료가 하나도 없다'고 보아 본문이 짚어 둔 자리표를 **전부** 지운다 — 매일 밤
+    # 새로 쓰는 보고서만 링크·사진이 글 끝으로 밀리던 원인이다(실측 2026-07-29:
+    # t-350·t-351·t-352 에서 7줄이 그렇게 지워졌다).
+    msg_by_id = {m["id"]: m for m in msgs}
     for tid, c, raw in assigned:
-        why = write_report(tid, {**c, "id": tid}, raw)
+        tmsgs = [msg_by_id[i] for i in (c.get("message_ids") or [])
+                 if i in msg_by_id]
+        why = write_report(tid, {**c, "id": tid}, raw, tmsgs)
         if why:
             print(f"  보고서 못 씀({tid}): {why} — 제목·요지만 남습니다.")
         else:

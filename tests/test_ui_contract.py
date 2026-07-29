@@ -114,6 +114,39 @@ class TagPickContractTests(unittest.TestCase):
     def test_selected_state_has_its_own_look(self):
         self.assertIn(".tag-chip.on", self.css)
 
+    def test_translit_table_matches_the_publisher(self):
+        """화면의 음역 대응표가 발행 쪽과 같아야 한다.
+
+        발행 때 'Claude Code' 를 '클로드 코드' 로 합쳐 놓는다. 화면이 그 대응을
+        모르면 카드에 적힌 원래 표기('Claude Code')를 눌렀을 때 태그가 열리지
+        않고 글자 검색으로 떨어진다 — 눌러도 아무 일 없는 것처럼 보인다.
+        """
+        from scripts.tags import TRANSLIT
+
+        block = self.app[self.app.index("var TAG_TRANSLIT = {"):]
+        block = block[:block.index("};") + 1]
+        pairs = dict(re.findall(r'([A-Za-z][\w]*)\s*:\s*"([^"]+)"', block))
+        self.assertEqual(pairs, TRANSLIT,
+                         "web/app.js 의 TAG_TRANSLIT 과 scripts/tags.py 의 "
+                         "TRANSLIT 이 어긋났습니다")
+
+    def test_cards_show_the_published_tags_not_the_raw_keywords(self):
+        """카드 칩은 발행 때 통일·승격한 `tags` 여야 한다.
+
+        '온톨로지 모델링' 주제를 '온톨로지' 로 찾아 들어왔는데 카드에 '온톨로지' 가
+        없으면 "이게 왜 여기 있지" 가 된다. 표기도 카드마다 갈리지 않는다.
+        """
+        block = self.app[self.app.index('<div class="tc-kw">') - 400:]
+        block = block[:800]
+        self.assertIn("t.tags || t.keywords", block,
+                      "카드 칩이 원본 keywords 로 되돌아갔습니다")
+
+    def test_tag_fold_transliterates_whole_words_only(self):
+        block = self.app[self.app.index("function tagFold(s)"):][:400]
+        # 조각으로 끊어 낱말 단위로만 바꿔야 '프로젝트'가 망가지지 않는다
+        self.assertIn(".split(", block)
+        self.assertIn("TAG_TRANSLIT[p]", block)
+
 
 class RoutingContractTests(unittest.TestCase):
     """보고 있는 화면이 주소에 남아야 한다.

@@ -149,6 +149,95 @@ class BackfillTests(unittest.TestCase):
         self.assertEqual(threads[0]["tags"], [], "두 글자 이름은 아무 제목에나 걸린다")
 
 
+class TranslitFoldTests(unittest.TestCase):
+    """조각만 로마자인 태그도 같은 것으로 본다."""
+
+    def test_latin_and_hangul_spellings_fold_together(self):
+        self.assertEqual(tags.fold("Claude Code"), tags.fold("클로드 코드"))
+        self.assertEqual(tags.fold("Gemini 3 Pro"), tags.fold("제미나이 3 프로"))
+        self.assertEqual(tags.fold("Google Workspace"), tags.fold("구글 워크스페이스"))
+
+    def test_only_whole_words_are_transliterated(self):
+        # 'pro' 를 글자 단위로 바꾸면 '프로젝트'·'프로그램'까지 망친다
+        self.assertNotEqual(tags.fold("프로젝트"), tags.fold("project"))
+        self.assertEqual(tags.fold("프로젝트"), tags.fold("프로 젝트"))
+
+    def test_unmapped_words_are_left_alone(self):
+        self.assertEqual(tags.fold("clasp"), "clasp")
+
+
+class RollupTests(unittest.TestCase):
+    """좁은 태그를 넓은 태그로도 찾게 한다."""
+
+    def _ontology(self):
+        """실제로 갈렸던 네 주제. t-352 만 '온톨로지' 가 없었다."""
+        return [
+            {"id": "t-027", "tags": ["웹앱 보안", "온톨로지", "팔란티어"]},
+            {"id": "t-060", "tags": ["온톨로지", "TypeDB", "온톨로지 튜토리얼"]},
+            {"id": "t-147", "tags": ["온톨로지", "지식그래프"]},
+            {"id": "t-352", "tags": ["Ontology-Playground", "온톨로지 모델링", "포크"]},
+        ]
+
+    def test_narrow_tag_gains_the_broad_one(self):
+        threads = self._ontology()
+        added = tags.rollup_parent_tags(threads)
+        self.assertIn(("t-352", "온톨로지"), added)
+        # 좁은 태그를 잃지 않는다 — 덧붙이는 것이고 바꾸는 것이 아니다
+        self.assertIn("온톨로지 모델링", threads[3]["tags"])
+        idx = tags.build_tag_index(threads, min_count=2)
+        row = next(r for r in idx["tags"] if r["tag"] == "온톨로지")
+        self.assertEqual(row["count"], 4, "네 주제가 모두 '온톨로지' 로 찾혀야 한다")
+        self.assertIn("t-352", row["thread_ids"])
+
+    def test_latin_named_resource_reaches_the_hangul_tag(self):
+        # 'Ontology-Playground' 는 '온톨로지' 를 한 글자도 품지 않는다
+        threads = self._ontology()
+        tags.rollup_parent_tags(threads)
+        self.assertIn("온톨로지", threads[3]["tags"])
+
+    def test_single_use_tag_cannot_be_a_parent(self):
+        threads = [
+            {"id": "t-1", "tags": ["대기 시스템"]},
+            {"id": "t-2", "tags": ["대기 시스템 개편"]},
+        ]
+        self.assertEqual(tags.rollup_parent_tags(threads), [],
+                         "한 번 쓰인 말이 부모가 되면 아무 말이나 부모가 된다")
+
+    def test_short_tag_cannot_be_a_parent(self):
+        threads = [
+            {"id": "t-%d" % i, "tags": ["AI"]} for i in range(2)
+        ] + [{"id": "t-9", "tags": ["AI 교육"]}]
+        added = tags.rollup_parent_tags(threads)
+        self.assertEqual(added, [], "'AI' 가 부모면 거의 모든 태그가 자식이 된다")
+
+    def test_person_name_is_not_a_parent(self):
+        threads = [
+            {"id": "t-1", "tags": ["김종원"]},
+            {"id": "t-2", "tags": ["김종원"]},
+            {"id": "t-3", "tags": ["김종원 수정판"]},
+        ]
+        parts = {"participants": [{"nickname": "김종원(○○관)"}]}
+        self.assertEqual(tags.rollup_parent_tags(threads, parts), [],
+                         "이름 태그는 참여자 화면 몫이다")
+
+    def test_grandparent_is_attached_too(self):
+        threads = [
+            {"id": "t-1", "tags": ["클로드"]}, {"id": "t-2", "tags": ["클로드"]},
+            {"id": "t-3", "tags": ["클로드 코드"]}, {"id": "t-4", "tags": ["클로드 코드"]},
+            {"id": "t-5", "tags": ["클로드코드 프로"]},
+        ]
+        tags.rollup_parent_tags(threads)
+        self.assertEqual(set(threads[4]["tags"]),
+                         {"클로드코드 프로", "클로드 코드", "클로드"})
+
+    def test_running_twice_adds_nothing_new(self):
+        threads = self._ontology()
+        tags.rollup_parent_tags(threads)
+        before = [list(th["tags"]) for th in threads]
+        tags.rollup_parent_tags(threads)
+        self.assertEqual([th["tags"] for th in threads], before)
+
+
 class DigestKeywordTests(unittest.TestCase):
     """요지 산문의 태그는 눌러서 갈 곳이 있어야 화면에 낸다."""
 

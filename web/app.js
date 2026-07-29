@@ -14,7 +14,27 @@
    * 발행 때 이미 통일했지만, 요지 산문의 태그는 사람이 따로 쓴 말이라 '차량
    * 운행일지'처럼 띄어쓰기가 다를 수 있다. */
   var TAG_THREADS = {};
-  function tagFold(s) { return String(s || "").replace(/[\s\-_.]+/g, "").toLowerCase(); }
+  /* 조각만 로마자인 태그를 위한 음역 대응. `scripts/tags.py` 의 TRANSLIT 과 같아야
+   * 한다 — 발행 때 'Claude Code' 를 '클로드 코드' 로 합쳐 놓았으니, 카드 칩(사람이
+   * 쓴 원래 표기)을 눌렀을 때 여기서도 같은 곳에 닿아야 태그가 열린다.
+   * 어긋나면 태그 대신 글자 검색으로 떨어진다. tests/test_ui_contract.py 가 지킨다. */
+  var TAG_TRANSLIT = {
+    gemini: "제미나이", claude: "클로드", opus: "오퍼스", sonnet: "소네트",
+    ontology: "온톨로지", playground: "플레이그라운드", modeling: "모델링",
+    tutorial: "튜토리얼", workspace: "워크스페이스", studio: "스튜디오",
+    code: "코드", pro: "프로", plus: "플러스", max: "맥스", flash: "플래시",
+    github: "깃허브", youtube: "유튜브", python: "파이썬", discord: "디스코드",
+    facebook: "페이스북", hackathon: "해커톤", agent: "에이전트",
+    vercel: "버셀", firebase: "파이어베이스", cloudflare: "클라우드플레어",
+    codex: "코덱스", perplexity: "퍼플렉시티", lovable: "러버블",
+    azure: "애저", chatgpt: "챗gpt", google: "구글", notebooklm: "노트북lm"
+  };
+  function tagFold(s) {
+    return String(s || "").trim().toLowerCase().split(/[\s\-_.]+/)
+      .filter(Boolean)
+      .map(function (p) { return TAG_TRANSLIT[p] || p; })
+      .join("");
+  }
   // 태그를 한 번에 몇 개까지 겹쳐 볼 수 있나. 넷 이상 겹치면 거의 0건이 된다.
   var TAG_PICK_MAX = 3;
   THREADS.forEach(function (t) {
@@ -1055,11 +1075,17 @@
       (t.media_count ? " · 사진·첨부 " + t.media_count : "") + "</span></div>" +
       '<h3 class="tc-title">' + highlightText(esc(t.title), state.q) + "</h3>" +
       '<p class="tc-summary">' + highlightText(esc(t.summary || ""), state.q) + "</p>" +
-      ((t.keywords || []).length
-        ? '<div class="tc-kw">' + t.keywords.map(function (k) {
-            return '<button class="chip kw" data-kw="' + esc(k) + '">' +
-              esc(k) + "</button>"; }).join("") + "</div>"
-        : "") +
+      // 원본(`keywords`)이 아니라 발행 때 통일·승격한 `tags` 를 보여준다. '온톨로지
+      // 모델링' 주제를 '온톨로지' 로 찾아 들어왔는데 카드에 '온톨로지' 가 없으면
+      // "이게 왜 여기 있지" 가 된다. 표기도 카드마다 갈리지 않는다.
+      (function () {
+        var kws = t.tags || t.keywords || [];
+        return kws.length
+          ? '<div class="tc-kw">' + kws.map(function (k) {
+              return '<button class="chip kw" data-kw="' + esc(k) + '">' +
+                esc(k) + "</button>"; }).join("") + "</div>"
+          : "";
+      }()) +
       detailBlock(t, lk.inline, lk.context) +
       (people ? '<div class="tc-people">' + people + "</div>" : "") +
       (links ? '<div class="tc-links"><p class="tc-links-label">' +

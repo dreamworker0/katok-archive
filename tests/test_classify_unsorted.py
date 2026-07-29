@@ -247,7 +247,7 @@ class ReportGuardTests(unittest.TestCase):
                 "keywords": [], "report": body}
 
     def test_empty_body_is_refused(self):
-        self.assertIsNotNone(write_report("t-999", self.base(""), 100))
+        self.assertIsNotNone(write_report("t-999", self.base(""), 100, []))
 
     def test_bad_placeholder_is_dropped_instead_of_killing_the_report(self):
         """2026-07-28 방침 변경: 자리표는 쓰라고 한다.
@@ -275,12 +275,39 @@ class ReportGuardTests(unittest.TestCase):
         # 실측 2026-07-27: 95자 원문의 정상 보고서가 110자로 나왔는데, '원문보다
         # 짧아야 한다'는 규칙에 걸려 거부됐다. 짧고 압축된 말을 풀어 쓰면 원문보다
         # 길어지는 것이 당연하다. topic_reports 도 최소 분량만 정한다.
-        why = write_report("t-999", self.base("가" * 110), 95)
+        why = write_report("t-999", self.base("가" * 110), 95, [])
         self.assertIsNone(why, msg=f"거부됨: {why}")
         self.assertTrue((Path(self.tmp.name) / "t-999.md").exists())
 
+    def test_every_caller_hands_over_the_messages(self):
+        """`msgs` 에 기본값을 두면 안 된다.
+
+        기본값 `None` 이 있던 동안 밤 분류 쪽 호출부가 메시지를 안 넘겼고,
+        `sanitize_anchors` 가 '이 대화에 자료가 하나도 없다'고 보아 본문이 짚어 둔
+        자리표를 **전부** 지웠다. 링크·사진이 글 끝으로 밀리는 것이 여러 번 고쳐
+        달라고 해도 안 고쳐지던 원인이다(2026-07-29: t-350·t-351·t-352 에서 7줄).
+        빈 목록이 맞는 상황이면 호출부가 `[]` 를 분명히 적게 한다.
+        """
+        import inspect
+
+        p = inspect.signature(write_report).parameters["msgs"]
+        self.assertIs(p.default, inspect.Parameter.empty,
+                      "msgs 에 기본값이 생기면 안 넘긴 호출부가 조용히 자리표를 "
+                      "잃습니다")
+
+    def test_link_anchor_survives_when_the_message_has_a_url(self):
+        # 링크 자리표는 그 메시지에 urls 가 있으면 살아야 한다. t-352 가 이 줄을
+        # 잃어 자료 두 개가 글 끝으로 밀렸다.
+        body = "온톨로지 웹앱을 공유했다.\n\n![[link:msg-002662]]\n\n반응이 좋았다.\n"
+        msgs = [{"id": "msg-002662", "kind": "text", "text": "링크",
+                 "urls": ["https://microsoft.github.io/Ontology-Playground/"]}]
+        why = write_report("t-999", self.base(body), 1000, msgs)
+        self.assertIsNone(why, msg=f"거부됨: {why}")
+        saved = (Path(self.tmp.name) / "t-999.md").read_text(encoding="utf-8")
+        self.assertIn("![[link:msg-002662]]", saved)
+
     def test_wildly_longer_than_source_is_refused(self):
-        why = write_report("t-999", self.base("가" * 900), 95)
+        why = write_report("t-999", self.base("가" * 900), 95, [])
         self.assertIsNotNone(why)
         self.assertIn("너무 깁니다", why)
         self.assertFalse((Path(self.tmp.name) / "t-999.md").exists())
