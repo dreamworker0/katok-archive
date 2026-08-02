@@ -173,9 +173,10 @@ class ArchiveContentIsNotCommittedTest(unittest.TestCase):
         self.assertEqual(bad, [], "카톡 내보내기 원문이 추적되고 있다: %s" % bad)
 
     def test_no_service_account_key_is_tracked(self):
+        # 표식을 이어 붙여 만든다. 통째로 적으면 이 파일 자신이 걸린다.
+        marker = '"type": "service' + '_account"'
         bad = [rel(p) for p in tracked_files()
-               if "serviceaccount" in p.name.lower()
-               or '"type": "service_account"' in read(p)]
+               if "serviceaccount" in p.name.lower() or marker in read(p)]
         self.assertEqual(bad, [], "서비스 계정 키가 추적되고 있다: %s" % bad)
 
 
