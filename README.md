@@ -148,7 +148,7 @@ powershell -File scripts\run_daily.ps1                       # 내보내기까�
 
 ## 문서
 
-| | |
+| 문서 | 내용 |
 |---|---|
 | [docs/AUTOMATION.md](docs/AUTOMATION.md) | 일일 갱신 자동화 — 왜 이런 구조인지 포함 |
 | [docs/DEPLOY.md](docs/DEPLOY.md) | Firebase 설정·배포·멤버 관리 |
