@@ -120,14 +120,16 @@ KakaoTalk_*.txt         내보내기 원문
 
 ## 돌려보기
 
-파이썬 쪽은 표준 라이브러리로 도는데, 사진·아이콘을 다루는 몇 스크립트만 Pillow를 쓴다
-(동영상 미리보기에는 `ffmpeg`이 PATH에 있어야 한다 — 없으면 그 단계만 건너뛴다).
+파이썬 쪽 의존성은 Pillow 하나뿐이고(사진·아이콘 처리), 나머지는 표준 라이브러리로 돈다.
+동영상 미리보기에는 `ffmpeg`이 PATH에 있어야 한다 — 없으면 그 단계만 건너뛴다.
 적재는 Node 와 `firebase-admin`을 쓴다.
 
 ```bash
-pip install pillow
+pip install -r requirements.txt
 npm install
 ```
+
+개발은 Python 3.14 · Node 24 에서 한다.
 
 ```bash
 python -m unittest discover -s tests    # 파이썬 검사
