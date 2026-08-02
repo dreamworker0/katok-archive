@@ -7,6 +7,7 @@
   3. 멤버 요청(수집 동의·삭제) 내려받기        sync_member_requests.js
   4. inbox/*.txt 를 증분 반영                  ingest_incremental.py
   5. 주제 분류 (LLM, 비치명적)                 classify_unsorted.py
+  5c. 발행본이 로컬보다 뒤처졌나 확인           publish_state.py
   6. 갤러리용 작은 사진 생성                   build_thumbnails.py
   6b. 사진 속 개인정보 검사                     ocr_images.ps1 + scan_image_pii.py
   7. 발행본 재생성                             build_firestore_payload.py
@@ -18,9 +19,12 @@
     **단, 5단계(주제 분류)는 예외다** — 실패하면 미분류 스레드가 남을 뿐이므로
     삼키고 나아간다. LLM 장애가 그날 타임라인·통계·삭제 요청 반영을 통째로
     날려서는 안 된다. 이것이 파이프라인에서 유일하게 LLM 을 쓰는 칸이다.
-  - 6~8단계는 발행 사유가 있을 때만 돈다. 사유는 셋이다 — 새 메시지, 멤버 요청
-    변경, 주제 분류 변경. 조용한 날에 들어온 삭제 요청이 묻히면 안 되므로 요청
-    변경도 사유이고, 정리해 놓고 안 올리면 화면이 거짓말을 하므로 분류도 사유다.
+  - 6~8단계는 발행 사유가 있을 때만 돈다. 사유는 넷이다 — 새 메시지, 멤버 요청
+    변경, 주제 분류 변경, 그리고 **발행본이 로컬보다 뒤처짐**. 조용한 날에 들어온
+    삭제 요청이 묻히면 안 되므로 요청 변경도 사유이고, 정리해 놓고 안 올리면 화면이
+    거짓말을 하므로 분류도 사유다. 넷째는 지난 실행이 남긴 빚을 본다 — 앞의 셋은
+    모두 '이번 실행에서 새로 생긴 것' 만 보므로, 원장에는 반영하고 적재 전에 죽은
+    날의 글은 다시 갱신해도 영영 올라가지 않았다(실측 2026-07-30, 34건).
   - 멤버 요청을 증분 반영보다 먼저 받는다. '수집 거부'는 수집 단계에서 걸러야 해서
     순서가 뒤바뀌면 거부 의사를 낸 그날 글이 한 번 수집되고 만다.
   - 모든 출력은 logs\daily-YYYYMMDD.log 에 남긴다.
@@ -229,14 +233,46 @@ if ($null -ne $classifyCode -and $classifyCode -ne 0) {
     }
 }
 
+# 5c) 네 번째 발행 사유 — 발행본이 로컬보다 뒤처졌나(지난 실행이 남긴 빚)
+#
+#     앞의 사유 셋은 모두 '이번 실행에서 새로 생긴 것' 을 본다. 그래서 지난 실행이
+#     원장에는 반영하고 적재 전에 죽은 경우를 아무도 보지 않았다. 실측 2026-07-30:
+#     23:40 갱신이 새 글 34건을 원장에 넣고 테스트 단계에서 멈췄고, 다음 날 '지금
+#     갱신' 을 눌러도 증분이 0건이라 "마쳤습니다" 만 뜨고 타임라인은 그대로였다.
+#     버튼을 몇 번 눌러도 같다 — 사람이 손으로 발행할 때까지 영영 안 올라간다.
+#
+#     Invoke-Step 을 쓰지 않는다. 이 확인이 실패해도 갱신은 굴러가야 한다.
+#     못 읽었으면 발행하는 쪽으로 기운다 — 적재는 달라진 문서만 쓰므로(해시 비교)
+#     헛발행은 거의 무료지만, 올릴 것을 안 올리면 화면이 거짓말을 한다.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try { $staleOut = & { python -m scripts.publish_state } 2>&1 }
+finally { $ErrorActionPreference = $prevEap }
+$staleCode = $LASTEXITCODE
+foreach ($l in $staleOut) { Say "    $l" }
+$stale = $null
+if ($null -eq $staleCode -or $staleCode -eq 0) {
+    foreach ($l in $staleOut) {
+        if ($l -match 'PUBLISH_STALE=([01])') { $stale = ($Matches[1] -eq '1') }
+    }
+}
+if ($null -eq $stale) {
+    Say "발행본이 최신인지 확인하지 못했습니다 — 발행하는 쪽으로 진행합니다." 'WARN'
+    $stale = $true
+}
+
 # 발행할지 판단 — 분류 뒤에 둔다(위 주석 참고)
-if ($added -eq 0 -and -not $requestsChanged -and $classified -eq 0) {
-    Say "새 메시지도 멤버 요청 변경도 분류 변경도 없어 발행을 건너뜁니다."
+if ($added -eq 0 -and -not $requestsChanged -and $classified -eq 0 -and -not $stale) {
+    Say "새 메시지도 멤버 요청 변경도 분류 변경도 없고 발행본도 최신이라 발행을 건너뜁니다."
     Say "===== 일일 갱신 종료 ====="
     exit 0
 }
 if ($added -eq 0) {
-    Say "새 메시지는 없지만 멤버 요청 변경 또는 주제 분류가 있어 발행합니다."
+    if (-not $requestsChanged -and $classified -eq 0) {
+        Say "새 메시지는 없지만 발행본이 로컬보다 뒤처져 있어 발행합니다."
+    } else {
+        Say "새 메시지는 없지만 멤버 요청 변경 또는 주제 분류가 있어 발행합니다."
+    }
 }
 
 # 5b) 보조 분류 — 새로 생긴 주제만 판정한다(이미 물어본 주제는 다시 묻지 않는다).
@@ -303,7 +339,14 @@ foreach ($l in $quoteOut) {
 # 9) Firestore·Storage 적재
 Invoke-Step 'Firestore 적재' { node scripts\upload_firestore.js } | Out-Null
 
-Say "===== 일일 갱신 완료: 새 메시지 $added 건 발행 ====="
+# 무엇 때문에 발행했는지 남긴다. '새 메시지 0 건 발행' 만 적히면 로그를 보는 사람이
+# 헛돌았다고 읽는다 — 뒤처진 발행본을 따라잡은 날이 실제로 그 꼴이다.
+$why = @()
+if ($added -gt 0) { $why += "새 메시지 $added 건" }
+if ($requestsChanged) { $why += "멤버 요청 변경" }
+if ($classified -gt 0) { $why += "분류 $classified 건" }
+if ($stale) { $why += "뒤처진 발행본 따라잡기" }
+Say ("===== 일일 갱신 완료: {0} 발행 =====" -f ($why -join ', '))
 if ($added -gt 0) {
     Say "주제 분류가 필요한 '미분류' 스레드가 생겼습니다 — 확인해 정리하세요."
 }

@@ -270,15 +270,44 @@ class PublicationTest(unittest.TestCase):
                 % (name, ", ".join(h.value for h in certain[:5])),
             )
 
+    def ledger_texts(self):
+        """원장(`output/messages.jsonl`) 의 id → 본문.
+
+        '가려지지 않았음' 은 **원장과 같은지**로 본다. 처음에는 `'****' 가
+        없는지`로 검사했는데, 마스킹을 이야기하는 대화가 방에 올라온 순간
+        (msg-002696 — "'우리의 기록' 앱에 **** 마킹이 되고") 오탐으로 발행이
+        멈췄다(2026-07-30 23:43, 그날 새 글 34건이 이틀 묶였다). 마스킹 표식은
+        사람이 쓸 수 있는 글자이므로, 표식의 존재가 아니라 **본문이 바뀌었는지**를
+        봐야 한다.
+        """
+        path = ROOT / "output" / "messages.jsonl"
+        out = {}
+        with path.open(encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    m = json.loads(line)
+                    out[m["id"]] = m.get("text") or ""
+        return out
+
+    def assert_untouched(self, items, where):
+        ledger = self.ledger_texts()
+        for m in items:
+            original = ledger.get(m["id"])
+            if original is None:      # 원장에 없는 것은 이 검사의 대상이 아니다
+                continue
+            self.assertEqual(
+                m.get("text") or "", original,
+                "%s 의 %s 본문이 원장과 다르다 — 가려진 것으로 보인다" % (where, m["id"]),
+            )
+
     def test_admin_ledger_keeps_the_original(self):
         """관리자 원장은 가리지 않는다 — 오탐을 되돌릴 근거가 사라진다."""
-        blob = json.dumps(self.payload["messages_source"], ensure_ascii=False)
-        self.assertNotIn("****", blob)
+        self.assert_untouched(self.payload["messages_source"], "messages_source")
 
     def test_own_messages_are_not_masked(self):
         """본인 글은 원문으로 보여야 한다. 무엇을 지울지 고르려면 봐야 한다."""
-        blob = json.dumps(self.payload["my_messages"], ensure_ascii=False)
-        self.assertNotIn("****", blob)
+        for email, items in self.payload["my_messages"].items():
+            self.assert_untouched(items, "my_messages[%s]" % email)
 
 
 class HiddenPhotoIsNotUploadedTest(unittest.TestCase):

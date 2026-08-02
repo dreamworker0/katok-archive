@@ -505,6 +505,7 @@ def merge_graph(knowledge: dict, graph: dict,
     have_nodes = {n["id"] for n in nodes}
     have_labels = {(n.get("type"), norm_label(n.get("label"))) for n in nodes}
     added_n = 0
+    fresh: dict[str, str] = {}    # 이번에 새로 붙인 노드 id → category
     for n in (graph.get("nodes") or []):
         if not isinstance(n, dict):
             continue
@@ -540,6 +541,7 @@ def merge_graph(knowledge: dict, graph: dict,
         })
         have_nodes.add(nid)
         have_labels.add((ntype, norm_label(label)))
+        fresh[nid] = cat
         added_n += 1
 
     have_edges = {(e.get("source"), e.get("target"), e.get("type"))
@@ -563,6 +565,36 @@ def merge_graph(knowledge: dict, graph: dict,
         )
         have_edges.add((src, dst, etype))
         added_e += 1
+
+    # 아무 엣지도 못 얻은 새 노드는 그대로 두면 안 된다.
+    #
+    # 엣지는 위에서 걸러진다 — 없는 edge_type, 없는 노드를 가리키는 끝. 그래서
+    # 노드만 남고 엣지가 전부 버려지는 조합이 생긴다. 그러면 관계망에 섬이 뜨고,
+    # `test_no_isolated_nodes` 가 그날 발행을 통째로 막는다(실측 2026-07-30:
+    # tool:munja-sesang 하나 때문에 새 글 34건이 이틀 동안 안 올라갔다).
+    #
+    # 버리기보다 잇는다 — 카테고리 토픽에 `belongs` 로 매단다. 다른 도구 노드가
+    # 이미 다 그렇게 붙어 있어(tool:aligo → topic:infra) 화면에서 어색하지 않고,
+    # 그날 대화에서 알아낸 것이 사라지지도 않는다. 토픽 노드가 없는 카테고리
+    # (chat)면 그때는 노드를 버린다 — 매달 곳이 없다.
+    degree = {n["id"]: 0 for n in nodes}
+    for e in knowledge.get("edges", []):
+        for end in (e.get("source"), e.get("target")):
+            if end in degree:
+                degree[end] += 1
+    for nid, cat in fresh.items():
+        if degree.get(nid):
+            continue
+        anchor = "topic:" + cat
+        if anchor in have_nodes:
+            knowledge.setdefault("edges", []).append(
+                {"source": nid, "target": anchor, "type": "belongs", "weight": 1})
+            added_e += 1
+            print(f"  엣지 없는 새 노드를 카테고리에 매답니다: {nid} -> {anchor}")
+        else:
+            nodes[:] = [n for n in nodes if n["id"] != nid]
+            added_n -= 1
+            print(f"  버림(엣지도 없고 매달 토픽도 없음): {nid} ({cat})")
 
     return added_n, added_e
 

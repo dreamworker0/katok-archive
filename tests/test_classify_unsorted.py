@@ -37,6 +37,10 @@ def graph_skeleton() -> dict:
         "nodes": [
             {"id": "topic:projects", "type": "topic", "label": "프로젝트",
              "category": "projects"},
+            # 실제 관계망에는 카테고리마다 토픽 노드가 있다(chat 만 없다). 새 노드를
+            # 매달 자리가 있는지 없는지가 갈리므로 fixture 도 그렇게 둔다.
+            {"id": "topic:ai-tools", "type": "topic", "label": "AI 도구",
+             "category": "ai-tools"},
             {"id": "app:urimal", "type": "app", "label": "우리말 윤문",
              "category": "projects"},
             {"id": "person:김종원", "type": "person", "label": "김종원",
@@ -96,10 +100,48 @@ class GraphMergeTests(unittest.TestCase):
             {"id": "tool:claude-p", "type": "tool", "category": "ai-tools",
              "label": "Claude -p"}
         ]}, CATS)
-        self.assertEqual((1, 0), (n, e))
+        # 엣지가 하나 함께 생긴다 — 아래 test_isolated_new_node_is_anchored 참고.
+        self.assertEqual((1, 1), (n, e))
         added = [x for x in k["nodes"] if x["id"] == "tool:claude-p"][0]
         self.assertEqual("ai-tools", added["category"])
         self.assertIn("query", added)
+
+    def test_isolated_new_node_is_anchored_to_its_category(self):
+        """엣지를 못 얻은 새 노드는 카테고리 토픽에 매달린다.
+
+        실측 2026-07-30: `tool:munja-sesang` 이 엣지 없이 붙어 관계망에 섬이 뜨고
+        `test_no_isolated_nodes` 가 그날 발행을 막았다 — 새 글 34건이 이틀 묶였다.
+        """
+        k = graph_skeleton()
+        n, e = merge_graph(k, {"nodes": [
+            {"id": "tool:munja-sesang", "type": "tool", "category": "ai-tools",
+             "label": "문자세상 문자발송"}
+        ]}, CATS)
+        self.assertEqual((1, 1), (n, e))
+        self.assertIn({"source": "tool:munja-sesang", "target": "topic:ai-tools",
+                       "type": "belongs", "weight": 1}, k["edges"])
+
+    def test_isolated_new_node_without_an_anchor_is_dropped(self):
+        """매달 토픽이 없으면(chat) 노드째 버린다 — 섬으로 남기지 않는다."""
+        k = graph_skeleton()
+        n, e = merge_graph(k, {"nodes": [
+            {"id": "tool:nowhere", "type": "tool", "category": "chat",
+             "label": "어디에도 없는 것"}
+        ]}, CATS)
+        self.assertEqual((0, 0), (n, e))
+        self.assertEqual([], [x for x in k["nodes"] if x["id"] == "tool:nowhere"])
+
+    def test_a_new_node_that_got_a_real_edge_is_not_anchored_twice(self):
+        """엣지를 이미 얻은 새 노드에는 카테고리 엣지를 덧붙이지 않는다."""
+        k = graph_skeleton()
+        n, e = merge_graph(k, {
+            "nodes": [{"id": "tool:claude-p", "type": "tool",
+                       "category": "ai-tools", "label": "Claude -p"}],
+            "edges": [{"source": "person:김종원", "target": "tool:claude-p",
+                       "type": "uses"}],
+        }, CATS)
+        self.assertEqual((1, 1), (n, e))
+        self.assertEqual([], [x for x in k["edges"] if x["type"] == "belongs"])
 
     def test_node_without_category_is_dropped(self):
         k = graph_skeleton()

@@ -93,13 +93,14 @@ class EncodingSetupTests(unittest.TestCase):
 class RunnerStillGuardsPublishingTests(unittest.TestCase):
     """발행 조건이 흐트러지지 않았는지.
 
-    발행 사유는 셋이다: 새 메시지 · 멤버 요청 변경 · 주제 분류 변경.
-    조용한 날에만 건너뛴다.
+    발행 사유는 넷이다: 새 메시지 · 멤버 요청 변경 · 주제 분류 변경 ·
+    발행본이 로컬보다 뒤처짐. 조용한 날에만 건너뛴다.
     """
 
     def test_truly_quiet_day_still_skips(self):
         self.assertIn(
-            "if ($added -eq 0 -and -not $requestsChanged -and $classified -eq 0) {",
+            "if ($added -eq 0 -and -not $requestsChanged -and $classified -eq 0 "
+            "-and -not $stale) {",
             DAILY)
 
     def test_request_change_alone_is_a_reason_to_publish(self):
@@ -127,6 +128,54 @@ class RunnerStillGuardsPublishingTests(unittest.TestCase):
             if "CLASSIFIED) 를 읽지 못했습니다" in DAILY \
             else DAILY[DAILY.index("CLASSIFIED"):]
         self.assertIn("$classified = 1", DAILY)
+
+
+class StaleProductionIsAReasonToPublishTests(unittest.TestCase):
+    """지난 실행이 남긴 빚도 발행 사유다.
+
+    앞의 사유 셋은 모두 '이번 실행에서 새로 생긴 것' 을 본다. 실측 2026-07-30:
+    23:40 갱신이 새 글 34건을 원장에 넣고 테스트 단계에서 멈춰 적재까지 못 갔고,
+    다음 날 '지금 갱신' 을 눌러도 증분이 0건이라 화면에는 "갱신을 마쳤습니다" 만
+    뜨고 타임라인은 그대로였다. 버튼을 몇 번 눌러도 결과가 같았다.
+    """
+
+    def test_checker_emits_an_ascii_marker(self):
+        src = (ROOT / "scripts" / "publish_state.py").read_text(encoding="utf-8")
+        self.assertIn('print("PUBLISH_STALE=%d"', src)
+
+    def test_runner_reads_that_marker(self):
+        self.assertIn("PUBLISH_STALE=([01])", DAILY)
+
+    def test_stale_alone_is_a_reason_to_publish(self):
+        self.assertIn("새 메시지는 없지만 발행본이 로컬보다 뒤처져 있어 발행합니다.",
+                      DAILY)
+
+    def test_unreadable_marker_leans_to_publishing(self):
+        # 모를 때는 발행하는 쪽으로 기운다. 적재는 달라진 문서만 쓰므로(해시 비교)
+        # 헛발행은 거의 무료지만, 올릴 것을 안 올리면 화면이 거짓말을 한다.
+        block = DAILY[DAILY.index("발행본이 최신인지 확인하지 못했습니다"):][:300]
+        self.assertIn("'WARN'", block)
+        self.assertIn("$stale = $true", block)
+
+    def test_the_check_is_not_fatal(self):
+        # 이 확인이 실패해도 갱신은 굴러가야 한다 — 발행을 돕는 검사가 발행을
+        # 막아서는 안 된다.
+        # Invoke-Step 은 실패하면 exit 한다. 이 확인에 그것을 쓰면 안 된다.
+        for line in DAILY.splitlines():
+            if "scripts.publish_state" in line:
+                self.assertNotIn("Invoke-Step", line)
+        idx = DAILY.index("scripts.publish_state")
+        block = DAILY[idx - 400:idx + 200]
+        self.assertIn("$ErrorActionPreference = 'Continue'", block)
+        self.assertIn("finally { $ErrorActionPreference = $prevEap }", block)
+
+    def test_the_check_runs_after_classification_and_before_the_decision(self):
+        # 분류가 topics.json·보고서를 고치므로, 뒤처짐 판정은 그 뒤여야 한다.
+        body = DAILY[DAILY.index("$ErrorActionPreference"):]
+        self.assertLess(body.index("scripts.classify_unsorted"),
+                        body.index("scripts.publish_state"))
+        self.assertLess(body.index("scripts.publish_state"),
+                        body.index("-and -not $stale"))
 
 
 class ClassificationIsNonFatalTests(unittest.TestCase):
