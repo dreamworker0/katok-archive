@@ -95,7 +95,7 @@ class DetectTest(unittest.TestCase):
         구분자에서 줄바꿈을 뺀 이유다.
         """
         self.assertEqual(self.kinds("5000\n5000\n5000\n5000"), [])
-        self.assertEqual(self.kinds("연락처\n010\n4928\n6720"), [])
+        self.assertEqual(self.kinds("연락처\n010\n0000\n4321"), [])
 
     def test_ocr_garbage_that_looks_like_an_email_is_ignored(self):
         """마지막 마디가 숫자면 이메일이 아니다 (OCR 로 읽은 터미널 화면)."""
