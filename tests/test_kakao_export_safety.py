@@ -8,6 +8,7 @@ kakao_export.ps1 은 카톡 창에 키를 보낸다. 잘못된 창에 보내면 
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import unittest
 
 
@@ -35,7 +36,10 @@ class ClickTargetIsVerifiedTests(unittest.TestCase):
 
     def test_guard_runs_before_the_click_and_before_ctrl_s(self):
         guard = EXPORT.index("$pidAt = [Win32]::PidAt($ix, $iy)")
-        self.assertLess(guard, EXPORT.index("[Win32]::MouseClick()"))
+        # 이 가드가 지키는 것은 입력칸 클릭과 그 뒤의 Ctrl+S 다. 파일 앞쪽에 다른
+        # 클릭(탭 전환)이 생겼으므로 '파일의 첫 MouseClick' 이 아니라 '이 가드 다음
+        # 클릭' 을 본다 — 앞쪽 클릭은 EveryClickIsGuardedTests 가 따로 지킨다.
+        self.assertLess(guard, EXPORT.index("[Win32]::MouseClick()", guard))
         self.assertLess(guard, EXPORT.index("[Win32]::CtrlS()"))
 
     def test_mismatch_aborts_instead_of_clicking_anyway(self):
@@ -47,6 +51,55 @@ class ClickTargetIsVerifiedTests(unittest.TestCase):
     def test_guard_names_the_fix_in_the_message(self):
         block = EXPORT[EXPORT.index("if ($pidAt -ne $kakaoPid) {"):][:700]
         self.assertIn("항상 위", block)
+
+
+class EveryClickIsGuardedTests(unittest.TestCase):
+    """좌표를 누르기 전에는 '그 자리에 보이는 창'이 카톡인지 먼저 묻는다.
+
+    클릭 경로는 하나가 아니다 — 입력칸, 채팅 목록의 방 행, 왼쪽 탭 띠. 한 곳만
+    이름으로 못박아 두면 새로 생긴 경로는 아무도 안 지킨다. 그래서 특정 위치가
+    아니라 파일의 모든 클릭 호출을 훑는다.
+    """
+
+    def test_each_click_has_a_pid_check_just_above(self):
+        clicks = list(re.finditer(r"\[Win32\]::Mouse(?:Double)?Click\(\)", EXPORT))
+        self.assertGreaterEqual(len(clicks), 3, "클릭 경로를 못 찾았다 — 정규식을 확인할 것")
+        for m in clicks:
+            with self.subTest(at=EXPORT[:m.start()].count("\n") + 1):
+                self.assertIn("[Win32]::PidAt(", EXPORT[max(0, m.start() - 900):m.start()])
+
+
+class TabIsIdentifiedNotAssumedTests(unittest.TestCase):
+    """채팅 목록을 클래스 이름만으로 고르면 친구 목록을 잡는다.
+
+    실측 2026-08-02: 카톡이 '친구' 탭에 떠 있는 채로 밤 갱신이 돌았고, 같은
+    클래스(EVA_VH_ListControl_Dblclk)인 친구 목록을 채팅 목록으로 잡아 사람
+    이름을 훑다가 '최고 일치율 7%' 로 중단했다. 그날 대화가 통째로 빠졌다.
+    """
+
+    def test_list_is_chosen_by_control_name(self):
+        self.assertIn("ChatRoomListCtrl", EXPORT)
+        # 첫 번째 EVA_VH_ListControl_Dblclk 를 그냥 집는 구현으로 되돌아가지 않게
+        self.assertNotIn("ClassName -eq 'EVA_VH_ListControl_Dblclk') { $list", EXPORT)
+
+    def test_wrong_tab_is_recovered_not_just_reported(self):
+        self.assertIn("function Select-ChatTab", EXPORT)
+        body = EXPORT[EXPORT.index("$list = Get-ChatRoomList $main"):][:600]
+        self.assertIn("Select-ChatTab", body)
+
+    def test_tab_strip_geometry_is_measured_not_hardcoded(self):
+        # 좌표를 박아 두면 배율·창 크기가 바뀌는 날 조용히 엉뚱한 곳을 누른다.
+        body = EXPORT[EXPORT.index("function Select-ChatTab"):]
+        body = body[:body.index("\nfunction ", 1)]
+        self.assertIn("$Main.Current.BoundingRectangle", body)
+        # 누른 뒤에는 반드시 '채팅 목록이 떴는지' 로 확인한다
+        self.assertIn("Get-ChatRoomList $Main", body)
+
+    def test_tab_search_stops_above_the_settings_icons(self):
+        # 탭 띠 아래쪽에는 알림·설정이 있다. 끝까지 훑으면 설정 창을 연다.
+        body = EXPORT[EXPORT.index("function Select-ChatTab"):]
+        body = body[:body.index("\nfunction ", 1)]
+        self.assertRegex(body, r"\$dy -le 3\d\d")
 
 
 class RoomWindowIsOpenedSafelyTests(unittest.TestCase):

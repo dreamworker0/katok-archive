@@ -25,6 +25,7 @@
   매일 자동 실행이 성립하지 않으므로 없으면 열고 진행한다. Open-RoomWindow 참고.
     · 트레이 아이콘을 클릭하지 않는다 (숨겨진 메인 창에 ShowWindow)
     · 키를 보내지 않는다 (Enter 는 동작하지 않고, 타이핑은 메시지 전송 위험)
+    · 목록은 '채팅' 탭의 것인지 이름으로 확인한다 (친구 목록과 클래스가 같다)
     · 클릭할 행은 OCR 로 읽어 고르고, 열린 창의 제목으로 최종 확인
   실패하면 예전과 똑같이 화면을 남기고 중단한다.
 
@@ -287,6 +288,88 @@ function Get-RowMatchScore {
     [double]$same / $a.Length
 }
 
+function Get-ChatRoomList {
+    <#
+      메인 창에서 '채팅 목록' 컨트롤을 돌려준다. 보이지 않으면 $null.
+
+      클래스 이름으로만 고르면 안 된다 — 친구 목록도, 검색 결과 목록도 같은
+      EVA_VH_ListControl_Dblclk 다(실측 2026-08-03). 2026-08-02 밤 갱신은
+      카톡이 '친구' 탭에 떠 있어서 친구 목록을 채팅 목록으로 잡았고, 사람 이름을
+      다섯 화면 훑다가 '최고 일치율 7%' 로 중단했다 — 그날 대화가 통째로 빠졌다.
+
+      그래서 컨트롤 이름으로 고른다. 이름은 'ChatRoomListCtrl_0x000302ea' 처럼
+      주소가 붙어 실행마다 달라지므로 앞부분만 본다. 접근성 API 는 보이는 것만
+      노출하므로(실측), 이 이름이 없다는 것은 곧 '채팅 탭이 떠 있지 않다' 는 뜻이다.
+    #>
+    param($Main)
+    $all = $Main.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+        [System.Windows.Automation.Condition]::TrueCondition)
+    for ($i = 0; $i -lt $all.Count; $i++) {
+        $e = $all.Item($i)
+        if ($e.Current.ClassName -eq 'EVA_VH_ListControl_Dblclk' -and
+            $e.Current.Name -like 'ChatRoomListCtrl*' -and -not $e.Current.IsOffscreen) { return $e }
+    }
+    $null
+}
+
+function Select-ChatTab {
+    <#
+      '채팅' 탭을 눌러 채팅 목록을 띄운다. 성공하면 목록 컨트롤, 실패하면 $null.
+
+      왼쪽 탭 띠는 접근성 API 에 버튼이 0개이고(실측), 아이콘이라 OCR 로 읽을
+      글자도 없다. 그래서 자리를 추정해 누르되 **누를 때마다 채팅 목록이 떴는지
+      확인**한다. 맞히면 멈추고 틀리면 다음 자리를 누른다.
+
+      더듬어도 되는 이유: 탭 전환은 되돌릴 수 있고, 메시지가 나가거나 방을
+      나가는 경로가 아니다. 대신 아래쪽 설정·알림 아이콘까지 내려가지 않도록
+      뷰 위쪽 320px 까지만 훑고, 클릭 자리는 여느 클릭과 같이 '그 자리에 보이는
+      창이 카톡인지' 를 먼저 묻는다.
+    #>
+    param($Main, [int]$KakaoPid)
+
+    # 탭 띠의 폭 = 메인 창 왼쪽 끝 ~ 내용 뷰(채팅 목록·친구 목록…) 왼쪽 끝.
+    # 배율·창 크기가 바뀌어도 이 두 좌표에서 매번 다시 잰다.
+    $mr = $Main.Current.BoundingRectangle
+    $contentX = $null; $contentTop = $null; $seen = @()
+    $all = $Main.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+        [System.Windows.Automation.Condition]::TrueCondition)
+    for ($i = 0; $i -lt $all.Count; $i++) {
+        $e = $all.Item($i).Current
+        if ($e.Name -notmatch 'View_0x' -or $e.Name -like 'OnlineMainView*' -or $e.IsOffscreen) { continue }
+        $seen += ($e.Name -replace '_0x.*', '')
+        if ($null -eq $contentX -or $e.BoundingRectangle.X -lt $contentX) {
+            $contentX = $e.BoundingRectangle.X
+            $contentTop = $e.BoundingRectangle.Y
+        }
+    }
+    if ($seen.Count) { Write-Log ("  지금 보이는 뷰: {0}" -f ($seen -join ', ')) }
+    if ($null -eq $contentX) { Write-Log "  탭 띠 위치를 잴 수 없습니다" 'WARN'; return $null }
+
+    $barWidth = $contentX - $mr.X
+    if ($barWidth -lt 30 -or $barWidth -gt 200) {
+        Write-Log ("  탭 띠 폭이 예상 밖입니다 ({0}px) — 누르지 않습니다" -f [int]$barWidth) 'WARN'
+        return $null
+    }
+    $tx = [int]($mr.X + $barWidth / 2)
+
+    for ($dy = 20; $dy -le 320; $dy += 24) {
+        $ty = [int]($contentTop + $dy)
+        $pidAtTab = [Win32]::PidAt($tx, $ty)
+        if ($pidAtTab -ne $KakaoPid) { continue }    # 남의 창이 덮은 자리는 누르지 않는다
+        [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($tx, $ty)
+        Start-Sleep -Milliseconds 120
+        [Win32]::MouseClick()
+        Start-Sleep -Milliseconds 350
+        $list = Get-ChatRoomList $Main
+        if ($null -ne $list) {
+            Write-Log ("  '채팅' 탭으로 전환했습니다 ($tx, $ty)")
+            return $list
+        }
+    }
+    Write-Log "  탭 띠에서 '채팅' 을 찾지 못했습니다" 'WARN'
+    $null
+}
+
 function Open-RoomWindow {
     <#
       방 창이 없을 때, 트레이 상태의 카톡에서 방 창을 열어 반환한다. 실패하면 $null.
@@ -322,12 +405,11 @@ function Open-RoomWindow {
     if ($null -eq $main) { Write-Log "  메인 창이 접근성 API 에 보이지 않습니다" 'WARN'; return $null }
     $kakaoPid = $main.Current.ProcessId
 
-    # 채팅 목록 컨트롤 위치
-    $list = $null
-    $all = $main.FindAll([System.Windows.Automation.TreeScope]::Descendants,
-        [System.Windows.Automation.Condition]::TrueCondition)
-    for ($i = 0; $i -lt $all.Count; $i++) {
-        if ($all.Item($i).Current.ClassName -eq 'EVA_VH_ListControl_Dblclk') { $list = $all.Item($i); break }
+    # 채팅 목록 컨트롤 위치. 없으면 다른 탭이 떠 있는 것이므로 '채팅' 탭으로 돌린다.
+    $list = Get-ChatRoomList $main
+    if ($null -eq $list) {
+        Write-Log "  채팅 목록이 보이지 않습니다 — 다른 탭이 떠 있는 것 같습니다"
+        $list = Select-ChatTab -Main $main -KakaoPid $kakaoPid
     }
     if ($null -eq $list) {
         Write-Log "  채팅 목록을 찾지 못했습니다 — 잠금 화면이나 로그아웃 상태일 수 있습니다" 'WARN'
