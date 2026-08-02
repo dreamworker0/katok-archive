@@ -178,5 +178,117 @@ class ParticipantsTest(unittest.TestCase):
         self.assertEqual(out[0]["last_timestamp"], "2026-07-25T09:17+09:00")
 
 
+class SameRoomGuardTest(unittest.TestCase):
+    """엉뚱한 방을 내보내면 반영하지 않는다.
+
+    증분 반영은 '마지막 메시지 이후'만 덧붙이므로, 다른 방을 내보내도 그 방의 최근
+    글이 그냥 신규로 들어온다. 한 번 섞이면 어느 것이 남의 방 글인지 표시가 없다.
+
+    길이로 판정하지 않는다. 옛 설계(codex 브랜치의 refresh_guard.py)는 내보내기가
+    원장의 상위집합이라고 보고 더 짧으면 거부했는데, 수집을 전용 계정으로 돌린 뒤로
+    내보내기에는 초대 이후 구간만 담긴다 — 그대로 켜면 매일 거부한다.
+    """
+
+    def setUp(self):
+        txt = export_text([
+            ("2026-07-24", [
+                ("오후", "1:00", "김종원", "우리 방 첫 줄"),
+                ("오후", "1:01", "오세라", "우리 방 둘째 줄"),
+                ("오후", "1:02", "가온", "우리 방 셋째 줄"),
+                ("오후", "1:03", "김종원", "우리 방 넷째 줄"),
+                ("오후", "1:04", "오세라", "우리 방 다섯째 줄"),
+                ("오후", "1:05", "가온", "우리 방 여섯째 줄"),
+            ]),
+        ])
+        parsed = parse_chat(txt).messages
+        self.existing = [inc.to_record(m, i + 1) for i, m in enumerate(parsed)]
+
+    def rows(self, prefix, n=6, start=0):
+        return [("오후", "1:%02d" % (start + i), "김종원", "%s %d" % (prefix, i))
+                for i in range(n)]
+
+    def test_same_room_passes(self):
+        txt = export_text([("2026-07-24", [
+            ("오후", "1:00", "김종원", "우리 방 첫 줄"),
+            ("오후", "1:01", "오세라", "우리 방 둘째 줄"),
+            ("오후", "1:02", "가온", "우리 방 셋째 줄"),
+            ("오후", "1:03", "김종원", "우리 방 넷째 줄"),
+            ("오후", "1:04", "오세라", "우리 방 다섯째 줄"),
+            ("오후", "1:05", "가온", "우리 방 여섯째 줄"),
+            ("오후", "2:00", "김종원", "오늘 새 글"),
+        ])])
+        ok, report = inc.check_same_room(parse_chat(txt).messages, self.existing)
+        self.assertTrue(ok, report)
+
+    def test_a_short_export_from_the_same_room_passes(self):
+        """전용 계정 내보내기는 원장보다 짧다 — 그것만으로 거부하면 안 된다."""
+        txt = export_text([("2026-07-24", [
+            ("오후", "1:02", "가온", "우리 방 셋째 줄"),
+            ("오후", "1:03", "김종원", "우리 방 넷째 줄"),
+            ("오후", "1:04", "오세라", "우리 방 다섯째 줄"),
+            ("오후", "1:05", "가온", "우리 방 여섯째 줄"),
+            ("오후", "2:00", "김종원", "오늘 새 글"),
+        ])])
+        parsed = parse_chat(txt).messages
+        self.assertLess(len(parsed), len(self.existing) + 1)
+        ok, report = inc.check_same_room(parsed, self.existing)
+        self.assertTrue(ok, report)
+
+    def test_a_different_room_is_refused(self):
+        txt = export_text([("2026-07-24", self.rows("남의 방 글"))])
+        ok, report = inc.check_same_room(parse_chat(txt).messages, self.existing)
+        self.assertFalse(ok)
+        self.assertEqual(report["알아봄"], 0)
+
+    def test_too_little_overlap_is_not_judged(self):
+        """판정할 근거가 없으면 통과시킨다 — 멀쩡한 날 갱신이 멈추면 안 된다."""
+        txt = export_text([("2026-07-24", [
+            ("오후", "1:05", "가온", "우리 방 여섯째 줄"),
+            ("오후", "3:00", "김종원", "한참 뒤 새 글"),
+        ])])
+        ok, report = inc.check_same_room(parse_chat(txt).messages, self.existing)
+        self.assertTrue(ok)
+        self.assertIn("비교하지 않음", report["판정"])
+
+    def test_empty_ledger_is_not_judged(self):
+        txt = export_text([("2026-07-24", self.rows("아무 글"))])
+        ok, _ = inc.check_same_room(parse_chat(txt).messages, [])
+        self.assertTrue(ok)
+
+    def test_a_few_edits_still_count_as_the_same_room(self):
+        """겹치는 구간에서 한 건쯤 어긋나도 거부하면 안 된다.
+
+        파싱 차이(멘션 표기·잘린 긴 글)로 한두 건은 늘 어긋난다. 20건 중 1건이면
+        같은 방이고, 그때 갱신이 멈추면 안 된다.
+        """
+        rows = self.rows("긴 대화", n=20)
+        ledger_txt = export_text([("2026-07-24", rows)])
+        ledger = [inc.to_record(m, i + 1)
+                  for i, m in enumerate(parse_chat(ledger_txt).messages)]
+
+        edited = list(rows)
+        edited[7] = ("오후", "1:07", "김종원", "파싱이 조금 다르게 읽은 줄")
+        txt = export_text([("2026-07-24", edited)])
+
+        ok, report = inc.check_same_room(parse_chat(txt).messages, ledger)
+        self.assertTrue(ok, report)
+        self.assertEqual((report["겹침"], report["알아봄"]), (20, 19))
+
+    def test_half_the_overlap_going_wrong_is_refused(self):
+        """조금 다른 것과 딴판인 것은 갈라야 한다."""
+        rows = self.rows("긴 대화", n=20)
+        ledger_txt = export_text([("2026-07-24", rows)])
+        ledger = [inc.to_record(m, i + 1)
+                  for i, m in enumerate(parse_chat(ledger_txt).messages)]
+
+        edited = list(rows)
+        for i in range(10):
+            edited[i] = ("오후", "1:%02d" % i, "김종원", "남의 방 글 %d" % i)
+        txt = export_text([("2026-07-24", edited)])
+
+        ok, report = inc.check_same_room(parse_chat(txt).messages, ledger)
+        self.assertFalse(ok, report)
+
+
 if __name__ == "__main__":
     unittest.main()

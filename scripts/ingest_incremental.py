@@ -111,6 +111,56 @@ def find_new_messages(parsed_messages, existing: list[dict]) -> tuple[list[dict]
     return new_rows, dict(stats)
 
 
+# 겹치는 구간에서 이만큼은 알아봐야 같은 방이라고 본다.
+#
+# 실측 2026-08-02, 같은 방의 실제 내보내기: 겹침 161건 중 154건을 알아봤다(95.7%).
+# 못 알아본 7건은 파싱 차이다(멘션 표기·잘린 긴 글). 100% 를 요구하면 멀쩡한 날
+# 갱신이 멈추고, 절반까지 늘어지면 다른 방을 통과시킨다. 그 사이에 둔다.
+SAME_ROOM_MIN_MATCH = 0.9
+# 이보다 적게 겹치면 판단하지 않는다 — 우연히 몇 건 어긋난 것으로 갱신을 멈출 수 없다.
+SAME_ROOM_MIN_OVERLAP = 5
+
+
+def check_same_room(parsed_messages, existing: list[dict]) -> tuple[bool, dict]:
+    """이 내보내기가 원장과 같은 방의 것인지 본다.
+
+    왜 필요한가
+      증분 반영은 '마지막 메시지 이후'만 덧붙인다. 그래서 **엉뚱한 방을 내보내도**
+      그 방의 최근 글이 그냥 '새 메시지 N건'으로 들어온다. 한 번 섞이면 어느 것이
+      남의 방 글인지 표시가 없어 손으로 골라내야 한다.
+
+    왜 '상위집합' 으로 검사하지 않는가
+      옛 설계(codex/daily-kakaotalk-refresh 의 refresh_guard.py)는 내보내기가 늘
+      원장의 상위집합이라고 보고, 후보가 더 짧으면 거부했다. 수집을 전용 계정으로
+      돌린 뒤로 그 전제가 깨졌다 — 내보내기에는 그 계정이 초대된 뒤 구간만 담긴다
+      (실측 2026-08-02: 후보 285줄 vs 원장 2,682건). 그대로 켜면 매일 거부한다.
+
+      그래서 길이가 아니라 **겹치는 구간**만 본다. 원장의 마지막 시각 이하인 후보
+      메시지는 이미 원장에 있어야 한다. 같은 방이면 거의 다 알아보고, 다른 방이면
+      거의 못 알아본다.
+
+    모를 때는 통과시킨다
+      겹치는 구간이 너무 짧으면(SAME_ROOM_MIN_OVERLAP 미만) 판단하지 않는다.
+      섞이는 것도 나쁘지만, 멀쩡한 날 갱신이 멈추는 것도 그만큼 나쁘다 — 판정할
+      근거가 없을 때는 사람이 볼 수 있게 알리고 지나간다.
+    """
+    if not existing:
+        return True, {"판정": "원장이 비어 비교하지 않음"}
+
+    seen = {(m["timestamp"], m["nickname"], m.get("text") or "") for m in existing}
+    last_ts = existing[-1]["timestamp"]
+
+    overlap = [m for m in parsed_messages if m.timestamp <= last_ts]
+    if len(overlap) < SAME_ROOM_MIN_OVERLAP:
+        return True, {"판정": "겹치는 구간이 %d건뿐이라 비교하지 않음" % len(overlap)}
+
+    matched = sum(1 for m in overlap
+                  if (m.timestamp, m.nickname, m.text) in seen)
+    ratio = matched / len(overlap)
+    report = {"겹침": len(overlap), "알아봄": matched, "비율": round(ratio, 3)}
+    return ratio >= SAME_ROOM_MIN_MATCH, report
+
+
 def to_record(msg, number: int) -> dict:
     """parser 의 Message 를 messages.jsonl 레코드로 바꾼다."""
     mid = "msg-%06d" % number
@@ -222,9 +272,10 @@ def pick_input_files(explicit: str | None) -> list[Path]:
     )
 
 
-def ingest(paths: list[Path], dry_run: bool) -> dict:
+def ingest(paths: list[Path], dry_run: bool, force_room: bool = False) -> dict:
     state = load_state()
     processed_hashes = {e["sha256"] for e in state.get("processed", [])}
+    refused_rooms: list[str] = []
 
     messages = build_site._read_jsonl(OUTPUT / "messages.jsonl")
     images = build_site._read_jsonl(OUTPUT / "images.jsonl")
@@ -244,6 +295,24 @@ def ingest(paths: list[Path], dry_run: bool) -> dict:
 
         text = path.read_text(encoding="utf-8", errors="replace")
         result = parse_chat(text)
+
+        # 엉뚱한 방을 내보냈으면 여기서 멈춘다. 섞인 뒤에는 표시가 없어 손으로
+        # 골라내야 하므로, 의심스러우면 안 넣는 쪽이 되돌리기 쉽다.
+        same_room, room_report = check_same_room(result.messages, messages)
+        if not same_room and force_room:
+            print("%s: 다른 방으로 보이지만 --force-room 이라 반영합니다 %s"
+                  % (path.name, room_report))
+            same_room = True
+        if not same_room:
+            print("%s: 원장과 다른 방으로 보입니다 %s" % (path.name, room_report))
+            print("  반영하지 않습니다. 내보낸 방이 맞는지 확인하세요.")
+            print("  맞다면 이 파일만 지정해 다시 돌리세요:"
+                  " python -m scripts.ingest_incremental --file <경로> --force-room")
+            refused_rooms.append(path.name)
+            continue
+        if "비율" in room_report and room_report["비율"] < 1:
+            print("  같은 방 확인: %s" % room_report)
+
         new_msgs, stats = find_new_messages(result.messages, messages)
 
         # 수집 거부는 '신규 판정' 뒤에 적용한다. 순서를 바꿔도 결과는 같지만,
@@ -293,6 +362,7 @@ def ingest(paths: list[Path], dry_run: bool) -> dict:
         "after": len(messages),
         "added": total_new,
         "refused": total_refused,
+        "refused_rooms": refused_rooms,
     }
 
     if dry_run:
@@ -335,6 +405,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="카카오톡 내보내기 txt 를 증분 반영")
     ap.add_argument("--file", help="특정 txt 하나만 처리")
     ap.add_argument("--dry-run", action="store_true", help="변경 없이 결과만 출력")
+    ap.add_argument("--force-room", action="store_true",
+                    help="다른 방으로 보여도 반영한다 (방 이름을 바꿨을 때 등)")
     args = ap.parse_args()
 
     paths = pick_input_files(args.file)
@@ -343,7 +415,7 @@ def main() -> int:
         return 0
 
     print("대상 파일 %d개" % len(paths))
-    summary = ingest(paths, args.dry_run)
+    summary = ingest(paths, args.dry_run, args.force_room)
     print("\n메시지 %d건 -> %d건 (신규 %d건%s)"
           % (summary["before"], summary["after"], summary["added"],
              ", 수집 거부 %d건" % summary["refused"] if summary["refused"] else ""))
@@ -353,6 +425,17 @@ def main() -> int:
     if summary["added"] and not args.dry_run:
         print("다음: python -m scripts.build_firestore_payload"
               " && node scripts/upload_firestore.js")
+
+    # 다른 방으로 보이는 파일이 있으면 실패로 끝낸다.
+    #
+    # 조용히 넘기면 그 파일은 inbox 에 남아 매일 같은 자리에서 걸리는데, 로그에는
+    # '신규 0건' 으로만 보인다 — 오늘 고친 '조용히 안 올라가던' 문제와 같은 꼴이다.
+    # run_daily.ps1 은 Invoke-Step 이라 여기서 멈추고, 그날 발행은 건너뛴다.
+    # 원본은 그대로 남으므로 방을 확인한 뒤 다시 돌리면 된다.
+    if summary["refused_rooms"]:
+        print("\n다른 방으로 보여 반영하지 않은 파일 %d개: %s"
+              % (len(summary["refused_rooms"]), ", ".join(summary["refused_rooms"])))
+        return 2
     return 0
 
 
