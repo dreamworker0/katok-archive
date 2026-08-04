@@ -53,6 +53,60 @@ class ClickTargetIsVerifiedTests(unittest.TestCase):
         self.assertIn("항상 위", block)
 
 
+class KeyGoesOnlyToARoomThatStillHasFocusTests(unittest.TestCase):
+    """자리 확인은 한 번 하고 끝나는 검사가 아니다 (실측 2026-08-04).
+
+    가드를 통과한 직후, 클릭과 Ctrl+S 사이의 짧은 틈에 클로드 데스크톱 알림 풍선이
+    바로 입력칸 위에 떴다. 클릭은 풍선이 받고 포커스도 그쪽으로 넘어갔으므로
+    Ctrl+S 는 카톡에 닿지 않았다. 로그에는 예전과 똑같이 '최상단 확보 확인' 다음
+    '저장 대화상자가 뜨지 않았습니다' 만 남아, 원인은 남긴 화면을 열어야 보였다.
+    """
+
+    def _between_click_and_key(self):
+        guard = EXPORT.index("$pidAt = [Win32]::PidAt($ix, $iy)")
+        click = EXPORT.index("[Win32]::MouseClick()", guard)
+        return EXPORT[click:EXPORT.index("[Win32]::CtrlS()")]
+
+    def test_focus_is_rechecked_just_before_the_key(self):
+        between = self._between_click_and_key()
+        self.assertIn("[Win32]::GetForegroundWindow()", between)
+        self.assertIn("[Win32]::PidAt($ix, $iy)", between)
+
+    def test_interference_means_the_key_is_not_sent(self):
+        between = self._between_click_and_key()
+        self.assertIn("-ne $kakaoPid", between)
+        # 물러나는 길이 있어야 한다 — 확인이 어긋난 채로 Ctrl+S 까지 흐르면 안 된다
+        self.assertTrue(
+            "continue" in between and "Stop-Safely" in between,
+            "끼어든 창을 확인한 뒤 다시 시도하거나 중단하는 길이 없다",
+        )
+
+    def test_one_interruption_does_not_lose_the_day(self):
+        """잠깐 뜬 풍선 때문에 그날 갱신을 통째로 버리지 않는다.
+
+        방 창을 다시 잡는 것은 위험을 늘리지 않는다 — 시도마다 자리 확인을 처음부터
+        다시 하므로, 카톡이 아닌 창에 키가 가는 경로는 그대로 막혀 있다.
+        """
+        self.assertRegex(EXPORT, r"for \(\$att = 1; \$att -le \$maxTry")
+        # 시도마다 창 자리를 다시 읽는다 — 그 사이 창이 움직일 수 있다
+        loop = EXPORT[EXPORT.index("for ($att = 1; $att -le $maxTry"):EXPORT.index("[Win32]::CtrlS()")]
+        self.assertIn("$r = $win.Current.BoundingRectangle", loop)
+
+    def test_retry_does_not_press_the_key_over_a_late_dialog(self):
+        # 늦게 뜬 대화상자를 두고 Ctrl+S 를 또 보내면 대화상자가 두 개 열린다.
+        block = EXPORT[EXPORT.index("$dlg = Wait-SaveDialog -TimeoutSec 20"):]
+        block = block[:block.index("Stop-Safely")]
+        self.assertIn("Wait-SaveDialog -TimeoutSec 3", block)
+
+    def test_failure_log_names_who_was_in_front(self):
+        # 남긴 화면(png)을 열어야 알 수 있던 것을 로그에도 적는다.
+        self.assertIn("function Get-ScreenState", EXPORT)
+        body = EXPORT[EXPORT.index("function Get-ScreenState"):]
+        body = body[:body.index("\nfunction ", 1)]
+        self.assertIn("[Win32]::GetForegroundWindow()", body)
+        self.assertIn("[Win32]::PidAt($X, $Y)", body)
+
+
 class EveryClickIsGuardedTests(unittest.TestCase):
     """좌표를 누르기 전에는 '그 자리에 보이는 창'이 카톡인지 먼저 묻는다.
 

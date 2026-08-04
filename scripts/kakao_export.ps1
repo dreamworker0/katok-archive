@@ -606,6 +606,28 @@ function Invoke-SaveDialog {
     $dest
 }
 
+function Get-ScreenState {
+    <#
+      실패한 순간 화면에서 누가 앞에 있었는지 한 줄로 적는다.
+
+      "저장 대화상자가 뜨지 않았습니다" 만 남은 로그로는 원인을 알 수 없었다(실측
+      2026-07-27, 2026-08-04 모두 같은 줄에서 멈췄지만 범인은 각각 작업 관리자와
+      알림 풍선이었다). 남긴 화면(png)을 열어야 알 수 있었던 것을 로그에 적어 둔다.
+    #>
+    param([IntPtr]$RoomHandle, [int]$X, [int]$Y)
+    $name = {
+        param($procId)
+        if ($procId -eq 0) { return '창 없음' }
+        try { return (Get-Process -Id $procId -ErrorAction Stop).ProcessName } catch { return '알 수 없음' }
+    }
+    $fg = [Win32]::GetForegroundWindow()
+    $t = New-Object System.Text.StringBuilder 256
+    [void][Win32]::GetWindowText($fg, $t, 256)
+    $isRoom = if ($fg -eq $RoomHandle) { '방 창' } else { "방 창 아님 — '$($t.ToString())'" }
+    $ptPid = [Win32]::PidAt($X, $Y)
+    "앞에 있는 창: $isRoom / 입력칸 자리($X, $Y): $(& $name $ptPid)(PID $ptPid)"
+}
+
 function Close-OwnedPopups {
     <#
       방 창이 소유한 팝업을 닫는다.
@@ -693,45 +715,93 @@ if ($Discover) {
 # 창을 앞으로 올리는 것만으로는 Ctrl+S 가 먹지 않았다(실측).
 # 창 내부 포커스가 필요하므로 메시지 입력칸을 한 번 클릭한다.
 # 입력칸 클릭은 커서만 놓는 동작이라 안전하다 — Enter 는 절대 보내지 않는다.
-$ix = [int]($r.X + 60)
-$iy = [int]($r.Y + $r.Height - 145)
+#
+# 이 한 벌(자리 확인 -> 클릭 -> 확인 -> Ctrl+S -> 대화상자 대기)을 여러 번 시도한다.
+# 끼어든 창은 대개 잠깐 떠 있다 사라지는 것이고(알림 풍선), 그 몇 초 때문에 그날
+# 갱신을 통째로 버리는 것은 손해가 너무 크다. 사람을 부르는 것은 마지막 시도까지
+# 실패했을 때만 한다.
+$maxTry = 3
+$dlg = $null
+for ($att = 1; $att -le $maxTry; $att++) {
+    # 창은 사이에 움직일 수 있다(사람이 끌거나, 카톡이 다시 그리거나) — 자리를 매번 다시 읽는다.
+    $r = $win.Current.BoundingRectangle
+    $ix = [int]($r.X + 60)
+    $iy = [int]($r.Y + $r.Height - 145)
 
-# 좌표를 그냥 클릭하지 않는다 — 그 자리에 다른 창이 덮여 있을 수 있다.
-#
-# '최상단 확보'를 통과했는데도 실패한 적이 있다(실측 2026-07-27). 작업 관리자의
-# '항상 위' 옵션이 켜져 있으면 카톡이 포그라운드여도 그 위에 그려진다. 그 상태로
-# 좌표를 클릭하면 포커스가 작업 관리자로 넘어가고 Ctrl+S 도 거기로 간다 —
-# 로그에는 "최상단 확보 확인" 다음에 "저장 대화상자가 뜨지 않았습니다" 만 남아
-# 원인이 안 보였다.
-#
-# 그리고 이건 실패로 끝나는 것보다 나쁠 수 있다. 덮은 창이 편집기라면 Ctrl+S 가
-# 남의 파일을 저장한다. 이 스크립트의 원칙은 '엉뚱한 창에 키를 보내지 않는다' 이므로,
-# 포그라운드만 보지 말고 클릭할 자리가 실제로 카톡인지 확인한다.
-$pidAt = [Win32]::PidAt($ix, $iy)
-if ($pidAt -ne $kakaoPid) {
-    $who = '알 수 없음'
-    if ($pidAt -ne 0) {
-        try { $who = (Get-Process -Id $pidAt -ErrorAction Stop).ProcessName } catch {}
+    # 좌표를 그냥 클릭하지 않는다 — 그 자리에 다른 창이 덮여 있을 수 있다.
+    #
+    # '최상단 확보'를 통과했는데도 실패한 적이 있다(실측 2026-07-27). 작업 관리자의
+    # '항상 위' 옵션이 켜져 있으면 카톡이 포그라운드여도 그 위에 그려진다. 그 상태로
+    # 좌표를 클릭하면 포커스가 작업 관리자로 넘어가고 Ctrl+S 도 거기로 간다 —
+    # 로그에는 "최상단 확보 확인" 다음에 "저장 대화상자가 뜨지 않았습니다" 만 남아
+    # 원인이 안 보였다.
+    #
+    # 그리고 이건 실패로 끝나는 것보다 나쁠 수 있다. 덮은 창이 편집기라면 Ctrl+S 가
+    # 남의 파일을 저장한다. 이 스크립트의 원칙은 '엉뚱한 창에 키를 보내지 않는다' 이므로,
+    # 포그라운드만 보지 말고 클릭할 자리가 실제로 카톡인지 확인한다.
+    $pidAt = [Win32]::PidAt($ix, $iy)
+    if ($pidAt -ne $kakaoPid) {
+        $who = '알 수 없음'
+        if ($pidAt -ne 0) {
+            try { $who = (Get-Process -Id $pidAt -ErrorAction Stop).ProcessName } catch {}
+        }
+        $covered = "입력칸 자리($ix, $iy)가 다른 창에 덮여 있습니다 — '$who'(PID $pidAt). " +
+            "'항상 위'로 떠 있는 창(작업 관리자·알림 풍선 등)을 닫고 다시 시도하세요."
+        if ($att -lt $maxTry) {
+            Write-Log "$covered 잠시 기다린 뒤 다시 시도합니다 ($att/$maxTry)" 'WARN'
+            Start-Sleep -Seconds 5
+            [void][Win32]::ForceForeground($h)
+            continue
+        }
+        Stop-Safely $covered
     }
-    Stop-Safely ("입력칸 자리($ix, $iy)가 다른 창에 덮여 있습니다 — '$who'(PID $pidAt). " +
-        "'항상 위'로 떠 있는 창(작업 관리자 등)을 닫고 다시 시도하세요.")
-}
 
-Write-Log "메시지 입력칸 클릭으로 내부 포커스 확보 ($ix, $iy) — 그 자리 창 확인됨(카톡)"
-[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($ix, $iy)
-Start-Sleep -Milliseconds 250
-[Win32]::MouseClick()
-Start-Sleep -Milliseconds 500
+    Write-Log "메시지 입력칸 클릭으로 내부 포커스 확보 ($ix, $iy) — 그 자리 창 확인됨(카톡)"
+    [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($ix, $iy)
+    Start-Sleep -Milliseconds 250
+    [Win32]::MouseClick()
+    Start-Sleep -Milliseconds 500
 
-Write-Log "Ctrl+S 전송 (대화 내보내기 단축키)"
-[Win32]::CtrlS()
+    # 클릭과 Ctrl+S 사이의 틈도 지킨다.
+    #
+    # 실측 2026-08-04: 자리 확인을 통과한 직후 클로드 데스크톱 알림 풍선이 바로 그
+    # 입력칸 위에 떴다. 클릭은 풍선이 받았고 포커스도 그쪽으로 넘어가, Ctrl+S 는
+    # 카톡에 닿지 않았다. 확인은 한 번으로 끝나는 검사가 아니라 '키를 보내기
+    # 직전의 상태' 여야 한다.
+    $fgNow = [Win32]::GetForegroundWindow()
+    $pidNow = [Win32]::PidAt($ix, $iy)
+    if ($fgNow -ne $h -or $pidNow -ne $kakaoPid) {
+        $stolen = "클릭 직후에 다른 창이 끼어들었습니다 — Ctrl+S 를 보내지 않습니다. " +
+            (Get-ScreenState -RoomHandle $h -X $ix -Y $iy)
+        if ($att -lt $maxTry) {
+            Write-Log "$stolen 잠시 기다린 뒤 다시 시도합니다 ($att/$maxTry)" 'WARN'
+            Start-Sleep -Seconds 5
+            [void][Win32]::ForceForeground($h)
+            continue
+        }
+        Stop-Safely $stolen
+    }
 
-# 4) 저장 대화상자 대기 — 안 뜨면 아무 것도 하지 않고 중단
-$dlg = Wait-SaveDialog -TimeoutSec 20 -OwnerPid $kakaoPid
-if ($null -eq $dlg) {
-    Stop-Safely ("저장 대화상자가 뜨지 않았습니다(단축키가 동작하지 않았을 수 있음). " +
-        "클릭 직후에 다른 창이 앞으로 나왔거나, 시스템이 몹시 느려 20초 안에 " +
-        "대화상자가 못 떴을 수 있습니다 — 남긴 화면을 확인하세요.")
+    Write-Log "Ctrl+S 전송 (대화 내보내기 단축키)"
+    [Win32]::CtrlS()
+
+    # 4) 저장 대화상자 대기 — 안 뜨면 아무 것도 하지 않고 다시 시도/중단
+    $dlg = Wait-SaveDialog -TimeoutSec 20 -OwnerPid $kakaoPid
+    if ($null -ne $dlg) { break }
+
+    $late = "저장 대화상자가 뜨지 않았습니다(단축키가 동작하지 않았을 수 있음). " +
+        (Get-ScreenState -RoomHandle $h -X $ix -Y $iy)
+    if ($att -lt $maxTry) {
+        Write-Log "$late 잠시 기다린 뒤 다시 시도합니다 ($att/$maxTry)" 'WARN'
+        Start-Sleep -Seconds 5
+        # 늦게 뜬 대화상자를 두고 Ctrl+S 를 또 보내면 대화상자가 두 개가 된다.
+        # 다시 잡기 전에 한 번 더 확인한다.
+        $dlg = Wait-SaveDialog -TimeoutSec 3 -OwnerPid $kakaoPid
+        if ($null -ne $dlg) { break }
+        [void][Win32]::ForceForeground($h)
+        continue
+    }
+    Stop-Safely ($late + " 남긴 화면을 확인하세요.")
 }
 
 $savePath = Invoke-SaveDialog -found $dlg -Directory (Resolve-Path $InboxDir).Path
