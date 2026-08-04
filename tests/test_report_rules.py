@@ -31,6 +31,42 @@ class RuleSourceTests(unittest.TestCase):
         classify = cu.build_prompt(MSGS, CATS, [], [])
         self.assertNotIn("화면 아래에 따로 붙습니다", classify)
 
+    def test_both_prompts_carry_the_same_tag_rules(self):
+        """태그 규칙도 한 곳에서 나와야 한다.
+
+        예전에는 두 프롬프트가 각자 'keywords 는 2~6개' 한 줄만 적어 두었고, 둘 다
+        무슨 말을 쓸지는 말하지 않았다. 그 결과가 태그 1,224종 중 1,090종이 한 번만
+        쓰인 상태다. 규칙이 다시 갈라지면 한쪽만 어휘를 보게 된다.
+        """
+        rules = tr.tag_rules(cu.tag_vocabulary())
+        classify = cu.build_prompt(MSGS, CATS, [], [])
+        report = cu.build_report_prompt(
+            {"id": "t-1", "title": "제목", "summary": "요지", "category": "projects"},
+            MSGS, [], None)
+        for name, prompt in (("분류", classify), ("보고서", report)):
+            self.assertIn(rules, prompt, "%s 프롬프트가 공용 태그 규칙을 안 읽는다" % name)
+
+    def test_tag_rule_shows_the_vocabulary_and_caps_new_words(self):
+        rules = tr.tag_rules(["안티그래비티", "앱스스크립트"])
+        self.assertIn("안티그래비티 · 앱스스크립트", rules)
+        self.assertIn("%d개까지만" % tr.NEW_TAGS_ALLOWED, rules)
+
+    def test_tag_rule_without_a_vocabulary_does_not_tell_a_lie(self):
+        # 없는 목록에서 고르라고 하면 지시가 거짓이 된다(새 아카이브·첫 실행).
+        rules = tr.tag_rules([])
+        self.assertNotIn("이미 쓰이는 태그", rules)
+        self.assertIn("keywords", rules)
+
+    def test_vocabulary_failure_does_not_stop_classification(self):
+        # 어휘를 못 읽는 것이 그날 분류를 막을 이유는 없다.
+        try:
+            cu.tag_vocabulary.__dict__["_cache"] = None
+            real, cu.TOPICS = cu.TOPICS, cu.ROOT / "없는파일.json"
+            self.assertEqual([], cu.tag_vocabulary())
+        finally:
+            cu.TOPICS = real
+            cu.tag_vocabulary.__dict__["_cache"] = None
+
     def test_quote_limit_has_one_source(self):
         self.assertEqual(cu.MAX_VERBATIM_CHARS, tr.MAX_VERBATIM_CHARS)
 

@@ -81,6 +81,96 @@ class TagIndexTests(unittest.TestCase):
         self.assertTrue(idx["tags"][0]["person"], "괄호 소속을 뗀 이름도 사람으로 봐야 한다")
 
 
+class PlaceTagTests(unittest.TestCase):
+    """지명·조직 이름은 태그 구름에서 빼되, **기계가 정하지 않는다.**
+
+    이 방에서 '장애인복지관'·'거주시설' 은 기관 종류가 아니라 이야기의 주제 그
+    자체다. 접미사만 보고 뺐다면 후보 26개 중 6개가 그렇게 사라졌을 것이고(실측
+    2026-08-04), 반대로 '홍대입구'·'노원구' 는 접미사로 잡히지도 않는다.
+    """
+
+    def test_marked_only_when_the_table_says_so(self):
+        threads = [{"id": "t-%d" % i, "keywords": ["한빛종합사회복지관", "바이브코딩"]}
+                   for i in range(2)]
+        tags.attach_tags(threads, {})
+        places = {tags.fold("한빛종합사회복지관")}
+        idx = tags.build_tag_index(threads, {}, min_count=2, places=places)
+        marked = {r["tag"]: r["place"] for r in idx["tags"]}
+        self.assertTrue(marked["한빛종합사회복지관"])
+        self.assertFalse(marked["바이브코딩"])
+
+    def test_no_table_hides_nothing(self):
+        threads = [{"id": "t-%d" % i, "keywords": ["한빛종합사회복지관"]} for i in range(2)]
+        tags.attach_tags(threads, {})
+        idx = tags.build_tag_index(threads, {}, min_count=2)
+        self.assertFalse(idx["tags"][0]["place"], "표가 없으면 아무것도 빠지지 않는다")
+
+    def test_missing_table_is_not_an_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual((set(), set()), tags.load_places(Path(d) / "없다.json"))
+
+    def test_candidates_skip_what_the_table_already_answered(self):
+        threads = [{"id": "t-1", "keywords": ["무지개노인복지관", "거주시설", "바이브코딩"]}]
+        cands = tags.place_candidates(
+            threads, places={tags.fold("무지개노인복지관")},
+            not_places={tags.fold("거주시설")})
+        self.assertEqual([], cands, "한 번 판단한 것을 또 물으면 표를 쓸 이유가 없다")
+
+    def test_profession_is_not_mistaken_for_an_organization(self):
+        # '지사'·'지회' 를 접미사에 넣었더니 '사회복지사' 가 걸렸다(실측).
+        threads = [{"id": "t-1", "keywords": ["사회복지사", "대구 사회복지사"]}]
+        self.assertEqual([], tags.place_candidates(threads))
+
+    def test_generic_type_is_still_offered_as_a_candidate(self):
+        # 종류를 가리키는 말도 후보로는 나온다 — 사람이 not_places 로 옮겨야 한다.
+        # 기계가 미리 갈라 두면 그 판단이 코드에 숨는다.
+        threads = [{"id": "t-1", "keywords": ["장애인복지관"]}]
+        self.assertEqual([("장애인복지관", 1)], tags.place_candidates(threads))
+
+    def test_suffix_alone_is_not_a_candidate(self):
+        threads = [{"id": "t-1", "keywords": ["복지관", "센터"]}]
+        self.assertEqual([], tags.place_candidates(threads))
+
+
+class VocabularyTests(unittest.TestCase):
+    """보고서를 쓸 때 고르라고 보여줄 공통 어휘.
+
+    태그 1,224종 중 1,090종이 한 번만 쓰인 뿌리는 표기 차이가 아니라 보고서마다
+    태그를 새로 지어낸 것이다. 사후 봉합으로는 1회짜리의 약 10%만 구제된다.
+    """
+
+    def setUp(self):
+        self.threads = [
+            {"id": "t-1", "keywords": ["바이브코딩", "clasp", "김종원"]},
+            {"id": "t-2", "keywords": ["바이브 코딩", "한번만", "김종원"]},
+            {"id": "t-3", "keywords": ["바이브코딩", "무지개노인복지관"]},
+            {"id": "t-4", "keywords": ["무지개노인복지관"]},
+        ]
+        self.parts = {"participants": [{"nickname": "김종원"}]}
+
+    def test_only_settled_words_are_offered(self):
+        # 한 번 쓰인 말까지 보여주면 그 목록이 곧 지어낸 말들의 목록이 된다.
+        names = [n for n, _ in tags.vocabulary(self.threads, self.parts)]
+        self.assertIn("바이브코딩", names)
+        self.assertNotIn("clasp", names)
+        self.assertNotIn("한번만", names)
+
+    def test_spelling_variants_count_as_one_word(self):
+        rows = dict(tags.vocabulary(self.threads, self.parts))
+        self.assertEqual(3, rows["바이브코딩"], "'바이브 코딩' 도 같은 말로 세야 한다")
+
+    def test_people_and_places_are_left_out(self):
+        # 어휘로 보여주면 다음 보고서가 그 이름을 또 태그로 쓴다.
+        names = [n for n, _ in tags.vocabulary(
+            self.threads, self.parts, places={tags.fold("무지개노인복지관")})]
+        self.assertNotIn("김종원", names)
+        self.assertNotIn("무지개노인복지관", names)
+
+    def test_most_used_comes_first(self):
+        rows = tags.vocabulary(self.threads, self.parts)
+        self.assertEqual("바이브코딩", rows[0][0])
+
+
 class InterestTests(unittest.TestCase):
     def _threads(self):
         """방 평균: 프로젝트 4 / 도구 6. 김종원은 프로젝트에, 호야는 도구에 몰린다."""

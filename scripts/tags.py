@@ -26,6 +26,24 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ALIAS_PATH = ROOT / "config" / "tag_aliases.json"
+PLACES_PATH = ROOT / "config" / "tag_places.json"
+
+# 지명·조직 **이름** 으로 보이는 꼴. 여기 걸린 것을 자동으로 빼지는 않는다.
+#
+# 이 방에서 '장애인복지관'·'거주시설'·'정신재활시설' 은 기관 종류가 아니라 이야기의
+# 주제 그 자체다. 접미사만 보고 뺐다면 26개 중 6개가 그렇게 사라졌을 것이다(실측
+# 2026-08-04). 반대로 '홍대입구'·'노원구' 같은 지명은 접미사로 못 잡는다 — 잡으려
+# 들면 'AI리터러시'·'사례관리'·'프록시'까지 걸린다.
+#
+# 그래서 기계는 후보만 내놓고, 실제로 뺄 목록은 사람이 표(config/tag_places.json)에
+# 적는다. tag_aliases.json 과 같은 방식이다 — 확실한 것만 기계가, 판단은 표로.
+# '지사'·'지회' 는 넣지 않는다 — '사회복지사'·'대구 사회복지사' 가 걸린다(실측).
+# 후보가 잘못 나오는 것은 사람의 시간을 먹는 일이므로 접미사는 아까워하지 않는다.
+ORG_SUFFIXES = (
+    "복지관", "복지재단", "협회", "센터", "재단", "시설", "공단", "구청", "시청",
+    "도서관", "어린이집", "요양원", "병원", "대학교", "학교", "위원회", "연구원",
+    "연구소", "본부",
+)
 
 _FOLD = re.compile(r"[\s\-_.]+")
 
@@ -71,6 +89,44 @@ def load_aliases(path: Path | None = None) -> dict[str, str]:
         for v in variants or []:
             out[fold(v)] = canon
     return out
+
+
+def load_places(path: Path | None = None) -> tuple[set[str], set[str]]:
+    """`config/tag_places.json` → (뺄 태그의 fold, 후보에서 지울 태그의 fold).
+
+    표가 없어도 돌아간다 — 그때는 아무 태그도 빠지지 않고 후보만 보인다.
+    이 파일은 커밋하지 않는다(예시는 tag_places.example.json). 특정 기관 이름이
+    줄줄이 적히는 목록이고, 저장소는 공개다.
+    """
+    p = path or PLACES_PATH
+    if not p.exists():
+        return set(), set()
+    raw = json.loads(p.read_text(encoding="utf-8"))
+    return ({fold(t) for t in (raw.get("places") or []) if t},
+            {fold(t) for t in (raw.get("not_places") or []) if t})
+
+
+def place_candidates(threads: list[dict], places: set[str] | None = None,
+                     not_places: set[str] | None = None) -> list[tuple[str, int]]:
+    """표에 아직 없는 지명·조직 이름 후보. (태그, 쓰인 횟수) 를 많은 순으로.
+
+    사람이 훑어보고 `places`(뺄 것) 또는 `not_places`(주제로 남길 것)로 옮기면
+    다음부터 후보에 안 나온다. 한 번 판단한 것을 또 묻지 않는 것이 요점이다.
+    """
+    places = places or set()
+    not_places = not_places or set()
+    counts: Counter[str] = Counter(
+        t for th in threads for t in (th.get("tags") or th.get("keywords") or []))
+    rows = []
+    for tag, n in counts.items():
+        key = fold(tag)
+        if key in places or key in not_places:
+            continue
+        s = (tag or "").strip()
+        if any(s.endswith(sfx) and len(s) > len(sfx) for sfx in ORG_SUFFIXES):
+            rows.append((tag, n))
+    rows.sort(key=lambda r: (-r[1], r[0]))
+    return rows
 
 
 def build_tag_map(raw_tags: list[str], aliases: dict[str, str] | None = None
@@ -221,15 +277,50 @@ def rollup_parent_tags(threads: list[dict], participants: dict | None = None,
     return added
 
 
+def vocabulary(threads: list[dict], participants: dict | None = None,
+               places: set[str] | None = None, min_count: int = 2,
+               limit: int = 180) -> list[tuple[str, int]]:
+    """보고서를 쓸 때 '여기서 고르라' 고 보여줄 공통 태그. (표시 이름, 횟수).
+
+    태그가 1,224종인데 1,090종이 한 번만 쓰였다(실측 2026-08-04). 뿌리는 표기
+    차이가 아니라 **보고서마다 태그를 새로 지어낸 것**이다 — 공통 어휘가 없으면
+    같은 이야기가 매번 다른 말로 붙고, 태그로 찾으면 절반만 나온다.
+
+    사후 봉합(표기 통일·승격)으로는 1회짜리의 약 10%만 구제된다는 것을 실측했다.
+    그래서 만들 때 고르게 한다. 이미 두 번 이상 쓰인 말만 보여주는 것이 요점이다 —
+    한 번 쓰인 말까지 보여주면 그 목록이 곧 지어낸 말들의 목록이 된다.
+
+    사람 이름·지명은 넣지 않는다. 태그 구름에서 빼는 것과 같은 이유이고, 어휘로
+    보여주면 다음 보고서가 그 이름을 또 태그로 쓴다.
+    """
+    people = person_names(participants or {})
+    places = places or set()
+    raw = [t for th in threads for t in (th.get("keywords") or [])]
+    tag_map = build_tag_map(raw)
+    counts: Counter[str] = Counter()
+    for th in threads:
+        for name in canonical_tags(th.get("keywords") or [], tag_map):
+            counts[name] += 1
+    rows = [(name, n) for name, n in counts.items()
+            if n >= min_count and name not in people and fold(name) not in places]
+    rows.sort(key=lambda r: (-r[1], r[0]))
+    return rows[:limit]
+
+
 def build_tag_index(threads: list[dict], participants: dict | None = None,
-                    min_count: int = 2) -> dict:
+                    min_count: int = 2, places: set[str] | None = None) -> dict:
     """태그 입구용 색인.
 
     `min_count` 미만으로 쓰인 태그는 목록에서 빼고 수만 센다 — 314개 주제에
     한 번만 쓰인 태그가 850개다. 다 늘어놓으면 목록이 아니라 벽이 된다
     (검색으로는 여전히 찾을 수 있다).
+
+    지명·조직 이름은 `place` 로 표시한다. 사람 이름(`person`)과 같은 몫이다 —
+    '어디서 열렸나'는 보고서 본문이 말하고, 태그 구름은 무엇을 이야기했나를 위한
+    자리다. 표시만 하므로 검색으로는 그대로 찾힌다.
     """
     people = person_names(participants or {})
+    places = places or set()
     counts: Counter[str] = Counter()
     threads_of: dict[str, list[str]] = defaultdict(list)
     for th in threads:
@@ -245,6 +336,7 @@ def build_tag_index(threads: list[dict], participants: dict | None = None,
             "tag": name,
             "count": n,
             "person": name in people,
+            "place": fold(name) in places,
             "thread_ids": threads_of[name],
         })
     rows.sort(key=lambda r: (-r["count"], r["tag"]))

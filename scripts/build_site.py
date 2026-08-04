@@ -563,6 +563,14 @@ def build_data(
     if rolled:
         print("[태그] 넓은 태그 %d건 승격 (앞 5개: %s)"
               % (len(rolled), ", ".join("%s←%s" % r for r in rolled[:5])))
+    # 지명·조직 이름은 태그 구름에서 뺀다(검색으로는 그대로 찾힌다). 뺄 목록은
+    # 사람이 적은 표를 따르고, 표에 없는 후보만 알린다 — 기계가 정하면 이 방의
+    # 주제인 '장애인복지관'·'거주시설' 까지 사라진다.
+    places, not_places = taglib.load_places()
+    cands = taglib.place_candidates(threads_meta, places, not_places)
+    if cands:
+        print("[태그] 지명·조직 이름 후보 %d개 — config/tag_places.json 에 넣을지 보세요 "
+              "(앞 5개: %s)" % (len(cands), ", ".join(t for t, _ in cands[:5])))
     # 보조 분류 — 한 주제를 여러 분류에서 찾게 하는 곁길. 주 분류는 그대로 하나다.
     cat_ids = {c["id"] for c in topics["categories"]}
     for tmeta in threads_meta:
@@ -634,7 +642,8 @@ def build_data(
         "messages": out_messages,
         "threads": threads_meta,
         "digests": digests,
-        "tag_index": taglib.build_tag_index(threads_meta, participants),
+        "tag_index": taglib.build_tag_index(threads_meta, participants,
+                                            places=places),
         "interests": interestlib.build_interests(
             threads_meta, topics["categories"], hide_interests,
             taglib.person_names(participants),

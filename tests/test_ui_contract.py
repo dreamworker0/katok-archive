@@ -141,6 +141,22 @@ class TagPickContractTests(unittest.TestCase):
         self.assertIn("t.tags || t.keywords", block,
                       "카드 칩이 원본 keywords 로 되돌아갔습니다")
 
+    def test_cloud_leaves_out_people_and_places(self):
+        """태그 구름은 '무엇을 이야기했나' 의 자리다.
+
+        사람 이름과 지명·기관 이름은 구름에서 빼고 아래에 따로 모은다 — 이름으로
+        주제를 찾는 사람은 없고(참여자 필터가 그 몫이다), 1회짜리 지명이 구름을
+        채우면 정작 화제가 눈에 안 들어온다. 빼는 것이지 지우는 것이 아니므로
+        검색으로는 그대로 찾힌다.
+        """
+        block = self.app[self.app.index("function renderTags()"):][:900]
+        self.assertIn("!r.person && !r.place", block)
+        self.assertIn("r.place", block)
+        # 따로 모은 것도 화면에 있어야 한다 — 빼고 안 보여주면 사라진 것과 같다
+        later = self.app[self.app.index("function renderTags()"):][:6000]
+        self.assertIn("지명·기관 이름으로 붙은 태그", later)
+        self.assertIn("사람 이름으로 붙은 태그", later)
+
     def test_tag_fold_transliterates_whole_words_only(self):
         block = self.app[self.app.index("function tagFold(s)"):][:400]
         # 조각으로 끊어 낱말 단위로만 바꿔야 '프로젝트'가 망가지지 않는다

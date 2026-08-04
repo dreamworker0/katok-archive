@@ -56,6 +56,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from scripts import tags as taglib
 from scripts.topic_reports import (
     MAX_VERBATIM_CHARS as REPORT_RULES_MAX_QUOTE,
     REPORT_RULES,
@@ -66,6 +67,7 @@ from scripts.topic_reports import (
     place_context_anchors,
     sanitize_anchors,
     structure_gaps,
+    tag_rules,
     thin_reports,
 )
 
@@ -74,6 +76,7 @@ OUT = ROOT / "output"
 TOPICS = OUT / "topics.json"
 MESSAGES = OUT / "messages.jsonl"
 KNOWLEDGE = OUT / "knowledge.json"
+PARTICIPANTS = OUT / "participants.json"
 
 UNSORTED_RE = re.compile(r"^t-unsorted-\d{4}-\d{2}-\d{2}$")
 
@@ -116,6 +119,29 @@ def save_json(path: Path, data) -> None:
     path.write_text(
         json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+
+
+def tag_vocabulary() -> list[str]:
+    """보고서 프롬프트에 넣을 공통 태그 목록. 한 번 만들어 두고 다시 쓴다.
+
+    프롬프트를 만드는 길이 여럿이다(분류·빠진 보고서 채우기·다시 쓰기 네 가지).
+    인자로 물려 다니면 길마다 빠뜨릴 곳이 생기므로 여기서 한 번 읽는다. 파일이
+    없거나 깨져 있으면 빈 목록으로 둔다 — 어휘를 못 읽는 것이 분류를 막을 이유는
+    없고, tag_rules 가 그때는 고르라는 말을 하지 않는다.
+    """
+    if getattr(tag_vocabulary, "_cache", None) is None:
+        rows: list[tuple[str, int]] = []
+        try:
+            topics = load_json(TOPICS)
+            parts = load_json(PARTICIPANTS) if PARTICIPANTS.exists() else {}
+            places, _ = taglib.load_places()
+            threads = [t for t in topics.get("threads", [])
+                       if not UNSORTED_RE.match(str(t.get("id") or ""))]
+            rows = taglib.vocabulary(threads, parts, places)
+        except (OSError, ValueError, KeyError) as e:
+            print(f"  태그 어휘를 읽지 못했습니다({e}) — 어휘 없이 진행합니다.")
+        tag_vocabulary._cache = [name for name, _ in rows]
+    return tag_vocabulary._cache
 
 
 def read_messages(ids: set[str]) -> list[dict]:
@@ -180,10 +206,11 @@ def build_prompt(msgs: list[dict], categories: list[dict],
 - category 는 위 id 중 하나여야 합니다. 애매하면 'chat' 을 쓰되, 실제로 도구·모델·
   프로젝트·정책 이야기라면 그에 맞는 카테고리를 고르세요.
 - title 은 30자 이내의 명사구. summary 는 한 문장(80자 이내), 사람 이름을 주어로.
-- keywords 는 2~6개. 이 대화를 나중에 찾을 때 쓸 말(도구 이름, 개념, 결과물).
-  카테고리 이름을 그대로 넣지 마세요.
 - report 는 이 대화를 읽은 사람이 다시 읽지 않아도 되게 쓰는 **본문**입니다.
   원문보다 짧아야 합니다. 짧은 대화면 두세 문장으로 충분합니다.
+
+## 태그 규칙
+{tag_rules(tag_vocabulary())}
 
 ## 본문 규칙
 {REPORT_RULES}
@@ -648,9 +675,11 @@ def build_report_prompt(thread: dict, msgs: list[dict],
 {chr(10).join(lines)}
 {assets}
 ## 규칙
-- keywords 는 2~6개. 나중에 이 대화를 찾을 때 쓸 말(도구 이름, 개념, 결과물).
 - report 는 본문 산문. 사실만 쓰고, 대화에 없는 내용을 채우지 마세요.
 {length_rule}
+
+## 태그 규칙
+{tag_rules(tag_vocabulary())}
 
 {REPORT_RULES}
 

@@ -496,8 +496,14 @@
   }
 
   function renderTags() {
-    var rows = (TAGIDX.tags || []).filter(function (r) { return !r.person; });
-    var people = (TAGIDX.tags || []).filter(function (r) { return r.person; });
+    // 사람 이름과 지명·기관 이름은 구름에서 빼고 아래에 따로 모은다. 태그 구름은
+    // '무엇을 이야기했나' 의 자리다 — 누가·어디는 참여자 필터와 보고서 본문 몫이다.
+    // 기관 계정이 방에 있으면 그 이름은 참여자이면서 기관이다('○○복지관' 계정).
+    // 그럴 때는 사람 쪽이 아니라 지명·기관 쪽에 둔다 — 표에 적은 사람의 판단이
+    // 참여자 이름에서 자동으로 뽑은 것보다 낫다.
+    var rows = (TAGIDX.tags || []).filter(function (r) { return !r.person && !r.place; });
+    var people = (TAGIDX.tags || []).filter(function (r) { return r.person && !r.place; });
+    var places = (TAGIDX.tags || []).filter(function (r) { return r.place; });
     if (!rows.length) {
       el.view.innerHTML = emptyState("search", "아직 모인 태그가 없어요",
         "주제 보고서에 태그가 붙으면 이곳에 모입니다.");
@@ -557,6 +563,11 @@
       html.push('<div class="doc-section"><h4>👤 사람 이름으로 붙은 태그</h4>' +
         '<p class="doc-note">사람은 참여자 필터로 찾는 편이 정확합니다.</p>' +
         '<div class="tag-cloud small">' + people.map(chip).join("") + "</div></div>");
+    }
+    if (places.length) {
+      html.push('<div class="doc-section"><h4>📍 지명·기관 이름으로 붙은 태그</h4>' +
+        '<p class="doc-note">어디서 있었던 일인지는 보고서 본문이 말해 줍니다.</p>' +
+        '<div class="tag-cloud small">' + places.map(chip).join("") + "</div></div>");
     }
     el.view.innerHTML = html.join("");
 
