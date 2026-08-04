@@ -347,8 +347,29 @@ if ($requestsChanged) { $why += "멤버 요청 변경" }
 if ($classified -gt 0) { $why += "분류 $classified 건" }
 if ($stale) { $why += "뒤처진 발행본 따라잡기" }
 Say ("===== 일일 갱신 완료: {0} 발행 =====" -f ($why -join ', '))
-if ($added -gt 0) {
-    Say "주제 분류가 필요한 '미분류' 스레드가 생겼습니다 — 확인해 정리하세요."
+# 미분류가 남았는지는 세어 보고 말한다.
+#
+# 예전에는 '새 메시지가 있으면' 무조건 이 줄을 찍었다. 사람이 주 1회 재분류하던
+# 시절의 문구다. 5단계(주제 분류)가 파이프라인에 들어온 뒤로는 대부분의 날에 사실이
+# 아니다 — 실측 2026-08-04: 새 글 23건이 그 자리에서 네 주제로 분류됐는데도
+# '미분류가 생겼습니다' 가 찍혔다. 없는 일을 매일 찾게 만드는 줄은 진짜 경고까지
+# 같이 흘려보게 한다.
+#
+# 적재가 끝난 뒤에 보므로 발행 판단에는 영향이 없다. 이 확인이 실패해도 갱신은
+# 이미 끝났으니 경고만 남긴다.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try { $unsortedOut = & { python -m scripts.count_unsorted } 2>&1 }
+finally { $ErrorActionPreference = $prevEap }
+$unsorted = $null
+foreach ($l in $unsortedOut) {
+    if ($l -match 'UNSORTED=(\d+)') { $unsorted = [int]$Matches[1] }
+}
+if ($null -eq $unsorted) {
+    Say "미분류 스레드 수를 세지 못했습니다 (UNSORTED 표식 없음)." 'WARN'
+} elseif ($unsorted -gt 0) {
+    foreach ($l in $unsortedOut) { Say "    $l" }
+    Say "주제 분류가 필요한 '미분류' 스레드 $unsorted 개가 남아 있습니다 — 확인해 정리하세요."
 }
 
 # $lock 을 명시적으로 닫지 않는다. 위쪽 exit 경로가 여럿이라 한 군데서 닫아도

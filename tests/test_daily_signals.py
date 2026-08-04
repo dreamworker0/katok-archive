@@ -50,6 +50,51 @@ class SignalsAreAsciiTests(unittest.TestCase):
                 self.assertEqual(should_survive, mangled == text)
 
 
+class UnsortedIsCountedNotAssumedTests(unittest.TestCase):
+    """'미분류가 생겼습니다' 는 세어 보고 말해야 한다.
+
+    사람이 주 1회 재분류하던 시절에는 새 메시지가 있으면 곧 미분류였다. 5단계(주제
+    분류)가 파이프라인에 들어온 뒤로는 아니다 — 실측 2026-08-04: 새 글 23건이 그 자리
+    에서 네 주제로 분류됐는데도 이 줄이 찍혔다. 매일 없는 일을 찾게 만드는 줄은
+    진짜 경고까지 같이 흘려보게 한다.
+    """
+
+    COUNT = (ROOT / "scripts" / "count_unsorted.py").read_text(encoding="utf-8")
+
+    def test_counter_emits_an_ascii_marker(self):
+        self.assertIn('print("UNSORTED=%d" % len(unsorted_threads))', self.COUNT)
+
+    def test_marker_is_printed_on_both_paths(self):
+        # 0개인 날에 표식이 없으면 부르는 쪽은 '못 읽었다' 와 구분할 수 없다.
+        body = self.COUNT[self.COUNT.index("def main("):]
+        self.assertEqual(1, body.count('print("UNSORTED='),
+                         "표식은 분기마다가 아니라 한 곳에서 한 번만 낸다")
+        self.assertLess(body.index("미분류 스레드 없음"), body.index('print("UNSORTED='))
+
+    def test_runner_reads_the_marker(self):
+        self.assertIn("UNSORTED=(\\d+)", DAILY)
+
+    def test_runner_no_longer_warns_just_because_there_are_new_messages(self):
+        idx = DAILY.index("'미분류' 스레드")
+        block = DAILY[DAILY.index("$unsorted = $null"):idx]
+        self.assertIn("$unsorted -gt 0", block)
+        self.assertNotIn("if ($added -gt 0) {\n    Say \"주제 분류가 필요한", DAILY)
+
+    def test_the_check_cannot_break_a_finished_update(self):
+        # 적재가 끝난 뒤의 확인이다. Invoke-Step(실패하면 exit)을 쓰면 안 되고,
+        # 파이썬이 stderr 에 한 줄 쓰는 것으로 죽어서도 안 된다.
+        for line in DAILY.splitlines():
+            if "scripts.count_unsorted" in line:
+                self.assertNotIn("Invoke-Step", line)
+        idx = DAILY.index("scripts.count_unsorted")
+        block = DAILY[idx - 400:idx + 200]
+        self.assertIn("$ErrorActionPreference = 'Continue'", block)
+        self.assertIn("finally { $ErrorActionPreference = $prevEap }", block)
+        body = DAILY[DAILY.index("$ErrorActionPreference"):]
+        self.assertLess(body.index("Invoke-Step 'Firestore 적재'"),
+                        body.index("scripts.count_unsorted"))
+
+
 class FailSafeDirectionTests(unittest.TestCase):
     """표식을 못 읽었을 때 어느 쪽으로 기우는지."""
 

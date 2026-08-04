@@ -29,16 +29,19 @@ def main() -> int:
     topics = json.loads(TOPICS.read_text(encoding="utf-8"))
     unsorted_threads = collect(topics)
 
-    if not unsorted_threads:
+    if unsorted_threads:
+        total = sum(len(t.get("message_ids", [])) for t in unsorted_threads)
+        print("미분류 %d개 스레드, 메시지 %d건" % (len(unsorted_threads), total))
+        for t in unsorted_threads:
+            print("  %-24s %4d건  %s" % (t["id"], len(t.get("message_ids", [])), t.get("title", "")))
+        print()
+        print("정리 절차: docs/AUTOMATION.md '갱신 후 할 일 - 주 1회 재분류'")
+    else:
         print("미분류 스레드 없음 - 정리할 것이 없습니다.")
-        return 0
 
-    total = sum(len(t.get("message_ids", [])) for t in unsorted_threads)
-    print("미분류 %d개 스레드, 메시지 %d건" % (len(unsorted_threads), total))
-    for t in unsorted_threads:
-        print("  %-24s %4d건  %s" % (t["id"], len(t.get("message_ids", [])), t.get("title", "")))
-    print()
-    print("정리 절차: docs/AUTOMATION.md '갱신 후 할 일 - 주 1회 재분류'")
+    # 일일 갱신이 읽는 신호. ASCII 로 내는 이유는 위 한국어 줄이 cp949 왕복에서
+    # 깨지기 때문이다 — 깨진 글자는 -match 로 절대 잡히지 않는다(tests/test_daily_signals.py).
+    print("UNSORTED=%d" % len(unsorted_threads))
     return 0
 
 
