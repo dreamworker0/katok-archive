@@ -235,6 +235,32 @@ function Stop-Safely { param([string]$why)
     exit 1
 }
 
+# UIAutomation 의 BoundingRectangle 은 창이 최소화·숨김이면 좌표를 무한대(∞)로
+# 돌려준다. 그것을 [int] 로 바꾸면 형변환 오류가 나는데, 그 자리가 **로그 한 줄**이라
+# 진단 문구 때문에 그날 수집이 통째로 멈춘다.
+#
+#   실측 2026-08-12 10:59 — Cannot convert value "∞" to type "System.Int32"
+#   at kakao_export.ps1:688 → '내보내기 실패 (exit 1) — 중단합니다'
+#   11:01 재실행으로 살아났지만, 밤 자동 실행이었다면 그날이 빈다.
+#
+# 그래서 좌표는 늘 Format-Coord 로 찍고(못 읽으면 '?'), 좌표로 **계산하는** 자리에서는
+# Test-UsableRect 로 먼저 묻는다. 진단이 작업을 멈추게 해서는 안 된다.
+function Format-Coord { param([double]$Value = [double]::NaN)
+    if ([double]::IsNaN($Value) -or [double]::IsInfinity($Value)) { return '?' }
+    if ([Math]::Abs($Value) -gt [int]::MaxValue) { return '?' }
+    return [string][int]$Value
+}
+
+function Test-UsableRect { param($Rect)
+    if ($null -eq $Rect) { return $false }
+    foreach ($v in @($Rect.X, $Rect.Y, $Rect.Width, $Rect.Height)) {
+        if ($null -eq $v) { return $false }
+        $d = [double]$v
+        if ([double]::IsNaN($d) -or [double]::IsInfinity($d)) { return $false }
+    }
+    return ([double]$Rect.Width -gt 0 -and [double]$Rect.Height -gt 0)
+}
+
 function Get-RoomWindow {
     $root = [System.Windows.Automation.AutomationElement]::RootElement
     $cond = New-Object System.Windows.Automation.PropertyCondition(
@@ -416,10 +442,25 @@ function Open-RoomWindow {
         return $null
     }
     $lr = $list.Current.BoundingRectangle
+    if (-not (Test-UsableRect $lr)) {
+        # 목록 좌표로 스크롤·OCR 을 해야 하므로 못 읽으면 진행할 수 없다. 여기서
+        # 멈추지 않고 $null 을 돌려주면 부르는 쪽이 '목록을 못 찾았다' 로 이어받아
+        # 창을 다시 열어 본다 — 되살릴 수 있는 상태에서 그날을 버리지 않는다.
+        Write-Log ("  채팅 목록 좌표를 읽을 수 없습니다(x={0} w={1}) — 창이 숨어 있는 것 같습니다" -f `
+            (Format-Coord $lr.X), (Format-Coord $lr.Width)) 'WARN'
+        return $null
+    }
     $lh = [IntPtr]$list.Current.NativeWindowHandle
     $cx = [int]($lr.X + $lr.Width / 2)
     $mid = [int]($lr.Y + $lr.Height / 2)
-    Write-Log ("  채팅 목록: x={0} y={1} w={2} h={3}" -f [int]$lr.X, [int]$lr.Y, [int]$lr.Width, [int]$lr.Height)
+    # OCR 로 넘길 좌표는 가드를 지난 **여기서 한 번만** 정수로 바꾼다. 예전에는
+    # 세 군데에서 각각 [int]$lr.X 를 했고, 그 꼴이 남아 있으면 다음 사람이 가드
+    # 없는 자리에 같은 것을 또 쓴다.
+    $ocrX = [int]$lr.X; $ocrY = [int]$lr.Y
+    $ocrW = [int]$lr.Width; $ocrH = [int]$lr.Height
+    Write-Log ("  채팅 목록: x={0} y={1} w={2} h={3}" -f `
+        (Format-Coord $lr.X), (Format-Coord $lr.Y),
+        (Format-Coord $lr.Width), (Format-Coord $lr.Height))
 
     # 목록을 맨 위로 되돌린다 — 스크롤은 컨트롤에 메시지를 보내는 것이라 안전하다
     [Win32]::ScrollList($lh, 25, $false, $cx, $mid)
@@ -435,10 +476,10 @@ function Open-RoomWindow {
     for ($page = 0; $page -lt $MaxScrollPages; $page++) {
         # 그려지기 전에 캡처하면 몇 줄만 읽힌다(실측: 20줄이 나올 자리에서 1줄).
         # 줄 수가 터무니없이 적으면 한 번 더 읽는다.
-        $lines = Get-ScreenOcr -X ([int]$lr.X) -Y ([int]$lr.Y) -Width ([int]$lr.Width) -Height ([int]$lr.Height) -Scale 2
+        $lines = Get-ScreenOcr -X $ocrX -Y $ocrY -Width $ocrW -Height $ocrH -Scale 2
         if ($lines.Count -lt 5) {
             Start-Sleep -Milliseconds 800
-            $lines = Get-ScreenOcr -X ([int]$lr.X) -Y ([int]$lr.Y) -Width ([int]$lr.Width) -Height ([int]$lr.Height) -Scale 2
+            $lines = Get-ScreenOcr -X $ocrX -Y $ocrY -Width $ocrW -Height $ocrH -Scale 2
         }
         $pageBest = $null; $pageScore = 0.0
         foreach ($l in $lines) {
@@ -453,7 +494,7 @@ function Open-RoomWindow {
         $sig = ($lines | ForEach-Object { $_.text }) -join '|'
         [Win32]::ScrollList($lh, 4, $true, $cx, $mid)
         Start-Sleep -Milliseconds 700
-        $after = Get-ScreenOcr -X ([int]$lr.X) -Y ([int]$lr.Y) -Width ([int]$lr.Width) -Height ([int]$lr.Height) -Scale 2
+        $after = Get-ScreenOcr -X $ocrX -Y $ocrY -Width $ocrW -Height $ocrH -Scale 2
         if ((($after | ForEach-Object { $_.text }) -join '|') -eq $sig) {
             Write-Log "  목록 끝 — 더 훑을 화면이 없습니다"
             break
@@ -685,7 +726,14 @@ if ($null -eq $win) {
 }
 $h = [IntPtr]$win.Current.NativeWindowHandle
 $r = $win.Current.BoundingRectangle
-Write-Log "창 확인: '$($win.Current.Name)' (x=$([int]$r.X) y=$([int]$r.Y) w=$([int]$r.Width) h=$([int]$r.Height))"
+Write-Log ("창 확인: '$($win.Current.Name)' (x={0} y={1} w={2} h={3})" -f `
+    (Format-Coord $r.X), (Format-Coord $r.Y),
+    (Format-Coord $r.Width), (Format-Coord $r.Height))
+if (-not (Test-UsableRect $r)) {
+    # 여기서 멈추지 않는다 — 바로 아래 '최상단 확보' 가 창을 되살리고, 좌표는
+    # 쓰는 자리에서 다시 잰다. 지금 멈추면 되살릴 수 있는 상태에서 그날을 버린다.
+    Write-Log '창 좌표를 읽을 수 없습니다(최소화·숨김으로 보입니다) — 최상단 확보 뒤에 다시 잽니다' 'WARN'
+}
 
 # 2) 잔여 팝업 정리 — 남아 있으면 방 창이 포커스를 받지 못한다
 [void](Close-OwnedPopups -RoomHandle $h -When '시작 시')
@@ -725,6 +773,12 @@ $dlg = $null
 for ($att = 1; $att -le $maxTry; $att++) {
     # 창은 사이에 움직일 수 있다(사람이 끌거나, 카톡이 다시 그리거나) — 자리를 매번 다시 읽는다.
     $r = $win.Current.BoundingRectangle
+    # 여기서는 좌표로 **계산**하므로 못 읽으면 진행할 수 없다. 최상단 확보까지
+    # 거친 뒤에도 무한대라면 창이 되살아나지 않은 것이니, 형변환 오류 대신 무슨
+    # 일인지 적고 멈춘다 — 남은 화면이 사람에게 원인을 말해 준다.
+    if (-not (Test-UsableRect $r)) {
+        Stop-Safely "방 창의 좌표를 읽을 수 없습니다(최소화·숨김으로 보입니다). 카카오톡 방 창을 화면에 열어 둔 채로 다시 돌리세요."
+    }
     $ix = [int]($r.X + 60)
     $iy = [int]($r.Y + $r.Height - 145)
 

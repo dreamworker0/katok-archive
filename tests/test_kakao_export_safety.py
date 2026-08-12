@@ -290,5 +290,81 @@ class MenuIsNeverTouchedTests(unittest.TestCase):
                 self.assertIn(name, EXPORT)
 
 
+class DiagnosticsNeverStopTheRunTests(unittest.TestCase):
+    """진단 문구 때문에 그날 수집이 멈추면 안 된다.
+
+    실측 2026-08-12 10:59 — 창 좌표를 찍는 **로그 한 줄**에서 죽었다.
+
+        Cannot convert value "∞" to type "System.Int32"
+        at kakao_export.ps1:688  [int]$r.X
+        ERROR 카카오톡 대화 내보내기 실패 (exit 1) — 중단합니다.
+
+    UIAutomation 의 BoundingRectangle 은 창이 최소화·숨김이면 좌표를 무한대로
+    돌려주고, `[int]∞` 는 형변환 오류다. 11:01 재실행으로 살아났지만 밤 자동
+    실행이었다면 그날이 빈다(2026-08-02 에 실제로 그렇게 하루가 빠졌다).
+
+    형변환을 손으로 검증한 결과(PowerShell 5.1): `[int]∞` 는 RuntimeException,
+    `Format-Coord ∞` 는 '?', `Test-UsableRect` 는 무한대·0크기·null 에 모두 False.
+    여기서는 그 장치가 제자리에 있는지만 본다.
+    """
+
+    def test_safe_helpers_exist(self):
+        self.assertIn("function Format-Coord", EXPORT)
+        self.assertIn("function Test-UsableRect", EXPORT)
+
+    def test_infinity_and_nan_are_handled_not_cast(self):
+        for guard in ("[double]::IsNaN", "[double]::IsInfinity"):
+            with self.subTest(guard=guard):
+                self.assertIn(guard, EXPORT)
+
+    def test_every_rect_cast_is_behind_a_guard(self):
+        """좌표를 정수로 바꾸는 자리마다 그 앞에 `Test-UsableRect` 가 있어야 한다.
+
+        '쓰지 마라' 가 아니라 '가드 뒤에서' 가 계약이다 — 좌표는 결국 정수로
+        바꿔야 스크롤·클릭에 쓸 수 있고, 무한대만 걸러내면 된다. 이 시험을
+        '맨 형변환 금지' 로 적었을 때 목록 좌표(`$lr`)에서 실제로 같은 사고 자리
+        세 곳이 걸렸다(2026-08-12) — 규칙이 자리를 찾아 준 셈이다.
+
+        주석 줄은 뺀다. 왜 이렇게 하는지 설명하는 주석에 그 꼴이 들어 있다.
+        """
+        code = "\n".join(l for l in EXPORT.splitlines()
+                         if not l.lstrip().startswith("#"))
+        for m in re.finditer(r"\[int\]\$(\w+)\.(?:X|Y|Width|Height)\b", code):
+            var, at = m.group(1), m.start()
+            guard = code.find("Test-UsableRect $%s" % var)
+            with self.subTest(cast=m.group(0)):
+                self.assertNotEqual(-1, guard,
+                                    "$%s 에 Test-UsableRect 가 없다" % var)
+                self.assertLess(guard, at, "가드가 형변환보다 앞에 있어야 한다")
+
+    def test_coordinates_are_converted_once_per_rect(self):
+        """같은 좌표를 여러 자리에서 각각 바꾸지 않는다.
+
+        예전에는 `[int]$lr.X` 가 OCR 호출 세 곳에 흩어져 있었다. 그 꼴이 남아
+        있으면 다음 사람이 가드 없는 자리에 같은 것을 또 쓴다.
+        """
+        code = "\n".join(l for l in EXPORT.splitlines()
+                         if not l.lstrip().startswith("#"))
+        for var in set(re.findall(r"\[int\]\$(\w+)\.(?:X|Y|Width|Height)\b", code)):
+            n = len(re.findall(r"\[int\]\$%s\.X\b" % var, code))
+            with self.subTest(var=var):
+                self.assertLessEqual(n, 1, "$%s.X 를 %d 군데서 바꾼다" % (var, n))
+
+    def test_the_window_log_line_uses_the_safe_formatter(self):
+        line = next(l for l in EXPORT.splitlines() if "창 확인:" in l)
+        self.assertIn("{0}", line, "좌표를 직접 끼워 넣지 말고 서식으로 넘긴다")
+        self.assertNotIn("[int]", line)
+
+    def test_the_click_coordinates_are_guarded_before_use(self):
+        # 좌표로 계산하기 전에 쓸 수 있는 값인지 먼저 묻는다.
+        guard = EXPORT.index("Test-UsableRect $r")
+        use = EXPORT.index("$ix = [int]($r.X + 60)")
+        self.assertLess(guard, use, "가드가 계산보다 앞에 있어야 한다")
+
+    def test_an_unusable_rect_stops_with_a_readable_reason(self):
+        # 형변환 오류가 아니라 사람이 읽을 문장으로 멈춘다.
+        self.assertIn("좌표를 읽을 수 없습니다", EXPORT)
+
+
 if __name__ == "__main__":
     unittest.main()
