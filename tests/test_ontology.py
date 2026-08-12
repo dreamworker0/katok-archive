@@ -281,6 +281,42 @@ class DigestNodeLinkTests(unittest.TestCase):
         self.assertEqual(["t-1"], app["subject_ids"], "공백 차이로 갈리면 표가 함정이 된다")
 
 
+class CategoryGroupTests(unittest.TestCase):
+    """분류 12개의 상위 묶음. 분류가 평평해서 얇은 표본이 묻혔다."""
+
+    def test_no_category_belongs_to_two_groups(self):
+        seen: dict[str, str] = {}
+        for g in ontology.CATEGORY_GROUPS:
+            for c in g["categories"]:
+                self.assertNotIn(c, seen,
+                                 "'%s' 가 %s 와 %s 두 묶음에 있습니다"
+                                 % (c, seen.get(c), g["id"]))
+                seen[c] = g["id"]
+
+    def test_every_group_has_a_label_and_members(self):
+        for g in ontology.CATEGORY_GROUPS:
+            self.assertTrue(g["label"].strip(), g["id"])
+            self.assertTrue(g["categories"], g["id"])
+            self.assertEqual(g["label"], ontology.group_label(g["id"]))
+
+    def test_chat_is_deliberately_ungrouped(self):
+        """미분류의 임시 자리라서 '아직 안 정해졌다'는 뜻이다.
+
+        `build_site.sync_person_nodes` 가 chat 을 대표 분류로 쓰지 않는 것과 같은
+        이유고, 잡담이 누군가의 '관심 분야'로 올라오면 화면이 우스워진다.
+        """
+        self.assertIsNone(ontology.group_of("chat"))
+        self.assertIn("chat", ontology.PROVISIONAL_CATEGORIES)
+
+    def test_an_unknown_category_has_no_group(self):
+        self.assertIsNone(ontology.group_of("does-not-exist"))
+        self.assertIsNone(ontology.group_of(None))
+
+    def test_group_label_falls_back_to_the_id(self):
+        # 라벨을 못 찾아도 빈칸을 내지 않는다 — 화면에 빈 칩이 서는 것보다 낫다.
+        self.assertEqual("group:없음", ontology.group_label("group:없음"))
+
+
 class PromptRuleTests(unittest.TestCase):
     """프롬프트가 규칙을 옮겨 적지 않는다.
 

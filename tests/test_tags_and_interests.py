@@ -210,6 +210,123 @@ class InterestTests(unittest.TestCase):
         out = interests.build_interests(rows, CATEGORIES)
         self.assertNotIn("잠깐", [p["nickname"] for p in out["people"]])
 
+    def test_every_field_says_which_level_it_came_from(self):
+        out = interests.build_interests(self._threads(), CATEGORIES)
+        for p in out["people"]:
+            for f in p["fields"]:
+                self.assertEqual("category", f["level"])
+
+
+class CategoryGroupFallbackTests(unittest.TestCase):
+    """분류로 아무것도 안 나온 사람만 상위 묶음으로 한 번 더 본다.
+
+    분류가 평평해서 주제 3~5개짜리 참여자는 12분면에서 표본이 너무 얇다 — 실측
+    2026-08-12 에 32명 중 5명이 관심 분야가 0개였다. 'AI 코딩 도구' 1건 +
+    'AI 모델' 1건은 분류로는 각각 1건이라 묻히지만 묶으면 2건이 된다.
+    """
+
+    CATS = CATEGORIES + [{"id": "ai-models", "label": "AI 모델"}]
+    GROUPS = {"ai-tools": "group:ai", "ai-models": "group:ai",
+              "projects": "group:building"}
+    LABELS = {"group:ai": "AI 도구·모델", "group:building": "만들기·기술"}
+
+    def _rows(self):
+        """방은 프로젝트 이야기가 많다. '새내기' 는 AI 쪽에 1건씩 흩어져 있다.
+
+        김종원은 프로젝트에 몰려 있어 분류 층에서 이미 분야가 나온다 — 묶음이
+        그것을 덮지 않는다는 것을 볼 상대다. AI 쪽은 '고수' 가 채운다.
+        """
+        rows = [{"id": "p%d" % i, "category": "projects",
+                 "participants": ["김종원"], "tags": ["공통태그"]} for i in range(6)]
+        rows += [{"id": "q%d" % i, "category": "projects",
+                  "participants": ["고수"], "tags": ["공통태그"]} for i in range(2)]
+        rows += [{"id": "x%d" % i, "category": "ai-tools",
+                  "participants": ["고수"], "tags": ["공통태그"]} for i in range(2)]
+        rows += [{"id": "y%d" % i, "category": "ai-models",
+                  "participants": ["고수"], "tags": ["공통태그"]} for i in range(2)]
+        rows += [
+            {"id": "a1", "category": "ai-tools", "participants": ["새내기"],
+             "tags": ["커서"]},
+            {"id": "a2", "category": "ai-models", "participants": ["새내기"],
+             "tags": ["오퍼스"]},
+            {"id": "p9", "category": "projects", "participants": ["새내기"],
+             "tags": ["공통태그"]},
+        ]
+        return rows
+
+    def _out(self, **kw):
+        return interests.build_interests(self._rows(), self.CATS, **kw)
+
+    def rookie(self, out):
+        return [p for p in out["people"] if p["nickname"] == "새내기"][0]
+
+    def test_without_groups_the_thin_person_gets_nothing(self):
+        self.assertEqual([], self.rookie(self._out())["fields"],
+                         "12분면에서는 1건씩이라 묻힌다 — 이것이 실측 5명이다")
+
+    def test_the_group_fills_it_in(self):
+        out = self._out(group_of=self.GROUPS.get,
+                        group_label=lambda g: self.LABELS.get(g, g))
+        fields = self.rookie(out)["fields"]
+        self.assertEqual(["group:ai"], [f["category"] for f in fields])
+        self.assertEqual("AI 도구·모델", fields[0]["label"])
+        self.assertEqual(2, fields[0]["count"])
+        self.assertEqual("group", fields[0]["level"])
+
+    def test_a_person_who_already_has_a_field_is_left_alone(self):
+        """묶음은 채우는 것이 아니라 대신하는 것이다.
+
+        섞으면 '프로젝트·결과물' 옆에 '만들기·기술' 이 나란히 서서 같은 말을 두 번 한다.
+        """
+        out = self._out(group_of=self.GROUPS.get,
+                        group_label=lambda g: self.LABELS.get(g, g))
+        kim = [p for p in out["people"] if p["nickname"] == "김종원"][0]
+        self.assertEqual(["category"], sorted({f["level"] for f in kim["fields"]}))
+
+    def _with_chat(self, **kw):
+        rows = self._rows()
+        rows += [{"id": "c%d" % i, "category": "chat", "participants": ["새내기"],
+                  "tags": []} for i in range(8)]
+        return interests.build_interests(
+            rows, self.CATS + [{"id": "chat", "label": "일상·잡담"}], **kw)
+
+    def test_chat_never_becomes_an_interest(self):
+        """'일상·잡담' 을 관심 분야로 내지 않는다.
+
+        실측 2026-08-12: 이 걸림이 없을 때 발행본에서 세 사람이 '일상·잡담' 을
+        관심 분야로 달고 있었고 한 명은 그게 1순위였다. 사람을 평가하는 화면처럼
+        읽히지 않게 공들여 만든 자리다.
+        """
+        out = self._with_chat(skip_categories={"chat"})
+        self.assertEqual([], [f for p in out["people"] for f in p["fields"]
+                              if f["category"] == "chat"])
+
+    def test_without_the_guard_chat_would_show_up(self):
+        # 걸림이 실제로 무언가를 막고 있다는 것을 못박는다.
+        out = self._with_chat()
+        self.assertIn("chat", [f["category"] for f in self.rookie(out)["fields"]])
+
+    def test_the_group_layer_ignores_chat_on_both_sides(self):
+        """묶음 층에서 chat 은 개인과 방 양쪽 분모에서 빠진다.
+
+        한쪽만 빼면 비율이 어긋나 lift 가 부풀거나 쪼그라든다.
+        """
+        out = self._with_chat(group_of=self.GROUPS.get,
+                              group_label=lambda g: self.LABELS.get(g, g),
+                              skip_categories={"chat"})
+        fields = self.rookie(out)["fields"]
+        self.assertEqual(["group:ai"], [f["category"] for f in fields],
+                         "잡담 8건이 묶음 분모에 남으면 AI 쪽 비율이 눌려 사라진다")
+
+    def test_skipping_a_category_does_not_move_other_lifts(self):
+        # 잡담을 안 내는 것이 남의 관심 분야를 바꿀 이유는 없다 — 분모는 그대로다.
+        plain = {p["nickname"]: [(f["category"], f["lift"]) for f in p["fields"]]
+                 for p in self._with_chat()["people"]}
+        guarded = {p["nickname"]: [(f["category"], f["lift"]) for f in p["fields"]]
+                   for p in self._with_chat(skip_categories={"chat"})["people"]}
+        for nick, rows in guarded.items():
+            self.assertEqual([r for r in plain[nick] if r[0] != "chat"], rows, nick)
+
 
 class BackfillTests(unittest.TestCase):
     """제목이 곧 그 화제인데 태그에 없으면 채운다."""

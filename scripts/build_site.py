@@ -689,6 +689,9 @@ def build_data(
         "interests": interestlib.build_interests(
             threads_meta, topics["categories"], hide_interests,
             taglib.person_names(participants),
+            # 분류 12개로 아무것도 안 나온 사람은 상위 묶음으로 한 번 더 본다.
+            ontology.group_of, ontology.group_label,
+            ontology.PROVISIONAL_CATEGORIES,
         ),
         "knowledge": {
             "nodes": knowledge.get("nodes", []),

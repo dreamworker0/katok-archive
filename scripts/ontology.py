@@ -68,6 +68,47 @@ EDGE_TYPES = [
 
 _EDGE_BY_ID = {e["id"]: e for e in EDGE_TYPES}
 
+# 분류 12개의 상위 묶음. 분류는 평평해서 'AI 코딩 도구'·'AI 모델' 을 한 덩어리로 볼
+# 방법이 없었다. 사람별 관심 분야가 특히 그 때문에 비었다 — 주제 3~5개짜리 참여자는
+# 12분면에서 표본이 너무 얇아, 실측 2026-08-12 에 32명 중 5명이 관심 분야가 0개였다.
+#
+# `chat`(일상·잡담)은 일부러 어느 묶음에도 넣지 않는다 — 아래 참고.
+CATEGORY_GROUPS = [
+    {"id": "group:building", "label": "만들기·기술",
+     "categories": ["projects", "hwp", "infra"]},
+    {"id": "group:ai", "label": "AI 도구·모델",
+     "categories": ["ai-tools", "ai-models"]},
+    {"id": "group:practice", "label": "실천·제도",
+     "categories": ["welfare-practice", "governance"]},
+    {"id": "group:community", "label": "모임·나눔",
+     "categories": ["events", "members", "community", "news-articles"]},
+]
+
+# 분류가 아직 정해지지 않은 자리. 빠뜨린 것과 구분하려고 적어 둔다 —
+# `test_every_category_belongs_to_a_group` 이 이 목록만 예외로 봐준다.
+#
+# 두 곳에서 쓰인다. 상위 묶음에 넣지 않고(`group_of` 가 None), 사람별 **관심 분야**
+# 로도 내지 않는다. 이유가 하나다 — `chat` 은 '아직 안 정해졌다'는 뜻이어서 그 사람이
+# 무엇에 관심이 있는지 말해 주지 않는다. `build_site.sync_person_nodes` 가 chat 을
+# 대표 분류로 쓰지 않는 것과 같은 판단이다.
+#
+# 실측 2026-08-12: 이 걸림이 없을 때 발행본에서 세 사람이 '일상·잡담' 을 관심 분야로
+# 달고 있었다(한 명은 lift 3.04 로 1순위였다). 사람을 평가하는 화면처럼 읽히지 않게
+# 공들여 만든 자리에 그 말이 서면 안 된다.
+PROVISIONAL_CATEGORIES = {"chat"}
+
+_GROUP_OF = {c: g["id"] for g in CATEGORY_GROUPS for c in g["categories"]}
+_GROUP_LABEL = {g["id"]: g["label"] for g in CATEGORY_GROUPS}
+
+
+def group_of(category: str | None) -> str | None:
+    """그 분류가 속한 묶음 id. 묶음이 없으면 None."""
+    return _GROUP_OF.get(category or "")
+
+
+def group_label(group_id: str | None) -> str:
+    return _GROUP_LABEL.get(group_id or "", group_id or "")
+
 
 def node_type_ids() -> set[str]:
     return {t["id"] for t in NODE_TYPES}

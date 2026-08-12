@@ -25,13 +25,65 @@ MAX_TOPICS = 6
 MAX_FIELDS = 3
 
 
+def _lift_fields(rows: list[dict], room_count: Counter, room_total: int,
+                 bucket_of, label_of, level: str,
+                 skip: set[str] | None = None) -> list[dict]:
+    """참여 분포를 방 평균과 견줘 '유난히 많이 이야기한 칸'만 남긴다.
+
+    `bucket_of` 가 칸을 정한다 — 분류 그대로일 수도 있고 상위 묶음일 수도 있다.
+    두 층이 같은 계산을 봐야 하므로 함수 하나만 둔다.
+
+    None 을 돌려주는 칸(묶음 없는 분류)은 분모에서도 빠진다. 개인과 방이 같은
+    잣대로 세어야 비율을 견줄 수 있다.
+
+    `skip` 은 **결과에서만** 뺀다. 분모는 그대로 두므로 다른 칸의 lift 가 흔들리지
+    않는다 — 잡담을 안 내는 것이 남의 관심 분야를 바꿀 이유는 없다.
+    """
+    mine: Counter[str] = Counter()
+    for r in rows:
+        b = bucket_of(r["category"])
+        if b:
+            mine[b] += 1
+    mine_total = sum(mine.values()) or 1
+
+    out = []
+    for key, n in mine.items():
+        if n < 2 or key in (skip or set()):
+            continue
+        base = room_count.get(key, 0) / (room_total or 1)
+        if not base:
+            continue
+        lift = (n / mine_total) / base
+        if lift < 1.2:
+            continue
+        out.append({"category": key, "label": label_of(key), "count": n,
+                    "lift": round(lift, 2), "level": level})
+    out.sort(key=lambda f: (-f["lift"], -f["count"]))
+    return out
+
+
 def build_interests(threads: list[dict], categories: list[dict],
                     hidden: set[str] | None = None,
-                    person_tags: set[str] | None = None) -> dict:
+                    person_tags: set[str] | None = None,
+                    group_of=None, group_label=None,
+                    skip_categories: set[str] | None = None) -> dict:
     """{"people": [...], "hidden_count": n} 를 돌려준다.
 
     `person_tags` 로 준 사람 이름 태그는 관심 화제에서 뺀다 — 자기 이름이
     '내 관심사'로 올라오면(실측: 김종원·오세라) 화면이 우스워진다.
+
+    `group_of`·`group_label` 을 주면 분류 12개로 아무것도 안 나온 사람에게
+    **상위 묶음**으로 한 번 더 계산한다. 분류가 평평해서 주제 3~5개짜리 참여자는
+    12분면에서 표본이 너무 얇다 — 실측 2026-08-12 에 32명 중 5명이 관심 분야가
+    0개였다. 'AI 코딩 도구' 1건 + 'AI 모델' 1건은 분류로는 각각 1건이라 묻히지만
+    묶으면 'AI 도구·모델' 2건이 된다.
+
+    묶음은 **채우는 것이 아니라 대신하는 것**이다. 둘을 섞으면 '프로젝트·결과물'
+    옆에 '만들기·기술' 이 나란히 서서 같은 말을 두 번 한다.
+
+    `skip_categories` 에 적은 분류는 관심 분야로 내지 않는다 — 실측 2026-08-12 에
+    세 사람이 '일상·잡담' 을 관심 분야로 달고 있었다. 자세한 이유는
+    `ontology.PROVISIONAL_CATEGORIES` 설명 참고.
     """
     hidden = {h.strip() for h in (hidden or set()) if h and h.strip()}
     person_tags = person_tags or set()
@@ -47,6 +99,15 @@ def build_interests(threads: list[dict], categories: list[dict],
         room_cat[t["category"]] += 1
     room_total = sum(room_cat.values()) or 1
 
+    # 묶음 쪽 잣대. 묶음 없는 분류(chat)는 여기서 빠지므로 분모도 그만큼 작다.
+    room_group: Counter[str] = Counter()
+    if group_of:
+        for t in threads:
+            g = group_of(t["category"])
+            if g:
+                room_group[g] += 1
+    group_total = sum(room_group.values()) or 1
+
     # 방 전체에서 그 태그가 붙은 주제의 비율. 개인 비율과 견줄 잣대다.
     room_tag: Counter[str] = Counter()
     for t in threads:
@@ -59,18 +120,13 @@ def build_interests(threads: list[dict], categories: list[dict],
         if nick in hidden or len(rows) < MIN_THREADS:
             continue
 
-        mine_cat = Counter(r["category"] for r in rows)
-        mine_total = sum(mine_cat.values()) or 1
-        fields = []
-        for cid, n in mine_cat.items():
-            if n < 2:
-                continue
-            lift = (n / mine_total) / (room_cat[cid] / room_total)
-            if lift < 1.2:
-                continue
-            fields.append({"category": cid, "label": label_of.get(cid, cid),
-                           "count": n, "lift": round(lift, 2)})
-        fields.sort(key=lambda f: (-f["lift"], -f["count"]))
+        fields = _lift_fields(rows, room_cat, room_total, lambda c: c,
+                              lambda c: label_of.get(c, c), "category",
+                              skip_categories)
+        # 분류로 아무것도 안 나온 사람만 묶음으로 한 번 더 본다.
+        if not fields and group_of:
+            fields = _lift_fields(rows, room_group, group_total, group_of,
+                                  group_label or (lambda g: g), "group")
 
         tf = Counter(tg for r in rows for tg in (r.get("tags") or [])
                      if tg not in person_tags)

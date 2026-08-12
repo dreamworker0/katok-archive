@@ -184,6 +184,26 @@ class KnowledgeTest(unittest.TestCase):
         for n in self.knowledge["nodes"]:
             self.assertIn(n["type"], ontology.node_type_ids(), n["id"])
 
+    def test_every_category_belongs_to_a_group(self):
+        """분류를 새로 만들고 묶음에 넣는 것을 잊으면 여기서 걸린다.
+
+        빠뜨리면 그 분류의 대화는 상위 묶음 계산에서 조용히 사라진다 —
+        사람별 관심 분야가 그만큼 덜 나오는데 화면으로는 알 수 없다.
+        일부러 안 넣은 것은 `ontology.PROVISIONAL_CATEGORIES` 에 적어 둔다.
+        """
+        from scripts import ontology
+        missing = [c["id"] for c in self.topics["categories"]
+                   if not ontology.group_of(c["id"])
+                   and c["id"] not in ontology.PROVISIONAL_CATEGORIES]
+        self.assertEqual([], missing, "묶음 없는 분류")
+
+    def test_no_group_names_a_category_that_does_not_exist(self):
+        from scripts import ontology
+        ids = {c["id"] for c in self.topics["categories"]}
+        for g in ontology.CATEGORY_GROUPS:
+            for c in g["categories"]:
+                self.assertIn(c, ids, "%s 가 없는 분류 '%s' 를 가리킵니다" % (g["id"], c))
+
     def test_every_edge_holds_its_shape(self):
         """관계마다 정의역·치역이 있고, 원장이 그것을 지킨다.
 
