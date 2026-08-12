@@ -37,6 +37,14 @@
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
+from scripts import tags as taglib
+
+ROOT = Path(__file__).resolve().parent.parent
+NODE_TAGS_PATH = ROOT / "config" / "node_tags.json"
+
 # 화면의 걸러내기 단추는 좁아서 `short`, 노드 패널은 `label` 을 쓴다. 라벨을 두 벌
 # 두는 대신 한 노드 종류에 두 이름을 준다 — 갈라지지 않는다.
 NODE_TYPES = [
@@ -177,6 +185,62 @@ def log(report: dict) -> None:
         print("[관계망] 뜻을 정할 수 없어 그대로 둔 관계 %d건 — 사람이 볼 일입니다: %s"
               % (len(report["invalid"]),
                  ", ".join("%s -%s-> %s" % x for x in report["invalid"][:5])))
+
+
+def load_node_tags(path: Path | None = None) -> dict[str, list[str]]:
+    """`config/node_tags.json` → {노드 id: 그 노드를 뜻하는 태그들}.
+
+    관계망 노드와 태그는 같은 것을 두 벌로 관리한다 — 태그 '안티그래비티' 와
+    `tool:antigravity` 는 같은 것인데 서로를 모른다. 그래서 화면은 **글자로 다시**
+    잇는다(`build_site.is_subject`). 이름이 서술형인 결과물은 그 방법으로 못 이어져
+    '다룬 주제' 가 0개가 된다 — 실측 2026-08-12 에 앱 78개 중 38개.
+
+    표가 없어도 돌아간다. 그때는 예전처럼 이름 글자로만 잇는다.
+    """
+    p = path or NODE_TAGS_PATH
+    if not p.exists():
+        return {}
+    raw = json.loads(p.read_text(encoding="utf-8")).get("node_tags") or {}
+    out: dict[str, list[str]] = {}
+    for node_id, names in raw.items():
+        node_id = (node_id or "").strip()
+        keep = [str(n).strip() for n in (names or []) if str(n).strip()]
+        if node_id and keep:
+            out[node_id] = keep
+    return out
+
+
+def node_tag_candidates(nodes: list[dict], threads: list[dict],
+                        table: dict[str, list[str]] | None = None,
+                        types: tuple[str, ...] = ("app",), min_len: int = 3
+                        ) -> list[tuple[str, str, list[str]]]:
+    """표에 아직 없고 이름으로도 안 이어지는 노드. (노드 id, 라벨, 후보 태그들).
+
+    후보는 라벨과 태그의 fold 가 한쪽을 품을 때 내놓고, 긴 것부터 보여준다 —
+    긴 쪽이 그 물건의 이름일 확률이 높고, 짧은 것은 일반 도구명이기 쉽다.
+    **고르는 것은 사람이다.** `place_candidates` 와 같은 몫이다.
+    """
+    table = table or {}
+    tag_names: dict[str, str] = {}
+    for t in threads:
+        for tg in t.get("tags") or []:
+            key = taglib.fold(tg)
+            if len(key) >= min_len:
+                tag_names.setdefault(key, tg)
+
+    rows = []
+    for n in nodes:
+        if n.get("type") not in types or n["id"] in table:
+            continue
+        key = taglib.fold(n.get("label") or "")
+        if len(key) < min_len or key in tag_names:
+            continue        # 이름이 곧 태그면 예전 방법으로 이미 이어진다
+        cand = [name for k, name in tag_names.items() if k in key or key in k]
+        if cand:
+            cand.sort(key=lambda c: (-len(taglib.fold(c)), c))
+            rows.append((n["id"], n.get("label") or "", cand[:3]))
+    rows.sort(key=lambda r: r[0])
+    return rows
 
 
 def prompt_rules() -> str:

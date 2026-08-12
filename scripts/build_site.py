@@ -68,10 +68,12 @@ def build_digests(
     topics: dict,
     knowledge: dict,
     digest_prose: dict,
+    node_tags: dict[str, list[str]] | None = None,
 ) -> dict:
     """카테고리별 지식 문서를 조립한다: 요지 산문(digest_prose) + 파생 리소스
     (주요 앱·공유 링크·활발한 참여자·소속 스레드)."""
     prose = digest_prose.get("digests", {})
+    node_tags = node_tags or {}
 
     # 앱 → 그 앱이 나온 주제. 예전에는 화면에서 query 로 원문을 검색했는데,
     # 원문 발행을 멈추면서 검색할 대상이 사라져 버튼이 빈 목록으로 갔다.
@@ -123,11 +125,30 @@ def build_digests(
             return True
         return key in taglib.fold(t.get("title") or "")
 
+    def tag_linked(node_id: str) -> list[str]:
+        """`config/node_tags.json` 이 이 노드와 같다고 적어 둔 태그를 가진 주제들.
+
+        글자로 짐작하는 것이 아니라 **사람이 짝지어 둔 것**이므로 곧바로
+        '다룬 주제' 다. 이름이 서술형인 결과물('AI 토론 앱')이 제 주제를 찾는
+        유일한 길이고, 원문에 이름이 한 번도 안 나오는 노드도 이 길로 살아난다.
+        """
+        keys = {taglib.fold(t) for t in (node_tags.get(node_id) or [])}
+        if not keys:
+            return []
+        return [t["id"] for t in threads_meta
+                if any(taglib.fold(tg) in keys for tg in (t.get("tags") or []))]
+
     apps_by_cat: dict[str, list] = {}
     for n in knowledge.get("nodes", []):
         if n.get("type") == "app":
-            ids = threads_matching(n.get("query") or "", n["label"])
-            subject = [tid for tid in ids if is_subject(tid, n["label"])]
+            linked = tag_linked(n["id"])
+            seen_linked = set(linked)
+            # 표로 이은 것을 앞에 둔다 — 가장 확실한 근거다.
+            ids = linked + [tid for tid in threads_matching(n.get("query") or "",
+                                                            n["label"])
+                            if tid not in seen_linked]
+            subject = [tid for tid in ids
+                       if tid in seen_linked or is_subject(tid, n["label"])]
             apps_by_cat.setdefault(n["category"], []).append({
                 "label": n["label"],
                 "maker": n.get("maker"),
@@ -638,8 +659,17 @@ def build_data(
     if stale:
         print("[관계망] 원문에 한 번도 안 나오는 노드 %d개: %s"
               % (len(stale), ", ".join(stale[:12])))
+    # 관계망 노드와 태그를 짝지어 둔 표. 없으면 예전처럼 이름 글자로만 잇는다.
+    node_tags = ontology.load_node_tags()
+    node_cands = ontology.node_tag_candidates(
+        knowledge.get("nodes", []), threads_meta, node_tags)
+    if node_cands:
+        print("[관계망] 이름으로 주제를 못 찾는 노드 %d개 — config/node_tags.json 에 "
+              "짝지어 주세요 (앞 4개: %s)"
+              % (len(node_cands),
+                 "; ".join("%s←%s" % (nid, "|".join(c)) for nid, _, c in node_cands[:4])))
     digests = build_digests(
-        out_messages, threads_meta, topics, knowledge, digest_prose or {}
+        out_messages, threads_meta, topics, knowledge, digest_prose or {}, node_tags
     )
 
     return {

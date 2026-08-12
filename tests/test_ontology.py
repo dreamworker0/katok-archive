@@ -11,6 +11,9 @@
 """
 from __future__ import annotations
 
+import json
+import pathlib
+import tempfile
 import unittest
 
 from scripts import ontology
@@ -154,6 +157,128 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(before, k["edges"])
         self.assertEqual(([], [], []),
                          (second["repaired"], second["dropped"], second["invalid"]))
+
+
+class NodeTagTests(unittest.TestCase):
+    """관계망 노드와 태그가 같은 것을 가리킬 때 짝지어 둔다.
+
+    '주요 앱' 의 '다룬 주제' 판정이 이름 글자로 되어 있어서, 이름이 서술형인
+    결과물은 어느 태그·제목과도 안 맞아 다룬 주제가 0개였다 — 실측 2026-08-12 에
+    앱 78개 중 38개, 그중 11개는 아무 주제도 없어 눌러도 빈 화면이었다.
+
+    자동으로 잇지 않는다. 후보를 뽑아 보면 38개 전부에 후보가 나오지만
+    '○○○ 깃허브 개인 사이트 → 깃허브' 처럼 일반 도구명이 섞여, 그것으로 이으면
+    깃허브 이야기 전부가 그 사이트를 다룬 주제가 된다.
+    """
+
+    THREADS = [
+        {"id": "t-1", "title": "채용 허브 만들었다", "tags": ["job-hub", "앱 제작"]},
+        {"id": "t-2", "title": "깃허브 액션 이야기", "tags": ["깃허브"]},
+        {"id": "t-3", "title": "마인드맵 협업", "tags": ["마인드맵"]},
+    ]
+    NODES = [
+        {"id": "app:job-hub", "type": "app", "label": "job-hub 채용공고 허브",
+         "category": "projects"},
+        {"id": "app:jsh-site", "type": "app", "label": "누군가의 깃허브 개인 사이트",
+         "category": "projects"},
+        {"id": "app:mindmap", "type": "app", "label": "마인드맵", "category": "projects"},
+        {"id": "tool:claude", "type": "tool", "label": "클로드", "category": "ai-tools"},
+    ]
+
+    def _table(self, raw):
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d) / "node_tags.json"
+            p.write_text(json.dumps({"node_tags": raw}, ensure_ascii=False),
+                         encoding="utf-8")
+            return ontology.load_node_tags(p)
+
+    def test_missing_table_is_not_an_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual({}, ontology.load_node_tags(pathlib.Path(d) / "없다.json"))
+
+    def test_blank_rows_are_dropped(self):
+        table = self._table({"app:x": ["", "  "], "  ": ["태그"], "app:y": ["태그"]})
+        self.assertEqual({"app:y": ["태그"]}, table)
+
+    def test_a_node_already_in_the_table_is_not_a_candidate(self):
+        rows = ontology.node_tag_candidates(
+            self.NODES, self.THREADS, {"app:job-hub": ["job-hub"]})
+        self.assertNotIn("app:job-hub", [r[0] for r in rows])
+
+    def test_a_node_whose_name_is_the_tag_is_not_a_candidate(self):
+        # '마인드맵' 은 태그와 이름이 같아 예전 방법으로 이미 이어진다.
+        rows = ontology.node_tag_candidates(self.NODES, self.THREADS, {})
+        self.assertNotIn("app:mindmap", [r[0] for r in rows])
+
+    def test_only_the_asked_types_are_offered(self):
+        # '주요 앱' 목록이 app 노드만 쓰므로 도구는 후보로 내지 않는다.
+        rows = ontology.node_tag_candidates(self.NODES, self.THREADS, {})
+        self.assertEqual([], [r for r in rows if r[0].startswith("tool:")])
+
+    def test_the_generic_candidate_is_offered_not_applied(self):
+        """일반 도구명도 후보로는 보여준다 — 고르는 것은 사람이다.
+
+        기계가 미리 걸러 두면 그 판단이 코드에 숨고, 사람은 무엇이 빠졌는지 모른다.
+        `place_candidates` 가 '장애인복지관' 을 후보로 내놓는 것과 같은 이유다.
+        """
+        rows = ontology.node_tag_candidates(self.NODES, self.THREADS, {})
+        cand = dict((nid, c) for nid, _, c in rows)
+        self.assertIn("깃허브", cand.get("app:jsh-site", []))
+
+    def test_longer_candidates_come_first(self):
+        threads = [{"id": "t-1", "tags": ["근태관리", "NFC 근태 관리"]}]
+        nodes = [{"id": "app:nfc", "type": "app", "label": "NFC 근태 관리 앱",
+                  "category": "projects"}]
+        rows = ontology.node_tag_candidates(nodes, threads, {})
+        self.assertEqual(["NFC 근태 관리", "근태관리"], rows[0][2],
+                         "긴 쪽이 그 물건의 이름일 확률이 높다")
+
+
+class DigestNodeLinkTests(unittest.TestCase):
+    """표로 이은 주제는 원문에 이름이 없어도 '다룬 주제' 가 된다."""
+
+    def _digests(self, node_tags):
+        from scripts import build_site
+        threads = [
+            {"id": "t-1", "category": "projects", "title": "토론 도우미를 만들었다",
+             "summary": "요지", "report": "본문", "message_ids": ["m1"], "count": 1,
+             "tags": ["토론 앱"]},
+            {"id": "t-2", "category": "projects", "title": "딴 이야기",
+             "summary": "요지", "report": "본문", "message_ids": ["m2"], "count": 1,
+             "tags": ["파이어베이스"]},
+        ]
+        topics = {"categories": [{"id": "projects", "label": "프로젝트"}],
+                  "threads": [{"id": "t-1", "category": "projects", "message_ids": ["m1"]},
+                              {"id": "t-2", "category": "projects", "message_ids": ["m2"]}]}
+        # 원문에 'AI 토론 앱' 이라는 말은 한 번도 안 나온다.
+        msgs = [{"id": "m1", "nickname": "갑", "date": "2026-08-12",
+                 "category": "projects", "text": "이거 써보세요"},
+                {"id": "m2", "nickname": "갑", "date": "2026-08-12",
+                 "category": "projects", "text": "파이어베이스 좋네요"}]
+        knowledge = {"nodes": [{"id": "app:debate", "type": "app", "label": "AI 토론 앱",
+                                "category": "projects", "query": "토론"}]}
+        out = build_site.build_digests(msgs, threads, topics, knowledge,
+                                       {"digests": {}}, node_tags)
+        return out["projects"]["apps"][0]
+
+    def test_without_the_table_the_node_finds_no_subject(self):
+        app = self._digests({})
+        self.assertEqual([], app["subject_ids"],
+                         "서술형 이름은 글자로 이어지지 않는다 — 이것이 실측 38개다")
+
+    def test_with_the_table_the_tagged_thread_is_the_subject(self):
+        app = self._digests({"app:debate": ["토론 앱"]})
+        self.assertEqual(["t-1"], app["subject_ids"])
+        self.assertNotIn("t-2", app["subject_ids"], "남의 주제를 끌어오지 않는다")
+
+    def test_the_table_wins_even_if_the_name_is_nowhere_in_the_text(self):
+        # 원문에 이름이 한 번도 없어 threads_matching 이 못 찾는 노드도 살아난다.
+        app = self._digests({"app:debate": ["토론 앱"]})
+        self.assertIn("t-1", app["thread_ids"])
+
+    def test_spelling_differences_are_forgiven(self):
+        app = self._digests({"app:debate": ["토론앱"]})
+        self.assertEqual(["t-1"], app["subject_ids"], "공백 차이로 갈리면 표가 함정이 된다")
 
 
 class PromptRuleTests(unittest.TestCase):
