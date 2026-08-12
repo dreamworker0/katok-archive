@@ -229,36 +229,80 @@ def build_digests(
 
 
 def weigh_knowledge(knowledge: dict, messages: list[dict]) -> list[str]:
-    """지식 노드의 크기를 실제 언급량으로 다시 매긴다. 한 번도 안 나온 이름을 돌려준다.
+    """지식 노드의 크기와 **시점**을 원문에서 다시 매긴다. 한 번도 안 나온 이름을 돌려준다.
 
     예전에는 종류마다 값이 고정이었다 — 주제 26, 앱 13, 도구 10. 그래서 관계망에서
     노드 크기가 아무것도 말해 주지 않았다. 차량 운행일지(수십 번 언급)와 한 번
     스치듯 나온 앱이 같은 크기였다.
 
-    이제 원문에서 query·label 이 몇 번 나왔는지 세어 크기를 준다. 사람 노드는
-    이미 발언량으로 계산돼 있으므로 건드리지 않는다.
+    이제 원문에서 query·label 이 몇 번 나왔는지 세어 크기를 준다.
+
+    ## 시점을 함께 뽑는 이유
+
+    관계망에는 시간이 없어서 **작년에 한 번 스친 도구와 어제까지 쓰는 도구가 나란히
+    떠 있었다.** 실측 2026-08-12: '소라2' 는 2025-10-04 하루에 1회, '슬랙' 은
+    2025-12-04 부터 2026-08-12 까지 28회다. 화면에서는 둘이 구별되지 않았다.
+
+    원문을 훑는 이 루프가 이미 있으므로 첫·마지막 날짜는 거의 공짜로 나온다.
+    `mentions`(횟수)도 함께 남긴다 — 크기(`value`)는 제곱근으로 눌러 놓아서
+    거꾸로 세어 볼 수 없다.
+
+    **엣지에는 시점을 붙이지 않는다.** 근거가 원문에만 있어서, 사람→앱·도구 엣지
+    210개 중 154개에만 날짜가 나오고 사람→분류 89개와 앱→도구 등 174개는 근거가
+    아예 없다(실측 2026-08-12: 473개 중 33%). 3분의 2가 빈 칸인 값은 화면이 믿고
+    쓸 수 없고, 없는 것을 추정해 채우면 `is_subject` 에서 겪은 그 실수가 된다.
+
+    사람 노드는 크기를 건드리지 않는다(발언량으로 이미 계산돼 있다). 시점은
+    그 사람이 처음·마지막 말한 날로 붙인다 — '언제부터 방에 있었나' 다.
     """
     hay = [
         ((m.get("text") or "") + " " + " ".join(m.get("urls") or [])).lower()
         for m in messages
     ]
+    dates = [m.get("date") or "" for m in messages]
     cat_msgs: Counter[str] = Counter(m.get("category") for m in messages if m.get("category"))
+
+    def span(node: dict, idx: list[int]) -> None:
+        """찾은 자리들의 첫·마지막 날짜를 붙인다. 못 찾았으면 아무것도 안 붙인다.
+
+        빈 문자열을 넣지 않는 것이 중요하다 — 화면이 '날짜가 있다' 고 믿고 빈
+        기간을 그리게 된다. 없으면 필드 자체가 없어야 한다.
+        """
+        days = sorted(d for d in (dates[i] for i in idx) if d)
+        if days:
+            node["first_seen"], node["last_seen"] = days[0], days[-1]
+        else:
+            node.pop("first_seen", None)
+            node.pop("last_seen", None)
+
+    # 사람은 발언 날짜로. 원문을 뒤질 필요가 없다.
+    said_on: dict[str, list[int]] = defaultdict(list)
+    for i, m in enumerate(messages):
+        said_on[m.get("nickname") or ""].append(i)
+    cat_on: dict[str, list[int]] = defaultdict(list)
+    for i, m in enumerate(messages):
+        if m.get("category"):
+            cat_on[m["category"]].append(i)
 
     stale = []
     for n in knowledge.get("nodes", []):
         if n["type"] == "person":
+            span(n, said_on.get(n["label"], []))
             continue
         if n["type"] == "topic":
             # 주제는 그 분류에 실제로 담긴 메시지 수로
             c = cat_msgs.get(n["category"], 0)
             n["value"] = round(8 + min(22, (c ** 0.5) * 1.1), 1)
+            span(n, cat_on.get(n["category"], []))
             continue
         needles = [x.lower() for x in (n.get("query"), n["label"]) if x]
-        hits = sum(1 for h in hay if any(nd in h for nd in needles))
-        if hits == 0:
+        idx = [i for i, h in enumerate(hay) if any(nd in h for nd in needles)]
+        if not idx:
             stale.append("%s(%s)" % (n["label"], n["type"]))
+        n["mentions"] = len(idx)
+        span(n, idx)
         # 1번 언급 → 4.5, 10번 → 9, 50번 → 16 정도. 제곱근으로 눌러 편차를 줄인다
-        n["value"] = round(3.5 + min(18, (hits ** 0.5) * 1.8), 1)
+        n["value"] = round(3.5 + min(18, (len(idx) ** 0.5) * 1.8), 1)
     return stale
 
 

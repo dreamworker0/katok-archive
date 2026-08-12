@@ -347,6 +347,8 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .node-panel h4 { margin: 0 0 4px; font-size: 15px; }
 .node-panel .np-type { font-size: 12px; color: var(--ink-faint); margin-bottom: 8px; }
 .node-panel .np-row { font-size: 13px; margin: 4px 0; color: var(--ink-soft); }
+/* 언제 오간 이야기인가. 내용이 아니라 딸린 사실이므로 한 단 흐리게 둔다. */
+.node-panel .np-when { font-size: 12px; color: var(--ink-faint); }
 .node-panel .np-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .node-panel .np-close { position: absolute; top: 8px; right: 10px; cursor: pointer; color: var(--ink-faint);
   font-size: 18px; line-height: 1; background: none; border: 0; }

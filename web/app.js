@@ -433,9 +433,21 @@
       rows = '<div class="np-row">주제 ' + esc(CAT_LABEL[node.category] || "") + "</div>";
       actions = '<button class="btn" data-act="q" data-v="' + esc(node.query || node.label) + '">타임라인에서 보기</button>';
     }
+    /* 언제 오간 이야기인가. 관계망에는 시간이 없어서 작년에 한 번 스친 도구와
+     * 어제까지 쓰는 도구가 나란히 떠 있었다. 흐리게 하거나 걸러내지는 않는다 —
+     * 새 시각 언어를 만들기 전에 사실만 적어 둔다. 날짜가 없는 노드(원문에 이름이
+     * 한 번도 안 나온 것)는 이 줄을 아예 내지 않는다. */
+    var when = "";
+    if (node.first_seen) {
+      var span = node.first_seen === node.last_seen
+        ? node.first_seen
+        : node.first_seen + " ~ " + node.last_seen;
+      when = '<div class="np-row np-when">' + esc(span) +
+        (node.mentions ? " · " + node.mentions + "회 언급" : "") + "</div>";
+    }
     body.innerHTML = '<h4>' + esc(node.label) + "</h4>" +
       '<div class="np-type">' + esc(typeMap[node.type] || node.type || "") + "</div>" + rows +
-      '<div class="np-actions">' + actions + "</div>";
+      when + '<div class="np-actions">' + actions + "</div>";
     Array.prototype.forEach.call(body.querySelectorAll("[data-act]"), function (b) {
       b.onclick = function () {
         var v = b.getAttribute("data-v");

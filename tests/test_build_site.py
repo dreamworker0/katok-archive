@@ -157,6 +157,95 @@ class BuildDataTest(unittest.TestCase):
             self.assertTrue((site / "assets" / "images").exists())
 
 
+class NodeSpanTest(unittest.TestCase):
+    """노드에 언제 오간 이야기인지 붙인다.
+
+    관계망에 시간이 없어서 작년에 한 번 스친 도구와 어제까지 쓰는 도구가 나란히 떠
+    있었다 — 실측 2026-08-12: '소라2' 는 2025-10-04 하루에 1회, '슬랙' 은 2025-12-04
+    부터 2026-08-12 까지 28회인데 화면에서 구별되지 않았다.
+    """
+
+    def _messages(self):
+        return [
+            {"id": "m1", "nickname": "갑", "date": "2025-10-01", "category": "chat",
+             "text": "커서 써봤어요"},
+            {"id": "m2", "nickname": "을", "date": "2025-11-05", "category": "ai-tools",
+             "text": "옛날 도구 이야기"},
+            {"id": "m3", "nickname": "갑", "date": "2026-08-01", "category": "ai-tools",
+             "text": "커서 요즘도 쓴다", "urls": []},
+        ]
+
+    def _knowledge(self):
+        return {"nodes": [
+            {"id": "tool:cursor", "type": "tool", "label": "커서",
+             "category": "ai-tools", "query": "커서"},
+            {"id": "tool:ghost", "type": "tool", "label": "한번도안나온것",
+             "category": "ai-tools", "query": "한번도안나온것"},
+            {"id": "person:갑", "type": "person", "label": "갑", "category": "chat"},
+            {"id": "topic:ai-tools", "type": "topic", "label": "AI 도구",
+             "category": "ai-tools"},
+        ], "edges": []}
+
+    def _by_id(self, k):
+        return {n["id"]: n for n in k["nodes"]}
+
+    def test_span_comes_from_the_messages_that_name_it(self):
+        k = self._knowledge()
+        build_site.weigh_knowledge(k, self._messages())
+        node = self._by_id(k)["tool:cursor"]
+        self.assertEqual(("2025-10-01", "2026-08-01"),
+                         (node["first_seen"], node["last_seen"]))
+        self.assertEqual(2, node["mentions"], "중간의 남의 이야기는 세지 않는다")
+
+    def test_a_node_never_mentioned_has_no_date_field_at_all(self):
+        """빈 문자열을 넣지 않는다 — 화면이 '날짜가 있다' 고 믿고 빈 기간을 그린다."""
+        k = self._knowledge()
+        stale = build_site.weigh_knowledge(k, self._messages())
+        node = self._by_id(k)["tool:ghost"]
+        self.assertNotIn("first_seen", node)
+        self.assertNotIn("last_seen", node)
+        self.assertEqual(0, node["mentions"])
+        self.assertIn("한번도안나온것(tool)", stale)
+
+    def test_a_stale_date_is_removed_not_left_behind(self):
+        # 옛 발행에서 붙은 날짜가 남아 있으면 화면이 없는 기간을 계속 보여준다.
+        k = self._knowledge()
+        self._by_id(k)["tool:ghost"].update(
+            {"first_seen": "2025-01-01", "last_seen": "2025-01-02"})
+        build_site.weigh_knowledge(k, self._messages())
+        self.assertNotIn("first_seen", self._by_id(k)["tool:ghost"])
+
+    def test_one_day_node_has_the_same_first_and_last(self):
+        k = {"nodes": [{"id": "tool:sora", "type": "tool", "label": "소라2",
+                        "category": "ai-models", "query": "소라2"}], "edges": []}
+        build_site.weigh_knowledge(k, [
+            {"id": "m1", "nickname": "갑", "date": "2025-10-04", "text": "소라2 나왔네"}])
+        n = k["nodes"][0]
+        self.assertEqual(n["first_seen"], n["last_seen"])
+
+    def test_a_person_span_is_their_own_messages(self):
+        k = self._knowledge()
+        build_site.weigh_knowledge(k, self._messages())
+        node = self._by_id(k)["person:갑"]
+        self.assertEqual(("2025-10-01", "2026-08-01"),
+                         (node["first_seen"], node["last_seen"]))
+        self.assertNotIn("mentions", node, "사람 크기는 발언량으로 이미 정해져 있다")
+
+    def test_a_topic_span_is_its_category_messages(self):
+        k = self._knowledge()
+        build_site.weigh_knowledge(k, self._messages())
+        node = self._by_id(k)["topic:ai-tools"]
+        self.assertEqual(("2025-11-05", "2026-08-01"),
+                         (node["first_seen"], node["last_seen"]))
+
+    def test_messages_without_a_date_do_not_make_an_empty_span(self):
+        k = {"nodes": [{"id": "tool:x", "type": "tool", "label": "엑스",
+                        "category": "ai-tools", "query": "엑스"}], "edges": []}
+        build_site.weigh_knowledge(k, [{"id": "m1", "nickname": "갑", "text": "엑스"}])
+        self.assertNotIn("first_seen", k["nodes"][0])
+        self.assertEqual(1, k["nodes"][0]["mentions"], "언급은 셌지만 날짜는 없다")
+
+
 class KnowledgeTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
