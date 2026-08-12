@@ -26,7 +26,7 @@ import shutil
 from collections import Counter
 from pathlib import Path
 
-from scripts import build_site, member_requests, pii, scan_image_pii
+from scripts import build_site, member_requests, ontology, pii, scan_image_pii
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
@@ -266,6 +266,10 @@ def build_payload() -> dict:
     # 원장이고, 발행본에서 빼는 일은 아래 prune_knowledge 가 따로 한다.
     participants_raw = build_site._read_json(OUTPUT / "participants.json")
     added = build_site.sync_person_nodes(knowledge, participants_raw, topics)
+    # 종류·관계 표를 코드(scripts/ontology.py)로 맞추고, 모양이 어긋난 엣지를
+    # 고친다. 사람 노드 동기화 **뒤에** 해야 한다 — 방금 만든 person→topic 엣지도
+    # 검사 대상이고, 어긋난 옛 엣지가 그것과 겹치는지 봐야 한다.
+    ontology.log(ontology.apply(knowledge))
     (OUTPUT / "knowledge.json").write_text(
         json.dumps(knowledge, ensure_ascii=False, indent=2), encoding="utf-8")
     if added:

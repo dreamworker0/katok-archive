@@ -43,7 +43,23 @@
     });
 
     // ── DOM ──
-    var typeState = { topic: true, app: true, tool: true, person: true };
+    /* 노드 종류는 발행본이 표로 준다(원본은 scripts/ontology.py). 예전에는 여기에
+     * 따로 적혀 있어서 노드 패널(app.js)·발행본과 이름이 갈렸다 — 같은 종류가
+     * '앱' 과 '앱·결과물' 이었다. 단추는 좁으므로 `short`, 패널은 `label` 을 쓴다. */
+    var TYPES = (opts.nodeTypes || []).map(function (t) {
+      return [t.id, t.short || t.label || t.id];
+    });
+    if (!TYPES.length) {
+      // 표를 못 받은 옛 캐시. 라벨 표를 여기 다시 적지 않고, 실제로 있는 종류로
+      // 단추를 만든다 — 이름이 투박해도 걸러내기는 돌아간다.
+      nodes.forEach(function (n) {
+        if (n.type && !TYPES.some(function (t) { return t[0] === n.type; })) {
+          TYPES.push([n.type, n.type]);
+        }
+      });
+    }
+    var typeState = {};
+    TYPES.forEach(function (t) { typeState[t[0]] = true; });
     var toolbar = document.createElement("div");
     toolbar.className = "graph-toolbar";
     var legend = document.createElement("div");
@@ -56,7 +72,6 @@
     });
     toolbar.appendChild(legend);
     var spacer = document.createElement("div"); spacer.className = "spacer"; toolbar.appendChild(spacer);
-    var TYPES = [["topic", "주제"], ["app", "앱"], ["tool", "도구"], ["person", "사람"]];
     TYPES.forEach(function (t) {
       var b = document.createElement("button");
       b.className = "on"; b.textContent = t[1];
@@ -126,11 +141,15 @@
       bindNode(n);
     });
 
+    // 표에 없는 종류는 **감추지 않는다** — 끄는 단추도 없으니 감추면 다시 켤 수가
+    // 없다. 종류를 새로 더한 발행본을 옛 화면이 열었을 때가 그 경우다.
+    function shown(type) { return typeState[type] !== false; }
+
     function applyVisibility() {
-      nodes.forEach(function (n) { n._g.style.display = typeState[n.type] ? "" : "none"; });
+      nodes.forEach(function (n) { n._g.style.display = shown(n.type) ? "" : "none"; });
       edgeEls.forEach(function (ln) {
         var e = ln._e;
-        ln.style.display = (typeState[e.s.type] && typeState[e.t.type]) ? "" : "none";
+        ln.style.display = (shown(e.s.type) && shown(e.t.type)) ? "" : "none";
       });
     }
 

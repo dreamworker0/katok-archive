@@ -400,6 +400,8 @@
 
     state.graph = window.KGraph.render(document.getElementById("gmount"), {
       nodes: KNOW.nodes, edges: KNOW.edges, colorFor: colorFor, catLabel: CAT_LABEL,
+      // 노드 종류 표는 발행본이 준다 — 원본은 scripts/ontology.py 다.
+      nodeTypes: KNOW.node_types,
       onSelect: function (node) {
         if (!node) { panel.classList.remove("on"); return; }
         fillNodePanel(node);
@@ -410,7 +412,11 @@
 
   function fillNodePanel(node) {
     var body = document.getElementById("npBody");
-    var typeMap = { topic: "주제", app: "앱·결과물", tool: "도구·기술", person: "사람" };
+    /* 종류 이름은 발행본의 표에서 읽는다(원본은 scripts/ontology.py). 예전에는
+     * 여기와 graph.js 에 따로 적혀 있어서 같은 종류가 '앱·결과물' 과 '앱' 으로
+     * 갈렸다. 표가 없는 옛 캐시에서는 id 를 그대로 보여준다 — 빈칸보다 낫다. */
+    var typeMap = {};
+    (KNOW.node_types || []).forEach(function (t) { typeMap[t.id] = t.label || t.id; });
     var rows = "", actions = "";
     if (node.type === "person") {
       rows = '<div class="np-row">메시지 ' + (node.messages || 0) + "개 · 주로 <b>" +
@@ -428,7 +434,7 @@
       actions = '<button class="btn" data-act="q" data-v="' + esc(node.query || node.label) + '">타임라인에서 보기</button>';
     }
     body.innerHTML = '<h4>' + esc(node.label) + "</h4>" +
-      '<div class="np-type">' + typeMap[node.type] + "</div>" + rows +
+      '<div class="np-type">' + esc(typeMap[node.type] || node.type || "") + "</div>" + rows +
       '<div class="np-actions">' + actions + "</div>";
     Array.prototype.forEach.call(body.querySelectorAll("[data-act]"), function (b) {
       b.onclick = function () {

@@ -56,6 +56,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from scripts import ontology
 from scripts import tags as taglib
 from scripts.topic_reports import (
     MAX_VERBATIM_CHARS as REPORT_RULES_MAX_QUOTE,
@@ -240,8 +241,7 @@ def build_prompt(msgs: list[dict], categories: list[dict],
              · '앱', '웹앱', '도구' 같은 꾸밈말은 붙이지 않는다.
              · '사진', '관리', '깃허브' 처럼 아무 데나 나오는 일반 낱말은 쓰지 않는다.
                그런 말밖에 없으면 label 을 그대로 쓴다 — 크기를 뻥튀기는 것보다 낫다.
-- edge.type 은 made | uses | belongs | interested 중 하나.
-  source/target 은 "person:닉네임", "app:...", "tool:...", "topic:카테고리id".
+{ontology.prompt_rules()}
 - 확실하지 않으면 빈 배열로 두세요. 틀린 노드보다 없는 편이 낫습니다.
 
 ## 출력
@@ -528,11 +528,14 @@ def merge_graph(knowledge: dict, graph: dict,
         (build_site.build_digests 가 app 노드의 n["category"] 를 요구한다)
       · 'app:urimal'(우리말 윤문)이 있는데 'app:우리말'을 새로 만들었다
     프롬프트는 부탁이고 검증은 보장이다. 스키마가 안 맞으면 그 노드만 버린다.
+
+    엣지는 **모양까지** 본다(`scripts/ontology.py`). 관계 이름이 목록에 있는지만
+    보던 때는 뜻이 안 되는 엣지가 원장에 남았다 — 실측 2026-08-12 에
+    `person -belongs-> topic` 두 건. 뜻이 하나로 정해지면 이름을 고쳐서 받고,
+    정할 수 없으면 그 엣지만 버린다.
     """
     if not isinstance(graph, dict):
         return 0, 0
-    valid_edge_types = {t["id"] if isinstance(t, dict) else t
-                        for t in knowledge.get("edge_types", [])}
 
     nodes = knowledge.setdefault("nodes", [])
     have_nodes = {n["id"] for n in nodes}
@@ -579,18 +582,25 @@ def merge_graph(knowledge: dict, graph: dict,
 
     have_edges = {(e.get("source"), e.get("target"), e.get("type"))
                   for e in knowledge.get("edges", [])}
+    type_of = {n["id"]: n.get("type") for n in nodes}
     added_e = 0
     for e in (graph.get("edges") or []):
         if not isinstance(e, dict):
             continue
         src, dst = str(e.get("source") or ""), str(e.get("target") or "")
         etype = str(e.get("type") or "")
-        if etype not in valid_edge_types:
-            continue
         # 양쪽 끝이 실제로 있는 노드여야 한다. 없는 노드를 가리키는 엣지는
         # 화면에서 그려지지 않거나 그리다 깨진다.
         if src not in have_nodes or dst not in have_nodes:
             continue
+        # 관계가 이 모양으로 성립하는지 본다. 뜻이 하나로 정해지면 고쳐서 받는다.
+        if not ontology.is_valid(type_of.get(src), etype, type_of.get(dst)):
+            fixed = ontology.repair(type_of.get(src), etype, type_of.get(dst))
+            if not fixed:
+                print(f"  건너뜀(성립하지 않는 관계): {src} -{etype}-> {dst}")
+                continue
+            print(f"  관계를 고쳐서 받음: {src} -{etype}-> {dst} → {fixed}")
+            etype = fixed
         if (src, dst, etype) in have_edges:
             continue
         knowledge.setdefault("edges", []).append(

@@ -187,6 +187,48 @@ class GraphMergeTests(unittest.TestCase):
         ]}, CATS)
         self.assertEqual(0, n)
 
+    def test_an_edge_whose_shape_does_not_hold_is_dropped(self):
+        """관계 이름이 맞아도 양 끝의 종류가 안 맞으면 버린다.
+
+        예전에는 이름만 봤다. 그래서 뜻이 안 되는 엣지가 원장에 남았다 —
+        실측 2026-08-12: `person -belongs-> topic` 두 건. 여기서는 사람이 도구를
+        '만든' 것을 거꾸로 적은 모양을 본다.
+        """
+        k = graph_skeleton()
+        _, e = merge_graph(k, {"edges": [
+            {"source": "app:urimal", "target": "person:김종원", "type": "made"}
+        ]}, CATS)
+        self.assertEqual(0, e)
+        self.assertEqual([], k["edges"])
+
+    def test_an_edge_with_one_possible_meaning_is_fixed_and_kept(self):
+        """뜻이 하나로 정해지면 관계 이름을 고쳐서 받는다 — 버리면 알아낸 것이 사라진다.
+
+        person → topic 에 성립하는 관계는 interested 하나다.
+        """
+        k = graph_skeleton()
+        _, e = merge_graph(k, {"edges": [
+            {"source": "person:김종원", "target": "topic:projects", "type": "belongs"}
+        ]}, CATS)
+        self.assertEqual(1, e)
+        self.assertEqual("interested", k["edges"][0]["type"])
+
+    def test_the_meanings_the_room_actually_uses_are_kept(self):
+        """'관심을 보였다'(interested)는 '썼다'(uses)와 다른 말이다.
+
+        치역을 좁게 잡으면 이 32건이 조용히 버려진다. 넉넉히 잡고 성립하지 않는
+        모양만 막는 것이 요점이다.
+        """
+        k = graph_skeleton()
+        k["nodes"].append({"id": "tool:antigravity", "type": "tool",
+                           "label": "안티그래비티", "category": "ai-tools"})
+        _, e = merge_graph(k, {"edges": [
+            {"source": "person:김종원", "target": "tool:antigravity",
+             "type": "interested"}
+        ]}, CATS)
+        self.assertEqual(1, e)
+        self.assertEqual("interested", k["edges"][0]["type"])
+
     def test_edge_to_missing_node_is_dropped(self):
         # 없는 노드를 가리키는 엣지는 화면에서 그려지지 않거나 그리다 깨진다.
         k = graph_skeleton()

@@ -179,6 +179,31 @@ class KnowledgeTest(unittest.TestCase):
         for n in self.knowledge["nodes"]:
             self.assertIn(n["category"], self.cat_ids, n)
 
+    def test_every_node_type_is_declared(self):
+        from scripts import ontology
+        for n in self.knowledge["nodes"]:
+            self.assertIn(n["type"], ontology.node_type_ids(), n["id"])
+
+    def test_every_edge_holds_its_shape(self):
+        """관계마다 정의역·치역이 있고, 원장이 그것을 지킨다.
+
+        예전에는 관계 **이름**만 검사했다. 그래서 뜻이 안 되는 엣지가 남았다 —
+        실측 2026-08-12: `person -belongs-> topic` 두 건(belongs 는 앱·도구가 어느
+        주제에 속하는지를 말하는 관계다).
+
+        `ontology.apply` 가 발행할 때마다 고칠 수 있는 것은 고치므로, 여기서 걸리는
+        것은 **뜻을 정할 수 없어 사람이 봐야 하는 것**이다.
+        """
+        from scripts import ontology
+        type_of = {n["id"]: n["type"] for n in self.knowledge["nodes"]}
+        bad = [
+            "%s -%s-> %s" % (e["source"], e["type"], e["target"])
+            for e in self.knowledge["edges"]
+            if not ontology.is_valid(type_of.get(e["source"]), e["type"],
+                                     type_of.get(e["target"]))
+        ]
+        self.assertEqual([], bad, "성립하지 않는 관계")
+
     def test_no_isolated_nodes(self):
         deg = {n["id"]: 0 for n in self.knowledge["nodes"]}
         for e in self.knowledge["edges"]:

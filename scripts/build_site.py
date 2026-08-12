@@ -19,6 +19,7 @@ from pathlib import Path
 
 from scripts import interests as interestlib
 from scripts import jsonio
+from scripts import ontology
 from scripts import pii
 from scripts import tags as taglib
 from scripts.topic_reports import (
@@ -628,7 +629,10 @@ def build_data(
               "(앞 5개: %s)"
               % (len(gaps), ", ".join("%s(%d건 %s없음)" % g for g in gaps[:5])))
 
-    knowledge = knowledge or {"nodes": [], "edges": [], "node_types": [], "edge_types": []}
+    knowledge = knowledge or {"nodes": [], "edges": []}
+    # 화면의 걸러내기 단추와 노드 패널이 종류 이름을 이 표에서 읽는다. 원장이 없는
+    # 첫 실행에도 표는 있어야 하므로 코드(scripts/ontology.py)에서 채운다.
+    ontology.sync_types(knowledge)
     # 관계망 노드 크기를 실제 언급량으로 다시 매긴다
     stale = weigh_knowledge(knowledge, out_messages)
     if stale:
@@ -787,6 +791,10 @@ def main() -> None:
     topics = _read_json(OUTPUT / "topics.json")
     knowledge = _read_json(OUTPUT / "knowledge.json")
     added = sync_person_nodes(knowledge, participants, topics)
+    # 종류·관계 표를 코드(scripts/ontology.py)로 맞추고, 모양이 어긋난 엣지를 고친다.
+    # 사람 노드 동기화 **뒤에** 해야 한다 — 방금 만든 person→topic 엣지도 검사
+    # 대상이고, 어긋난 옛 엣지가 그것과 겹치는지 봐야 한다.
+    ontology.log(ontology.apply(knowledge))
     # 노드를 새로 만들지 않았어도 발언 수는 바뀌었을 수 있다. 늘 써서 output 과
     # 화면이 어긋나지 않게 둔다.
     (OUTPUT / "knowledge.json").write_text(
