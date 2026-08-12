@@ -173,6 +173,27 @@ class ImageJudgeTest(unittest.TestCase):
         self.assertEqual(got["assets/images/a.png"]["verdict"], "allowed")
         self.assertEqual(self.mod.hidden_paths({"images": got}), set())
 
+    def test_the_allow_list_settles_a_review_too(self):
+        """'한 번 볼 것'(review)도 표에 적으면 다시 묻지 않는다.
+
+        예전에는 허용 목록이 `certain` 에만 적용돼서, likely 로 걸린 사진을 표에
+        적어 두어도 판정이 계속 review 로 남아 매일 '확인필요 1' 이 찍혔다
+        (실측 2026-08-12: 협회 대표번호가 적힌 모집 포스터). '사람이 발행하기로
+        했다' 는 판단은 등급과 무관하다.
+        """
+        ocr = {"assets/images/d.png": ["/t 01000004321"]}
+        plain = self.mod.judge(ocr, allow_paths=set())["images"]
+        self.assertEqual(plain["assets/images/d.png"]["verdict"], "review")
+        got = self.mod.judge(ocr, allow_paths={"assets/images/d.png"})["images"]
+        self.assertEqual(got["assets/images/d.png"]["verdict"], "allowed")
+
+    def test_a_clean_photo_in_the_allow_list_stays_ok(self):
+        # 걸린 것이 없으면 표에 적혀 있어도 'allowed' 로 바꾸지 않는다 —
+        # 'allowed' 는 '개인정보가 있는데 발행한다' 는 뜻이라 셈이 어긋난다.
+        ocr = {"assets/images/b.png": ["대시보드 화면", "총 3,240건"]}
+        got = self.mod.judge(ocr, allow_paths={"assets/images/b.png"})["images"]
+        self.assertEqual(got["assets/images/b.png"]["verdict"], "ok")
+
     def test_verdict_file_never_stores_the_original_value(self):
         """판정 파일이 곧 개인정보 목록이 되면 안 된다 — output/ 은 무시되지만
         사람이 열어 보는 파일이고, 실수로 어딘가에 붙여 넣기 쉽다."""

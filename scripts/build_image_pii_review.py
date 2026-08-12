@@ -127,8 +127,15 @@ def rows_to_review(verdicts: dict, allow: set[str],
 
 
 def render(rows: list[tuple[str, dict]], by_asset: dict, title_of: dict,
-           apply_on: bool) -> str:
+           apply_on: bool, hidden: set[str] | None = None) -> str:
+    """검토표 HTML.
+
+    `hidden` 은 **지금 실제로 감춰진** 경로다. 판정만 보고 '감춰졌다' 고 적으면
+    안 된다 — `review`(likely 등급) 판정은 감추지 않고 발행한다('가릴 정도는
+    아니지만 사람이 한 번 볼 것'). 그래서 카드마다 지금 상태를 따로 말한다.
+    """
     esc = html.escape
+    hidden = hidden or set()
     cards = []
     for key, v in rows:
         meta = by_asset.get(key) or {}
@@ -148,6 +155,7 @@ def render(rows: list[tuple[str, dict]], by_asset: dict, title_of: dict,
   <header>
     <label><input type="checkbox" class="keep"> 그대로 발행 (오탐)</label>
     <span class="verdict {verdict}">{verdict}</span>
+    <span class="now {nowcls}">{now}</span>
     <code>{path}</code>
   </header>
   <div class="body">
@@ -164,16 +172,21 @@ def render(rows: list[tuple[str, dict]], by_asset: dict, title_of: dict,
   </div>
 </section>""".format(
             path=esc(key), verdict=esc(v.get("verdict") or ""), img=img, hits=hits,
+            now=("지금 감춰짐" if key in hidden else "지금 보임"),
+            nowcls=("off" if key in hidden else "on"),
             nick=esc(meta.get("nickname") or "(모름)"),
             when=esc(meta.get("timestamp") or "(모름)"),
             title=esc(title_of.get(meta.get("message_id") or "") or "(모름)"),
             lines=esc(str(v.get("lines") or 0))))
 
-    state = ("<b>지금 감추고 있습니다</b> (apply=true) — 아래 사진들은 멤버에게 "
-             "보이지 않습니다. 오탐을 골라 되살리는 화면입니다."
+    n_hidden = sum(1 for key, _ in rows if key in hidden)
+    n_shown = len(rows) - n_hidden
+    state = (("<b>감추기가 켜져 있습니다</b> (apply=true) — 아래 %d장은 감춰졌고, "
+              "%d장은 아직 보입니다(<code>review</code> 판정은 감추지 않습니다)."
+              % (n_hidden, n_shown))
              if apply_on else
-             "<b>지금은 그대로 발행되고 있습니다</b> (apply=false) — "
-             "아래 사진들이 멤버에게 보입니다")
+             "<b>감추기가 꺼져 있습니다</b> (apply=false) — "
+             "아래 사진이 모두 멤버에게 보입니다")
 
     return """<!doctype html>
 <html lang="ko"><head><meta charset="utf-8">
@@ -202,6 +215,9 @@ def render(rows: list[tuple[str, dict]], by_asset: dict, title_of: dict,
   .verdict {{ font-size:11px; padding:2px 8px; border-radius:99px;
     border:1px solid var(--line); color:var(--soft); }}
   .verdict.hide {{ color:var(--warn); border-color:var(--warn); }}
+  .now {{ font-size:11px; padding:2px 8px; border-radius:99px;
+    border:1px solid var(--line); color:var(--soft); }}
+  .now.on {{ color:var(--warn); border-color:var(--warn); }}
   .body {{ display:flex; gap:16px; padding:14px; flex-wrap:wrap; }}
   .shot {{ flex:1 1 460px; min-width:0; }}
   .shot img {{ width:100%; height:auto; border:1px solid var(--line);
@@ -289,7 +305,8 @@ def main() -> None:
 
     by_asset, title_of = _context()
     OUT_HTML.write_text(
-        render(rows, by_asset, title_of, scan_image_pii.hiding_enabled()),
+        render(rows, by_asset, title_of, scan_image_pii.hiding_enabled(),
+               scan_image_pii.hidden_paths()),
         encoding="utf-8")
     size = OUT_HTML.stat().st_size / 1024
     print("검토표 생성: %s (%d장, %.0f KB)" % (OUT_HTML, len(rows), size))
