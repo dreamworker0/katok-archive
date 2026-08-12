@@ -139,9 +139,25 @@ def load_broader(path: Path | None = None,
     return out
 
 
+def load_short_parents(path: Path | None = None) -> list[str]:
+    """`config/tag_broader.json` 의 `short_parents` — 두 글자짜리 넓은 태그.
+
+    코드는 fold 길이 `min_len` 미만을 부모로 쓰지 않는다. 그 방벽은 **기계가 고른**
+    짧은 부모를 막으려고 있다('AI'·'앱' 이 아무 태그나 빨아들이는 것). 사람이 표에
+    적은 것은 판단이므로 예외로 둔다 — 실측 2026-08-12: 이것 하나로 고립 태그가
+    771 → 687 로 줄었다('계정 공유'·'게임 UI'·'Vercel 배포'·'구글 닥스' 계열).
+    """
+    p = path or BROADER_PATH
+    if not p.exists():
+        return []
+    raw = json.loads(p.read_text(encoding="utf-8")).get("short_parents") or []
+    return [str(x).strip() for x in raw if str(x).strip()]
+
+
 def _parent_lookup(threads: list[dict], participants: dict | None = None,
                    broader: dict[str, str] | None = None,
-                   min_count: int = 2, min_len: int = 3):
+                   min_count: int = 2, min_len: int = 3,
+                   short_parents: list[str] | None = None):
     """태그 → 바로 위 태그들을 돌려주는 함수를 만든다.
 
     두 갈래를 한 자리에서 합친다. `rollup_parent_tags`(붙이는 쪽)와
@@ -153,9 +169,14 @@ def _parent_lookup(threads: list[dict], participants: dict | None = None,
         t for th in threads for t in (th.get("tags") or []))
     people = person_names(participants or {})
     broader = broader if broader is not None else load_broader()
+    if short_parents is None:
+        short_parents = load_short_parents()
 
     base = [t for t, n in counts.items()
             if n >= min_count and len(fold(t)) >= min_len and t not in people]
+    # 사람이 적은 짧은 부모는 횟수·길이 방벽을 받지 않는다. 아직 아무 보고서에도
+    # 없는 말이어도 부모가 된다 — 그때는 새 입구가 생긴다(`broader` 와 같은 이유).
+    base += [s for s in short_parents if s not in base and s not in people]
     keys = {t: fold(t) for t in base}
 
     def parents(tag: str) -> list[str]:
@@ -303,7 +324,8 @@ def attach_tags(threads: list[dict], participants: dict | None = None,
 
 def rollup_parent_tags(threads: list[dict], participants: dict | None = None,
                        min_count: int = 2, min_len: int = 3,
-                       broader: dict[str, str] | None = None
+                       broader: dict[str, str] | None = None,
+                       short_parents: list[str] | None = None
                        ) -> list[tuple[str, str]]:
     """좁은 태그에 넓은 태그를 덧붙인다. 붙인 (주제 id, 태그) 목록.
 
@@ -332,7 +354,8 @@ def rollup_parent_tags(threads: list[dict], participants: dict | None = None,
     사람 이름은 부모로 쓰지 않는다. 이름 태그는 참여자 화면 몫이고(`person`),
     '김종원' 이 '김종원 수정판'을 빨아들여도 얻는 것이 없다.
     """
-    parents = _parent_lookup(threads, participants, broader, min_count, min_len)
+    parents = _parent_lookup(threads, participants, broader, min_count, min_len,
+                             short_parents)
 
     added: list[tuple[str, str]] = []
     for th in threads:
@@ -358,7 +381,8 @@ def rollup_parent_tags(threads: list[dict], participants: dict | None = None,
 def broader_candidates(threads: list[dict], broader: dict[str, str] | None = None,
                        participants: dict | None = None,
                        places: set[str] | None = None,
-                       min_count: int = 2, min_len: int = 3
+                       min_count: int = 2, min_len: int = 3,
+                       short_parents: list[str] | None = None
                        ) -> list[tuple[str, int]]:
     """부모를 하나도 못 얻은 고립 태그. (태그, 쓰인 횟수) 를 많은 순으로.
 
@@ -373,7 +397,8 @@ def broader_candidates(threads: list[dict], broader: dict[str, str] | None = Non
     **승격 전에** 불러야 한다 — `rollup_parent_tags` 가 부모를 붙인 뒤에는
     무엇이 고립이었는지 알 수 없다.
     """
-    parents = _parent_lookup(threads, participants, broader, min_count, min_len)
+    parents = _parent_lookup(threads, participants, broader, min_count, min_len,
+                             short_parents)
     people = person_names(participants or {})
     places = places or set()
     counts: Counter[str] = Counter(

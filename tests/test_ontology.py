@@ -225,6 +225,37 @@ class NodeTagTests(unittest.TestCase):
         cand = dict((nid, c) for nid, _, c in rows)
         self.assertIn("깃허브", cand.get("app:jsh-site", []))
 
+    def test_a_node_settled_as_not_linkable_is_not_asked_again(self):
+        """잇지 않기로 정한 것도 판단이 끝난 상태다.
+
+        실측 2026-08-12: 남은 후보 13개를 하나씩 보고 전부 '잇지 않는다' 로 정했다 —
+        후보가 죄다 일반 도구명·개념·기관 이름이었다. 그 결정을 적을 자리가 없으면
+        로그가 매일 같은 13개를 다시 묻는다.
+        """
+        rows = ontology.node_tag_candidates(
+            self.NODES, self.THREADS, {}, settled={"app:jsh-site"})
+        self.assertNotIn("app:jsh-site", [r[0] for r in rows])
+
+    def test_settled_and_linked_are_different_lists(self):
+        # 둘을 한 목록에 섞으면 '이었다' 와 '안 잇기로 했다' 를 구분할 수 없다.
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d) / "node_tags.json"
+            p.write_text(json.dumps({"node_tags": {"app:a": ["가"]},
+                                     "no_tag": ["app:b"]}, ensure_ascii=False),
+                         encoding="utf-8")
+            self.assertEqual({"app:a": ["가"]}, ontology.load_node_tags(p))
+            self.assertEqual({"app:b"}, ontology.load_settled_nodes(p))
+
+    def test_missing_no_tag_list_is_not_an_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(set(), ontology.load_settled_nodes(
+                pathlib.Path(d) / "없다.json"))
+
+    def test_the_shipped_table_does_not_settle_and_link_the_same_node(self):
+        table, settled = ontology.load_node_tags(), ontology.load_settled_nodes()
+        both = sorted(set(table) & settled)
+        self.assertEqual([], both, "두 목록에 함께 있는 노드: %s" % both)
+
     def test_longer_candidates_come_first(self):
         threads = [{"id": "t-1", "tags": ["근태관리", "NFC 근태 관리"]}]
         nodes = [{"id": "app:nfc", "type": "app", "label": "NFC 근태 관리 앱",

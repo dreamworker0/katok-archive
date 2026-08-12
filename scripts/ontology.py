@@ -251,8 +251,23 @@ def load_node_tags(path: Path | None = None) -> dict[str, list[str]]:
     return out
 
 
+def load_settled_nodes(path: Path | None = None) -> set[str]:
+    """`config/node_tags.json` 의 `no_tag` — 잇지 않기로 **정한** 노드.
+
+    빠뜨린 것과 구분하려고 따로 적는다. 후보가 나오지만 그 후보로 이으면 안 되는
+    경우가 있다 — 일반 도구명·개념·기관 이름뿐일 때다. 한 번 판단한 것을 또 묻지
+    않는 것이 요점이고, `tag_places.json` 의 `not_places` 와 같은 몫이다.
+    """
+    p = path or NODE_TAGS_PATH
+    if not p.exists():
+        return set()
+    raw = json.loads(p.read_text(encoding="utf-8")).get("no_tag") or []
+    return {str(x).strip() for x in raw if str(x).strip()}
+
+
 def node_tag_candidates(nodes: list[dict], threads: list[dict],
                         table: dict[str, list[str]] | None = None,
+                        settled: set[str] | None = None,
                         types: tuple[str, ...] = ("app",), min_len: int = 3
                         ) -> list[tuple[str, str, list[str]]]:
     """표에 아직 없고 이름으로도 안 이어지는 노드. (노드 id, 라벨, 후보 태그들).
@@ -260,8 +275,12 @@ def node_tag_candidates(nodes: list[dict], threads: list[dict],
     후보는 라벨과 태그의 fold 가 한쪽을 품을 때 내놓고, 긴 것부터 보여준다 —
     긴 쪽이 그 물건의 이름일 확률이 높고, 짧은 것은 일반 도구명이기 쉽다.
     **고르는 것은 사람이다.** `place_candidates` 와 같은 몫이다.
+
+    `settled`(= `no_tag`)에 적힌 노드는 내지 않는다. 잇기로 한 것과 잇지 않기로 한
+    것이 둘 다 판단이 끝난 상태이므로 같이 빠져야 한다.
     """
     table = table or {}
+    settled = settled or set()
     tag_names: dict[str, str] = {}
     for t in threads:
         for tg in t.get("tags") or []:
@@ -271,7 +290,7 @@ def node_tag_candidates(nodes: list[dict], threads: list[dict],
 
     rows = []
     for n in nodes:
-        if n.get("type") not in types or n["id"] in table:
+        if n.get("type") not in types or n["id"] in table or n["id"] in settled:
             continue
         key = taglib.fold(n.get("label") or "")
         if len(key) < min_len or key in tag_names:

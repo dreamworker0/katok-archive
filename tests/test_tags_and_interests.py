@@ -383,7 +383,8 @@ class RollupTests(unittest.TestCase):
     """
 
     def roll(self, threads, participants=None, **kw):
-        return tags.rollup_parent_tags(threads, participants, broader={}, **kw)
+        return tags.rollup_parent_tags(threads, participants, broader={},
+                                       short_parents=[], **kw)
 
     def _ontology(self):
         """실제로 갈렸던 네 주제. t-352 만 '온톨로지' 가 없었다."""
@@ -536,6 +537,56 @@ class BroaderTableTests(unittest.TestCase):
     def test_missing_table_is_not_an_error(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual({}, tags.load_broader(Path(d) / "없다.json"))
+            self.assertEqual([], tags.load_short_parents(Path(d) / "없다.json"))
+
+    def test_a_two_letter_parent_from_the_table_catches_its_family(self):
+        """두 글자 부모는 사람이 적었을 때만 쓴다.
+
+        `min_len` 방벽은 **기계가 고른** 짧은 부모를 막으려고 있다 — 'AI' 가 아무
+        태그나 빨아들이는 것. 사람이 적은 것은 판단이므로 예외로 둔다.
+
+        실측 2026-08-12: '구글'(자식 29개)·'교육'(17)·'계정'(12)·'게임'(9) 처럼
+        부모가 두 글자여서 막혀 있던 계열이 컸다 — 고립 태그 771 → 687.
+        """
+        threads = [{"id": "t-1", "tags": ["계정 공유"]},
+                   {"id": "t-2", "tags": ["계정 전환"]}]
+        added = tags.rollup_parent_tags(threads, broader={},
+                                        short_parents=["계정"])
+        self.assertEqual([("t-1", "계정"), ("t-2", "계정")], added)
+
+    def test_without_the_table_a_two_letter_parent_is_refused(self):
+        threads = [{"id": "t-1", "tags": ["계정 공유", "계정"]},
+                   {"id": "t-2", "tags": ["계정 전환", "계정"]}]
+        added = tags.rollup_parent_tags(threads, broader={}, short_parents=[])
+        self.assertEqual([], added, "기계가 고른 두 글자 부모는 막혀 있어야 한다")
+
+    def test_a_short_parent_needs_no_prior_use(self):
+        # 아직 아무 보고서에도 없는 말도 부모가 된다 — 새 입구가 생긴다.
+        threads = [{"id": "t-1", "tags": ["간편인증서"]}]
+        tags.rollup_parent_tags(threads, broader={}, short_parents=["인증"])
+        self.assertIn("인증", threads[0]["tags"])
+
+    def test_a_short_parent_that_is_a_person_name_is_refused(self):
+        threads = [{"id": "t-1", "tags": ["종원 수정판"]}]
+        parts = {"participants": [{"nickname": "종원"}]}
+        tags.rollup_parent_tags(threads, parts, broader={}, short_parents=["종원"])
+        self.assertEqual(["종원 수정판"], threads[0]["tags"])
+
+    def test_candidates_see_the_same_short_parents(self):
+        # 붙이는 쪽과 알리는 쪽이 같은 판정을 봐야 한다 — 아니면 '이미 붙은 것'을
+        # 후보로 또 알린다.
+        threads = [{"id": "t-1", "tags": ["계정 공유"]}]
+        self.assertEqual([], tags.broader_candidates(
+            threads, {}, short_parents=["계정"]))
+        self.assertEqual(["계정 공유"], [t for t, _ in tags.broader_candidates(
+            threads, {}, short_parents=[])])
+
+    def test_shipped_short_parents_are_all_short(self):
+        """세 글자 이상은 여기가 아니라 broader 에 적는다 — 코드가 이미 잡는다."""
+        for s in tags.load_short_parents():
+            with self.subTest(tag=s):
+                self.assertLess(len(tags.fold(s)), 3,
+                                "'%s' 는 코드가 이미 부모로 쓴다" % s)
 
     def test_shipped_table_is_valid_and_does_not_name_people(self):
         table = tags.load_broader()

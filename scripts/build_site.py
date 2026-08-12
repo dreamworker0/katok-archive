@@ -634,10 +634,13 @@ def build_data(
     # 부모를 못 얻은 고립 태그를 **승격 전에** 센다. 승격한 뒤에는 무엇이 고립이었는지
     # 알 수 없다. 지명은 빼고 본다 — 그것은 tag_places.json 이 맡을 일이다.
     broader = taglib.load_broader()
-    orphans = taglib.broader_candidates(threads_meta, broader, participants, places)
+    short_parents = taglib.load_short_parents()
+    orphans = taglib.broader_candidates(threads_meta, broader, participants, places,
+                                        short_parents=short_parents)
     # 좁은 태그에 넓은 태그를 덧붙인다 — '온톨로지 모델링' 주제가 '온톨로지'로도
     # 찾히게 하는 몫이다. 제목에서 채운 태그도 승격 대상이 되도록 뒤에 둔다.
-    rolled = taglib.rollup_parent_tags(threads_meta, participants, broader=broader)
+    rolled = taglib.rollup_parent_tags(threads_meta, participants, broader=broader,
+                                       short_parents=short_parents)
     if rolled:
         print("[태그] 넓은 태그 %d건 승격 (앞 5개: %s)"
               % (len(rolled), ", ".join("%s←%s" % r for r in rolled[:5])))
@@ -706,7 +709,8 @@ def build_data(
     # 관계망 노드와 태그를 짝지어 둔 표. 없으면 예전처럼 이름 글자로만 잇는다.
     node_tags = ontology.load_node_tags()
     node_cands = ontology.node_tag_candidates(
-        knowledge.get("nodes", []), threads_meta, node_tags)
+        knowledge.get("nodes", []), threads_meta, node_tags,
+        ontology.load_settled_nodes())
     if node_cands:
         print("[관계망] 이름으로 주제를 못 찾는 노드 %d개 — config/node_tags.json 에 "
               "짝지어 주세요 (앞 4개: %s)"
