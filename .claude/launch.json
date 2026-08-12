@@ -12,6 +12,13 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "scripts.serve_hosting", "8900"],
       "port": 8900
+    },
+    {
+      "_note": "output/ 의 검토표를 열어 보는 용도. 대화 데이터가 있는 폴더를 서빙하므로 localhost 로만 쓴다.",
+      "name": "output-review",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8907", "--directory", "output"],
+      "port": 8907
     }
   ]
 }
