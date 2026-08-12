@@ -169,7 +169,9 @@ def render(rows: list[tuple[str, dict]], by_asset: dict, title_of: dict,
             title=esc(title_of.get(meta.get("message_id") or "") or "(모름)"),
             lines=esc(str(v.get("lines") or 0))))
 
-    state = ("<b>지금 감추고 있습니다</b> (apply=true)" if apply_on else
+    state = ("<b>지금 감추고 있습니다</b> (apply=true) — 아래 사진들은 멤버에게 "
+             "보이지 않습니다. 오탐을 골라 되살리는 화면입니다."
+             if apply_on else
              "<b>지금은 그대로 발행되고 있습니다</b> (apply=false) — "
              "아래 사진들이 멤버에게 보입니다")
 
@@ -233,10 +235,11 @@ def render(rows: list[tuple[str, dict]], by_asset: dict, title_of: dict,
   <span id="msg" style="color:var(--soft)"></span>
   <textarea id="out" readonly placeholder="체크한 것이 여기에 JSON 으로 나옵니다."></textarea>
   <p class="lede" style="margin-top:10px">복사한 목록을
-  <code>config/image_pii_allow.json</code> 의 <code>paths</code> 에 넣고,
-  <code>apply</code> 를 <code>true</code> 로 바꾼 뒤
-  <code>node scripts/upload_firestore.js</code> 를 돌리면 나머지가 감춰집니다.
-  <b>그때 Storage 원본도 지워집니다 — 되돌릴 수 없습니다.</b></p>
+  <code>config/image_pii_allow.json</code> 의 <code>paths</code> 에 넣고
+  <code>node scripts/upload_firestore.js</code> 를 돌리면 그 사진들이 되살아납니다.
+  <br><b>되돌릴 수 있습니다.</b> 감추면 Storage 사본만 지워지고 로컬 원본
+  (<code>assets/images/</code>)은 남습니다 — 다시 올릴 때 그것을 씁니다. 그래서
+  <b>먼저 감추고 아쉬운 것만 되살리는</b> 순서가 안전합니다.</p>
 </div>
 <script>
   document.querySelectorAll(".keep").forEach(function (c) {{

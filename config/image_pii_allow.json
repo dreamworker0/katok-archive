@@ -1,10 +1,15 @@
 {
-  "apply": false,
+  "apply": true,
   "_apply_note": [
     "판정 결과를 실제로 발행에서 뺄지. false 면 검사는 매일 돌지만 사진은 그대로 발행된다.",
-    "2026-07-30: 감출 사진 18장을 사람이 먼저 확인하기로 해서 false 로 시작한다.",
-    "확인이 끝나면 true 로 바꾸고 적재를 돌린다 — 그때 Storage 에서도 지워진다(pruneOrphans).",
-    "감출 목록은 output/image_pii.json 의 verdict=hide 항목이다."
+    "2026-07-30: 감출 사진 18장을 사람이 먼저 확인하기로 해서 false 로 시작했다.",
+    "2026-08-12: 켰다. 확인을 기다리는 동안 13일간 그대로 발행되고 있었고,",
+    "  감추는 것이 **되돌릴 수 있다**는 것을 확인해서 순서를 뒤집었다 —",
+    "  다 보고 켜는 대신 먼저 켜고 아쉬운 것만 되살린다.",
+    "  pruneOrphans 는 Storage 사본만 지운다. 로컬 원본(assets/images/)은 남으므로,",
+    "  경로를 아래 paths 에 넣고 적재를 다시 돌리면 planUploads 가 다시 올린다.",
+    "감출 목록은 output/image_pii.json 의 verdict=hide 항목이다.",
+    "훑어볼 검토표: python -m scripts.build_image_pii_review"
   ],
   "_note": [
     "개인정보로 판정됐지만 그대로 발행할 사진. 기관 안내문·포스터처럼 공개된 연락처가 찍힌 것.",
