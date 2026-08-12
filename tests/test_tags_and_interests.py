@@ -257,7 +257,16 @@ class TranslitFoldTests(unittest.TestCase):
 
 
 class RollupTests(unittest.TestCase):
-    """좁은 태그를 넓은 태그로도 찾게 한다."""
+    """좁은 태그를 넓은 태그로도 찾게 한다 — **글자가 겹치는** 쪽.
+
+    표(`config/tag_broader.json`)를 일부러 비워서 부른다. 실제 표를 읽으면 이
+    시험들이 그 표의 내용에 따라 결과가 바뀐다 — '클로드' 에 'AI 모델' 이 붙는
+    것은 맞는 동작이지만, 여기서 보려는 것은 글자 판정이다. 표 쪽은
+    `BroaderTableTests` 가 본다.
+    """
+
+    def roll(self, threads, participants=None, **kw):
+        return tags.rollup_parent_tags(threads, participants, broader={}, **kw)
 
     def _ontology(self):
         """실제로 갈렸던 네 주제. t-352 만 '온톨로지' 가 없었다."""
@@ -270,7 +279,7 @@ class RollupTests(unittest.TestCase):
 
     def test_narrow_tag_gains_the_broad_one(self):
         threads = self._ontology()
-        added = tags.rollup_parent_tags(threads)
+        added = self.roll(threads)
         self.assertIn(("t-352", "온톨로지"), added)
         # 좁은 태그를 잃지 않는다 — 덧붙이는 것이고 바꾸는 것이 아니다
         self.assertIn("온톨로지 모델링", threads[3]["tags"])
@@ -282,7 +291,7 @@ class RollupTests(unittest.TestCase):
     def test_latin_named_resource_reaches_the_hangul_tag(self):
         # 'Ontology-Playground' 는 '온톨로지' 를 한 글자도 품지 않는다
         threads = self._ontology()
-        tags.rollup_parent_tags(threads)
+        self.roll(threads)
         self.assertIn("온톨로지", threads[3]["tags"])
 
     def test_single_use_tag_cannot_be_a_parent(self):
@@ -290,14 +299,14 @@ class RollupTests(unittest.TestCase):
             {"id": "t-1", "tags": ["대기 시스템"]},
             {"id": "t-2", "tags": ["대기 시스템 개편"]},
         ]
-        self.assertEqual(tags.rollup_parent_tags(threads), [],
+        self.assertEqual(self.roll(threads), [],
                          "한 번 쓰인 말이 부모가 되면 아무 말이나 부모가 된다")
 
     def test_short_tag_cannot_be_a_parent(self):
         threads = [
             {"id": "t-%d" % i, "tags": ["AI"]} for i in range(2)
         ] + [{"id": "t-9", "tags": ["AI 교육"]}]
-        added = tags.rollup_parent_tags(threads)
+        added = self.roll(threads)
         self.assertEqual(added, [], "'AI' 가 부모면 거의 모든 태그가 자식이 된다")
 
     def test_person_name_is_not_a_parent(self):
@@ -307,7 +316,7 @@ class RollupTests(unittest.TestCase):
             {"id": "t-3", "tags": ["김종원 수정판"]},
         ]
         parts = {"participants": [{"nickname": "김종원(○○관)"}]}
-        self.assertEqual(tags.rollup_parent_tags(threads, parts), [],
+        self.assertEqual(self.roll(threads, parts), [],
                          "이름 태그는 참여자 화면 몫이다")
 
     def test_grandparent_is_attached_too(self):
@@ -316,16 +325,131 @@ class RollupTests(unittest.TestCase):
             {"id": "t-3", "tags": ["클로드 코드"]}, {"id": "t-4", "tags": ["클로드 코드"]},
             {"id": "t-5", "tags": ["클로드코드 프로"]},
         ]
-        tags.rollup_parent_tags(threads)
+        self.roll(threads)
         self.assertEqual(set(threads[4]["tags"]),
                          {"클로드코드 프로", "클로드 코드", "클로드"})
 
     def test_running_twice_adds_nothing_new(self):
         threads = self._ontology()
-        tags.rollup_parent_tags(threads)
+        self.roll(threads)
         before = [list(th["tags"]) for th in threads]
-        tags.rollup_parent_tags(threads)
+        self.roll(threads)
         self.assertEqual([th["tags"] for th in threads], before)
+
+
+class BroaderTableTests(unittest.TestCase):
+    """글자가 겹치지 않는 상하위는 표(`config/tag_broader.json`)가 맡는다.
+
+    글자 판정으로는 원리적으로 못 하는 몫이다 — '앱스스크립트' 가 '구글 워크스페이스'
+    에 든다는 것도, 'AWS' 가 '클라우드' 라는 것도 글자에 단서가 없다. 실측
+    2026-08-12: 부모를 하나도 못 얻은 1회짜리 태그가 843개였다.
+    """
+
+    TABLE = {"구글 워크스페이스": ["앱스스크립트", "clasp"],
+             "AI 모델": ["Gemma 3 27B"],
+             "AI": ["AI 모델"]}
+
+    def _table(self, raw=None):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "tag_broader.json"
+            p.write_text(json.dumps({"broader": raw or self.TABLE},
+                                    ensure_ascii=False), encoding="utf-8")
+            return tags.load_broader(p, aliases={})
+
+    def test_tag_reaches_a_parent_it_shares_no_letter_with(self):
+        threads = [{"id": "t-1", "tags": ["앱스스크립트"]}]
+        added = tags.rollup_parent_tags(threads, broader=self._table())
+        self.assertIn(("t-1", "구글 워크스페이스"), added)
+        self.assertIn("앱스스크립트", threads[0]["tags"], "좁은 태그를 잃지 않는다")
+
+    def test_table_parent_needs_no_prior_use(self):
+        """넓은 태그가 아직 아무 보고서에도 없어도 붙는다.
+
+        글자 판정의 `min_count` 방벽은 '한 번 쓰인 말이 부모가 되면 아무 말이나
+        부모가 된다' 는 이유로 있다. 표는 사람이 적은 것이라 그 이유가 없고,
+        새 입구를 세우는 것이 표의 몫이다.
+        """
+        threads = [{"id": "t-1", "tags": ["Gemma 3 27B"]}]
+        tags.rollup_parent_tags(threads, broader=self._table())
+        self.assertIn("AI 모델", threads[0]["tags"])
+
+    def test_table_chain_is_followed(self):
+        # 'Gemma 3 27B' → 'AI 모델' → 'AI'. 표끼리 이어지는 것도 올라간다.
+        threads = [{"id": "t-1", "tags": ["Gemma 3 27B"]}]
+        tags.rollup_parent_tags(threads, broader=self._table())
+        self.assertIn("AI", threads[0]["tags"])
+
+    def test_a_short_parent_from_the_table_is_allowed(self):
+        # 글자 판정에서 'AI' 는 부모가 될 수 없다(min_len). 표는 사람 판단이므로 된다.
+        threads = [{"id": "t-1", "tags": ["AI 모델"]}]
+        tags.rollup_parent_tags(threads, broader=self._table())
+        self.assertIn("AI", threads[0]["tags"])
+
+    def test_a_cycle_in_the_table_does_not_hang(self):
+        table = self._table({"가": ["나"], "나": ["가"]})
+        threads = [{"id": "t-1", "tags": ["가"]}]
+        tags.rollup_parent_tags(threads, broader=table)
+        self.assertEqual({"가", "나"}, set(threads[0]["tags"]))
+
+    def test_a_person_name_is_never_a_parent_even_from_the_table(self):
+        table = self._table({"김종원": ["차량운행일지"]})
+        threads = [{"id": "t-1", "tags": ["차량운행일지"]}]
+        parts = {"participants": [{"nickname": "김종원(○○관)"}]}
+        tags.rollup_parent_tags(threads, parts, broader=table)
+        self.assertEqual(["차량운행일지"], threads[0]["tags"],
+                         "이름 태그는 참여자 화면 몫이다")
+
+    def test_the_broad_name_goes_through_the_alias_table(self):
+        """표에 '구글시트' 라고 적어도 대표 표기 '구글 시트' 로 붙는다.
+
+        안 그러면 색인에 '구글 시트' 와 '구글시트' 가 나란히 서서 태그가 둘로
+        갈린다 — 통일표를 만든 이유가 그것이다.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "b.json"
+            p.write_text(json.dumps({"broader": {"구글시트": ["삽입 수식"]}},
+                                    ensure_ascii=False), encoding="utf-8")
+            # 통일표의 열쇠는 fold 값이다(`load_aliases` 가 그렇게 만든다).
+            table = tags.load_broader(
+                p, aliases={tags.fold("구글시트"): "구글 시트"})
+        threads = [{"id": "t-1", "tags": ["삽입 수식"]}]
+        tags.rollup_parent_tags(threads, broader=table)
+        self.assertIn("구글 시트", threads[0]["tags"])
+
+    def test_missing_table_is_not_an_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual({}, tags.load_broader(Path(d) / "없다.json"))
+
+    def test_shipped_table_is_valid_and_does_not_name_people(self):
+        table = tags.load_broader()
+        self.assertTrue(table, "config/tag_broader.json 을 읽지 못했습니다")
+        # 좁은 말이 두 부모를 가지면 어느 쪽이 붙을지 파일 순서에 달린다.
+        raw = json.loads(tags.BROADER_PATH.read_text(encoding="utf-8"))["broader"]
+        seen: dict[str, str] = {}
+        for broad, narrows in raw.items():
+            for n in narrows:
+                key = tags.fold(n)
+                prev = seen.get(key)
+                self.assertIn(prev, (None, broad),
+                              "'%s' 가 %s 와 %s 두 곳에 있습니다" % (n, prev, broad))
+                seen[key] = broad
+
+    def test_orphan_candidates_point_at_what_the_table_is_missing(self):
+        threads = [{"id": "t-1", "tags": ["앱스스크립트", "혼자뿐인말"]},
+                   {"id": "t-2", "tags": ["바이브코딩"]},
+                   {"id": "t-3", "tags": ["바이브코딩"]}]
+        rows = tags.broader_candidates(threads, self._table())
+        names = [t for t, _ in rows]
+        self.assertIn("혼자뿐인말", names)
+        self.assertNotIn("앱스스크립트", names, "표로 부모를 얻은 것은 고립이 아니다")
+        self.assertNotIn("바이브코딩", names, "두 번 쓰인 태그는 색인에 나온다")
+
+    def test_orphan_candidates_leave_out_people_and_places(self):
+        threads = [{"id": "t-1", "tags": ["김종원", "무지개노인복지관", "혼자뿐인말"]}]
+        parts = {"participants": [{"nickname": "김종원"}]}
+        rows = tags.broader_candidates(
+            threads, {}, parts, places={tags.fold("무지개노인복지관")})
+        self.assertEqual(["혼자뿐인말"], [t for t, _ in rows])
 
 
 class DigestKeywordTests(unittest.TestCase):

@@ -15,7 +15,9 @@
 사람 이름 태그는 따로 표시해 둔다(`people`) — 사람은 참여자 화면에서 찾는 것이
 맞고, 주제 태그 입구에 이름이 섞이면 프로파일링처럼 보인다.
 
-좁은 태그는 넓은 태그로도 찾히게 한다(`rollup_parent_tags`) — 아래 설명 참조.
+좁은 태그는 넓은 태그로도 찾히게 한다(`rollup_parent_tags`). 여기도 두 단계다 —
+글자가 겹치는 것은 기계가('온톨로지 모델링' → '온톨로지'), 겹치지 않는 것은
+`config/tag_broader.json` 표가 맡는다('앱스스크립트' → '구글 워크스페이스').
 """
 from __future__ import annotations
 
@@ -27,6 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ALIAS_PATH = ROOT / "config" / "tag_aliases.json"
 PLACES_PATH = ROOT / "config" / "tag_places.json"
+BROADER_PATH = ROOT / "config" / "tag_broader.json"
 
 # 지명·조직 **이름** 으로 보이는 꼴. 여기 걸린 것을 자동으로 빼지는 않는다.
 #
@@ -104,6 +107,71 @@ def load_places(path: Path | None = None) -> tuple[set[str], set[str]]:
     raw = json.loads(p.read_text(encoding="utf-8"))
     return ({fold(t) for t in (raw.get("places") or []) if t},
             {fold(t) for t in (raw.get("not_places") or []) if t})
+
+
+def load_broader(path: Path | None = None,
+                 aliases: dict[str, str] | None = None) -> dict[str, str]:
+    """`config/tag_broader.json` → {좁은 태그의 fold: 넓은 태그 표시 이름}.
+
+    표에 적힌 넓은 태그도 통일표를 거친다 — 'Gemini' 라고 적어도 대표 표기
+    '제미나이' 로 붙어야 색인이 둘로 갈리지 않는다(`backfill_from_titles` 와 같은
+    이유다).
+
+    표가 없어도 돌아간다. 그때는 글자가 겹치는 승격만 남는다.
+    """
+    p = path or BROADER_PATH
+    if not p.exists():
+        return {}
+    aliases = aliases if aliases is not None else load_aliases()
+    raw = json.loads(p.read_text(encoding="utf-8")).get("broader") or {}
+    out: dict[str, str] = {}
+    for broad, narrows in raw.items():
+        broad = (broad or "").strip()
+        if not broad:
+            continue
+        name = aliases.get(fold(broad), broad)
+        for n in narrows or []:
+            key = fold(n)
+            # 자기 자신을 부모로 적은 줄은 버린다 — 무한히 돌지는 않지만(방문
+            # 표시가 있다) 표를 읽는 사람을 헷갈리게 한다.
+            if key and key != fold(name):
+                out[key] = name
+    return out
+
+
+def _parent_lookup(threads: list[dict], participants: dict | None = None,
+                   broader: dict[str, str] | None = None,
+                   min_count: int = 2, min_len: int = 3):
+    """태그 → 바로 위 태그들을 돌려주는 함수를 만든다.
+
+    두 갈래를 한 자리에서 합친다. `rollup_parent_tags`(붙이는 쪽)와
+    `broader_candidates`(못 붙은 것을 알리는 쪽)가 같은 판정을 봐야 하므로
+    이 함수 하나만 둔다 — 갈라지면 '후보로 알려 준 태그가 실은 이미 붙어 있는'
+    꼴이 된다.
+    """
+    counts: Counter[str] = Counter(
+        t for th in threads for t in (th.get("tags") or []))
+    people = person_names(participants or {})
+    broader = broader if broader is not None else load_broader()
+
+    base = [t for t, n in counts.items()
+            if n >= min_count and len(fold(t)) >= min_len and t not in people]
+    keys = {t: fold(t) for t in base}
+
+    def parents(tag: str) -> list[str]:
+        out: list[str] = []
+        # 표가 먼저다. 사람이 적은 것이고, `min_count` 같은 방벽을 받지 않는다 —
+        # 아직 한 번도 안 쓰인 넓은 태그를 새로 세우는 것이 이 표의 몫이다.
+        named = broader.get(fold(tag))
+        if named and named != tag and named not in people:
+            out.append(named)
+        ft = fold(tag)
+        for b in base:
+            if keys[b] != ft and keys[b] in ft and b not in out:
+                out.append(b)
+        return out
+
+    return parents
 
 
 def place_candidates(threads: list[dict], places: set[str] | None = None,
@@ -234,7 +302,8 @@ def attach_tags(threads: list[dict], participants: dict | None = None,
 
 
 def rollup_parent_tags(threads: list[dict], participants: dict | None = None,
-                       min_count: int = 2, min_len: int = 3
+                       min_count: int = 2, min_len: int = 3,
+                       broader: dict[str, str] | None = None
                        ) -> list[tuple[str, str]]:
     """좁은 태그에 넓은 태그를 덧붙인다. 붙인 (주제 id, 태그) 목록.
 
@@ -246,35 +315,75 @@ def rollup_parent_tags(threads: list[dict], participants: dict | None = None,
     좁은 태그를 넓은 태그로 **바꾸지** 않고 넓은 태그를 **덧붙인다**. '온톨로지
     모델링'의 정확함을 잃지 않으면서 '온톨로지'로도 찾힌다.
 
-    두 가지 방벽을 둔다.
+    부모는 두 갈래에서 온다.
 
-    * 부모는 `min_count` 건 이상 쓰인 태그만 — 한 번 쓰인 말이 부모가 되면
-      아무 말이나 부모가 된다.
-    * 부모는 fold 길이 `min_len` 이상 — 'AI'·'앱' 이 온 태그의 부모가 되는 것을
-      막는다.
+    1. 글자가 겹치는 것 — 기계가 찾는다. 여기에는 방벽이 둘 있다. 부모는
+       `min_count` 건 이상 쓰인 태그만(한 번 쓰인 말이 부모가 되면 아무 말이나
+       부모가 된다), 그리고 fold 길이 `min_len` 이상('AI'·'앱' 이 온 태그의
+       부모가 되는 것을 막는다).
+    2. 글자가 겹치지 않는 것 — `config/tag_broader.json` 표. 이쪽은 원리적으로
+       기계가 못 한다. '앱스스크립트' 가 '구글 워크스페이스' 에 든다는 것도,
+       'AWS' 가 '클라우드' 라는 것도 글자에 단서가 없다(실측 2026-08-12:
+       부모를 못 얻은 1회짜리 태그가 843개다).
+
+    부모의 부모까지 올라간다. 표와 글자 판정이 섞여도 이어진다 — 'Gemma 3 27B'
+    는 표로 'AI 모델'에 닿고, '클라우드' 는 표로 '인프라'에 닿는다.
 
     사람 이름은 부모로 쓰지 않는다. 이름 태그는 참여자 화면 몫이고(`person`),
     '김종원' 이 '김종원 수정판'을 빨아들여도 얻는 것이 없다.
     """
-    counts: Counter[str] = Counter(
-        t for th in threads for t in (th.get("tags") or []))
-    people = person_names(participants or {})
-    base = [t for t, n in counts.items()
-            if n >= min_count and len(fold(t)) >= min_len and t not in people]
-    keys = {t: fold(t) for t in base}
+    parents = _parent_lookup(threads, participants, broader, min_count, min_len)
 
     added: list[tuple[str, str]] = []
     for th in threads:
         own = list(th.get("tags") or [])
         have = set(own)
-        for t in own:
-            ft = fold(t)
-            for b in base:
-                if keys[b] != ft and keys[b] in ft and b not in have:
-                    th["tags"].append(b)
-                    have.add(b)
-                    added.append((th["id"], b))
+        # 넓힌 태그에서 또 넓힐 수 있으므로 훑으며 늘려 간다. `seen` 이 있어
+        # 표가 돌아가게(A→B→A) 적혀 있어도 멈춘다.
+        queue, seen = list(own), set(own)
+        while queue:
+            tag = queue.pop(0)
+            for p in parents(tag):
+                if p in seen:
+                    continue
+                seen.add(p)
+                queue.append(p)
+                if p not in have:
+                    th.setdefault("tags", []).append(p)
+                    have.add(p)
+                    added.append((th["id"], p))
     return added
+
+
+def broader_candidates(threads: list[dict], broader: dict[str, str] | None = None,
+                       participants: dict | None = None,
+                       places: set[str] | None = None,
+                       min_count: int = 2, min_len: int = 3
+                       ) -> list[tuple[str, int]]:
+    """부모를 하나도 못 얻은 고립 태그. (태그, 쓰인 횟수) 를 많은 순으로.
+
+    `min_count` 미만으로 쓰인 태그는 태그 색인 목록에 나오지 않는다
+    (`build_tag_index`). 부모까지 없으면 그 주제로 가는 입구가 검색 말고는 없다 —
+    사실상 안 보이는 태그다. 그 목록을 보여 주면 `config/tag_broader.json` 에
+    무엇을 적을지가 정해진다.
+
+    `place_candidates` 와 같은 방식이다: 기계는 후보만 내놓고 판단은 표로 간다.
+    한 번 표에 적은 것은 부모를 얻으므로 다음부터 후보에 안 나온다.
+
+    **승격 전에** 불러야 한다 — `rollup_parent_tags` 가 부모를 붙인 뒤에는
+    무엇이 고립이었는지 알 수 없다.
+    """
+    parents = _parent_lookup(threads, participants, broader, min_count, min_len)
+    people = person_names(participants or {})
+    places = places or set()
+    counts: Counter[str] = Counter(
+        t for th in threads for t in (th.get("tags") or []))
+
+    rows = [(t, n) for t, n in counts.items()
+            if n < min_count and t not in people and fold(t) not in places
+            and not parents(t)]
+    rows.sort(key=lambda r: (-r[1], r[0]))
+    return rows
 
 
 def vocabulary(threads: list[dict], participants: dict | None = None,
@@ -292,6 +401,11 @@ def vocabulary(threads: list[dict], participants: dict | None = None,
 
     사람 이름·지명은 넣지 않는다. 태그 구름에서 빼는 것과 같은 이유이고, 어휘로
     보여주면 다음 보고서가 그 이름을 또 태그로 쓴다.
+
+    `config/tag_broader.json` 의 **넓은 태그는 횟수와 무관하게 넣고 잘라내지도
+    않는다.** 사람이 '이것이 이 방의 공통 어휘다' 라고 적어 둔 말이고, 고르게 하려고
+    적은 것이다. 승격(`rollup_parent_tags`)은 이미 붙은 태그를 사후에 넓히는 것뿐이라
+    보고서가 처음부터 넓은 말을 고르게 하지는 못한다 — 그 몫이 여기다.
     """
     people = person_names(participants or {})
     places = places or set()
@@ -301,10 +415,19 @@ def vocabulary(threads: list[dict], participants: dict | None = None,
     for th in threads:
         for name in canonical_tags(th.get("keywords") or [], tag_map):
             counts[name] += 1
+
+    def keeps(name: str) -> bool:
+        return name not in people and fold(name) not in places
+
     rows = [(name, n) for name, n in counts.items()
-            if n >= min_count and name not in people and fold(name) not in places]
+            if n >= min_count and keeps(name)]
     rows.sort(key=lambda r: (-r[1], r[0]))
-    return rows[:limit]
+    rows = rows[:limit]
+
+    have = {fold(name) for name, _ in rows}
+    extra = [(b, counts.get(b, 0)) for b in sorted(set(load_broader().values()))
+             if fold(b) not in have and keeps(b)]
+    return rows + extra
 
 
 def build_tag_index(threads: list[dict], participants: dict | None = None,

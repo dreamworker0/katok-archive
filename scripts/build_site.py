@@ -557,12 +557,6 @@ def build_data(
     if filled:
         print("[태그] 제목에 있는데 빠졌던 태그 %d건 채움 (앞 5개: %s)"
               % (len(filled), ", ".join("%s←%s" % f for f in filled[:5])))
-    # 좁은 태그에 넓은 태그를 덧붙인다 — '온톨로지 모델링' 주제가 '온톨로지'로도
-    # 찾히게 하는 몫이다. 제목에서 채운 태그도 승격 대상이 되도록 뒤에 둔다.
-    rolled = taglib.rollup_parent_tags(threads_meta, participants)
-    if rolled:
-        print("[태그] 넓은 태그 %d건 승격 (앞 5개: %s)"
-              % (len(rolled), ", ".join("%s←%s" % r for r in rolled[:5])))
     # 지명·조직 이름은 태그 구름에서 뺀다(검색으로는 그대로 찾힌다). 뺄 목록은
     # 사람이 적은 표를 따르고, 표에 없는 후보만 알린다 — 기계가 정하면 이 방의
     # 주제인 '장애인복지관'·'거주시설' 까지 사라진다.
@@ -571,6 +565,20 @@ def build_data(
     if cands:
         print("[태그] 지명·조직 이름 후보 %d개 — config/tag_places.json 에 넣을지 보세요 "
               "(앞 5개: %s)" % (len(cands), ", ".join(t for t, _ in cands[:5])))
+    # 부모를 못 얻은 고립 태그를 **승격 전에** 센다. 승격한 뒤에는 무엇이 고립이었는지
+    # 알 수 없다. 지명은 빼고 본다 — 그것은 tag_places.json 이 맡을 일이다.
+    broader = taglib.load_broader()
+    orphans = taglib.broader_candidates(threads_meta, broader, participants, places)
+    # 좁은 태그에 넓은 태그를 덧붙인다 — '온톨로지 모델링' 주제가 '온톨로지'로도
+    # 찾히게 하는 몫이다. 제목에서 채운 태그도 승격 대상이 되도록 뒤에 둔다.
+    rolled = taglib.rollup_parent_tags(threads_meta, participants, broader=broader)
+    if rolled:
+        print("[태그] 넓은 태그 %d건 승격 (앞 5개: %s)"
+              % (len(rolled), ", ".join("%s←%s" % r for r in rolled[:5])))
+    if orphans:
+        print("[태그] 부모도 없고 한 번만 쓰인 태그 %d개 — 검색 말고는 입구가 없습니다. "
+              "config/tag_broader.json 에 넣을지 보세요 (앞 8개: %s)"
+              % (len(orphans), ", ".join(t for t, _ in orphans[:8])))
     # 보조 분류 — 한 주제를 여러 분류에서 찾게 하는 곁길. 주 분류는 그대로 하나다.
     cat_ids = {c["id"] for c in topics["categories"]}
     for tmeta in threads_meta:
