@@ -82,6 +82,42 @@
       };
       toolbar.appendChild(b);
     });
+    /* 최근 것만 보기.
+     *
+     * 관계망에 시간이 없어서 작년에 한 번 스친 도구와 어제까지 쓰는 도구가 나란히
+     * 떠 있었다. 흐리게 하지 않고 걸러내기로 한다 — 노드 색이 이미 분류를 뜻하고
+     * 있어서 흐림을 얹으면 의미가 겹치고, 어두운 모드에서 대비도 잃는다.
+     *
+     * 기준일은 **아카이브의 마지막 날**이지 오늘이 아니다. 오늘로 재면 수집이
+     * 멈춘 archive 를 열었을 때 전부 사라져서 고장처럼 보인다.
+     *
+     * 날짜가 없는 노드(원문에 이름이 한 번도 안 나온 것)는 최근이라는 근거가
+     * 없으므로 함께 숨긴다. 단추 설명에 적어 둔다. */
+    var RECENT_MONTHS = 6;
+    var latest = "";
+    nodes.forEach(function (n) {
+      if (n.last_seen && n.last_seen > latest) latest = n.last_seen;
+    });
+    var cutoff = "";
+    if (latest) {
+      var d = new Date(latest + "T00:00:00");
+      d.setMonth(d.getMonth() - RECENT_MONTHS);
+      cutoff = d.toISOString().slice(0, 10);
+    }
+    var recentOnly = false;
+    if (cutoff) {
+      var rb = document.createElement("button");
+      rb.textContent = "최근 " + RECENT_MONTHS + "개월";
+      rb.title = "마지막 대화(" + latest + ")로부터 " + RECENT_MONTHS +
+        "개월 안에 나온 것만 봅니다. 원문에 이름이 없어 시점을 모르는 것도 숨깁니다.";
+      rb.onclick = function () {
+        recentOnly = !recentOnly;
+        rb.classList.toggle("on", recentOnly);
+        applyVisibility();
+      };
+      toolbar.appendChild(rb);
+    }
+
     var resetBtn = document.createElement("button");
     resetBtn.textContent = "⤢ 초기화";
     resetBtn.onclick = function () { view = { x: 0, y: 0, k: 1 }; applyView(); };
@@ -143,13 +179,20 @@
 
     // 표에 없는 종류는 **감추지 않는다** — 끄는 단추도 없으니 감추면 다시 켤 수가
     // 없다. 종류를 새로 더한 발행본을 옛 화면이 열었을 때가 그 경우다.
-    function shown(type) { return typeState[type] !== false; }
+    function shownType(type) { return typeState[type] !== false; }
+
+    // 걸러내기는 둘이 함께 걸린다 — 종류를 끄고 '최근' 을 켜면 둘 다 만족해야 남는다.
+    function shown(n) {
+      if (!shownType(n.type)) return false;
+      if (!recentOnly) return true;
+      return !!n.last_seen && n.last_seen >= cutoff;
+    }
 
     function applyVisibility() {
-      nodes.forEach(function (n) { n._g.style.display = shown(n.type) ? "" : "none"; });
+      nodes.forEach(function (n) { n._g.style.display = shown(n) ? "" : "none"; });
       edgeEls.forEach(function (ln) {
         var e = ln._e;
-        ln.style.display = (shown(e.s.type) && shown(e.t.type)) ? "" : "none";
+        ln.style.display = (shown(e.s) && shown(e.t)) ? "" : "none";
       });
     }
 

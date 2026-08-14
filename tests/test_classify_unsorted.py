@@ -191,7 +191,7 @@ class GraphMergeTests(unittest.TestCase):
         """관계 이름이 맞아도 양 끝의 종류가 안 맞으면 버린다.
 
         예전에는 이름만 봤다. 그래서 뜻이 안 되는 엣지가 원장에 남았다 —
-        실측 2026-08-12: `person -belongs-> topic` 두 건. 여기서는 사람이 도구를
+        실측 2026-08-14: `person -belongs-> topic` 두 건. 여기서는 사람이 도구를
         '만든' 것을 거꾸로 적은 모양을 본다.
         """
         k = graph_skeleton()

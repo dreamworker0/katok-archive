@@ -2,7 +2,7 @@
 """관계망 스키마의 계약.
 
 예전 검증은 '엣지 종류가 목록에 있나 · 양 끝 노드가 있나' 두 가지뿐이라 뜻이 안
-되는 엣지가 원장에 남았다 — 실측 2026-08-12 에 `person -belongs-> topic` 두 건
+되는 엣지가 원장에 남았다 — 실측 2026-08-14 에 `person -belongs-> topic` 두 건
 (belongs 는 앱·도구가 어느 주제에 속하는지를 말하는 관계다).
 
 반대로 넉넉해야 할 곳도 있다. `person -interested-> tool` 32건은 '이 도구에 관심을
@@ -21,7 +21,7 @@ from scripts import ontology
 
 class ShapeTests(unittest.TestCase):
     def test_the_shapes_the_room_actually_produced_are_valid(self):
-        """실제 원장에 있던 조합(2026-08-12). 이것을 막으면 데이터를 버린다."""
+        """실제 원장에 있던 조합(2026-08-14). 이것을 막으면 데이터를 버린다."""
         for src, etype, dst in [
             ("person", "uses", "tool"), ("person", "interested", "topic"),
             ("person", "made", "app"), ("app", "uses", "tool"),
@@ -34,7 +34,7 @@ class ShapeTests(unittest.TestCase):
                 self.assertTrue(ontology.is_valid(src, etype, dst))
 
     def test_a_person_does_not_belong_to_a_category(self):
-        # 실측 2026-08-12: 이 모양 두 건이 검증을 통과해 원장에 있었다.
+        # 실측 2026-08-14: 이 모양 두 건이 검증을 통과해 원장에 있었다.
         self.assertFalse(ontology.is_valid("person", "belongs", "topic"))
 
     def test_a_reversed_edge_is_rejected(self):
@@ -163,7 +163,7 @@ class NodeTagTests(unittest.TestCase):
     """관계망 노드와 태그가 같은 것을 가리킬 때 짝지어 둔다.
 
     '주요 앱' 의 '다룬 주제' 판정이 이름 글자로 되어 있어서, 이름이 서술형인
-    결과물은 어느 태그·제목과도 안 맞아 다룬 주제가 0개였다 — 실측 2026-08-12 에
+    결과물은 어느 태그·제목과도 안 맞아 다룬 주제가 0개였다 — 실측 2026-08-14 에
     앱 78개 중 38개, 그중 11개는 아무 주제도 없어 눌러도 빈 화면이었다.
 
     자동으로 잇지 않는다. 후보를 뽑아 보면 38개 전부에 후보가 나오지만
@@ -228,7 +228,7 @@ class NodeTagTests(unittest.TestCase):
     def test_a_node_settled_as_not_linkable_is_not_asked_again(self):
         """잇지 않기로 정한 것도 판단이 끝난 상태다.
 
-        실측 2026-08-12: 남은 후보 13개를 하나씩 보고 전부 '잇지 않는다' 로 정했다 —
+        실측 2026-08-14: 남은 후보 13개를 하나씩 보고 전부 '잇지 않는다' 로 정했다 —
         후보가 죄다 일반 도구명·개념·기관 이름이었다. 그 결정을 적을 자리가 없으면
         로그가 매일 같은 13개를 다시 묻는다.
         """
@@ -282,9 +282,9 @@ class DigestNodeLinkTests(unittest.TestCase):
                   "threads": [{"id": "t-1", "category": "projects", "message_ids": ["m1"]},
                               {"id": "t-2", "category": "projects", "message_ids": ["m2"]}]}
         # 원문에 'AI 토론 앱' 이라는 말은 한 번도 안 나온다.
-        msgs = [{"id": "m1", "nickname": "갑", "date": "2026-08-12",
+        msgs = [{"id": "m1", "nickname": "갑", "date": "2026-08-14",
                  "category": "projects", "text": "이거 써보세요"},
-                {"id": "m2", "nickname": "갑", "date": "2026-08-12",
+                {"id": "m2", "nickname": "갑", "date": "2026-08-14",
                  "category": "projects", "text": "파이어베이스 좋네요"}]
         knowledge = {"nodes": [{"id": "app:debate", "type": "app", "label": "AI 토론 앱",
                                 "category": "projects", "query": "토론"}]}
@@ -366,6 +366,6 @@ class PromptRuleTests(unittest.TestCase):
         from scripts import classify_unsorted as cu
         prompt = cu.build_prompt(
             [{"id": "msg-001", "nickname": "갑", "text": "안녕",
-              "date": "2026-08-12", "time": "10:00"}],
+              "date": "2026-08-14", "time": "10:00"}],
             [{"id": "chat", "label": "일상"}], [], [])
         self.assertIn(ontology.prompt_rules(), prompt)

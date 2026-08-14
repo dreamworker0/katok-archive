@@ -86,7 +86,7 @@ def judge(ocr: dict[str, list[str] | None],
         # 허용 목록이 등급보다 앞선다. '사람이 발행하기로 했다' 는 판단은 certain
         # 이든 likely 든 같은 뜻이고, 한 번 판단한 것을 또 물으면 표를 쓸 이유가
         # 없다 — 예전에는 `certain` 에만 적용돼서, review 로 걸린 사진을 표에 적어
-        # 두어도 매일 '확인필요 1' 이 계속 찍혔다(실측 2026-08-12).
+        # 두어도 매일 '확인필요 1' 이 계속 찍혔다(실측 2026-08-14).
         if (certain or likely) and key in allow_paths:
             verdict = "allowed"      # 개인정보가 있지만 사람이 발행하기로 한 것
         elif certain:
