@@ -122,9 +122,12 @@ button, input, select { font: inherit; }
 [data-font-next="large"] .font-toggle__mark { font-size: 14.5px; }
 [data-font-next="xlarge"] .font-toggle__mark { font-size: 17px; }
 .app-main { min-width: 0; }
+/* 배경을 흐리게(backdrop-filter) 하지 않는다. 이 줄은 스크롤하는 동안 늘 화면에
+   있으므로, 흐림은 매 프레임 뒤쪽을 다시 뭉개는 일이 된다 — 카드가 359장인 긴
+   문서에서는 그것만으로 컴퓨터가 버벅였다. 대신 배경을 불투명하게 둔다. */
 .utility-bar { position: sticky; top: 0; z-index: 20; display: flex; gap: 12px;
   padding: 18px 32px; border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: blur(12px); }
+  background: var(--bg); }
 .icon-btn { border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink);
   border-radius: 10px; padding: 7px 11px; cursor: pointer; font-size: 14px; }
 .icon-btn:hover { background: var(--surface-2); }
@@ -539,6 +542,13 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 /* ---------- 주제 흐름 카드 ---------- */
 .tcard { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--c);
   border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; box-shadow: var(--shadow-sm); }
+/* 카드가 359장이면 문서가 10만 px 이 된다. 그러면 보고서 하나를 펼치는 것만으로
+   문서 전체가 다시 레이아웃된다 — 목록에 들어서는 레이아웃만 1.2초였다(실측).
+   화면 밖 카드는 레이아웃·그리기를 건너뛰게 하고, 대신 평균 높이를 알려 스크롤
+   길이를 맞춘다(같은 실측 33ms). 모르는 브라우저는 이 두 줄을 무시할 뿐이므로
+   느려지기만 하고 깨지지는 않는다. 높이가 어림값이 되는 대가는 app.js 의
+   jumpToTimeline() 에서 되잡는다. */
+.tcard { content-visibility: auto; contain-intrinsic-size: auto 280px; }
 .tc-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
   justify-content: space-between; margin-bottom: 6px; }
 .tc-meta { font-size: 12px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
@@ -564,6 +574,9 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .tc-detail-body { display: none; margin-top: 8px; padding: 16px 18px;
   background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; }
 .tc-detail.on .tc-detail-body { display: block; }
+/* 아직 만들지 않은 본문(검색으로 펼쳐진 채 화면 밖에 있는 카드)은 빈 상자로
+   보이지 않게 둔다 — 채워지면 :empty 가 풀려 저절로 나타난다. */
+.tc-detail.on .tc-detail-body:empty { display: none; }
 
 /* 마크다운 본문 — 문서처럼 읽히게 */
 .md > :first-child { margin-top: 0; }
@@ -866,8 +879,8 @@ img.img-error {
     padding: 8px max(8px, env(safe-area-inset-right))
       calc(8px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
     border-top: 1px solid var(--line);
-    background: color-mix(in srgb, var(--surface) 94%, transparent);
-    backdrop-filter: blur(14px);
+    /* 아래 단추줄도 같은 이유로 흐림을 뺀다 — 스크롤 중 늘 떠 있는 자리다. */
+    background: var(--surface);
   }
   .mobile-nav button { min-width: 0; border: 0; border-radius: 10px; padding: 7px 3px;
     color: var(--ink-faint); background: transparent; font-size: 11px; cursor: pointer; }

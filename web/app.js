@@ -915,7 +915,7 @@
       '<path d="M14 3v4h4M9 12h6M9 16h6"></path></svg>';
   }
 
-  function detailBlock(t, inlineLinks, contextualLinks) {
+  function detailBlock(t, contextualLinks) {
     if (!t.report) return "";
     var open = !!state.q;
     var n = mediaOf(t.id).length;
@@ -927,10 +927,59 @@
       (open ? "보고서 접기" : "보고서 읽기") + "</span></button>" +
       '<button class="tc-dl" type="button" title="이 보고서를 .md 파일로 저장합니다">' +
       "⬇ .md</button></div>" +
-      '<div class="tc-detail-body md">' +
-      highlightText(linkifyHosts(renderMarkdown(t.report), inlineLinks), state.q) +
-      (hasResources ? '<div class="tc-media" data-media="' + esc(t.id) + '"></div>' : "") +
-      "</div></div>";
+      // 본문은 비워 둔다 — 읽겠다고 누른 카드만 fillReport() 가 채운다.
+      '<div class="tc-detail-body md"' + (hasResources ? ' data-res="1"' : "") +
+      "></div></div>";
+  }
+
+  /* 보고서 본문은 '읽겠다'고 할 때 비로소 만든다.
+   *
+   * 목록에 들어서는 순간 359장 전부의 마크다운을 HTML 로 바꿔 넣어 두었는데,
+   * 정작 읽는 것은 한두 장이다. 문서가 10만 px 로 자라 있으면 접힌 카드
+   * 하나를 펼치는 것만으로도 문서 전체가 다시 레이아웃되어 브라우저가 멈춘다.
+   * 만들지 않은 것은 레이아웃할 것도 없다.
+   */
+  function fillReport(box) {
+    var body = box.querySelector(".tc-detail-body");
+    if (!body || body.getAttribute("data-filled")) return;
+    var tid = box.getAttribute("data-tid");
+    var t = THREADS.filter(function (x) { return x.id === tid; })[0];
+    if (!t) return;
+    body.setAttribute("data-filled", "1");
+    body.innerHTML =
+      highlightText(linkifyHosts(renderMarkdown(t.report), splitLinks(t).inline), state.q) +
+      (body.getAttribute("data-res")
+        ? '<div class="tc-media" data-media="' + esc(t.id) + '"></div>' : "");
+    fillMedia(box);
+  }
+
+  /* 검색 중에는 카드가 펼쳐진 채로 그려진다(어디가 걸렸는지 보여야 한다). 그
+   * 145장을 한꺼번에 채우면 검색어를 한 글자 칠 때마다 멈추므로, 화면에
+   * 다가온 것부터 채운다. */
+  var reportObserver = null;
+  function observeOpenReports(scope) {
+    var boxes = scope.querySelectorAll(".tc-detail.on");
+    if (!boxes.length) return;
+    if (!("IntersectionObserver" in window)) {
+      Array.prototype.forEach.call(boxes, fillReport);
+      return;
+    }
+    if (!reportObserver) {
+      reportObserver = new IntersectionObserver(function (entries) {
+        entries.forEach(function (en) {
+          if (!en.isIntersecting) return;
+          reportObserver.unobserve(en.target);
+          fillReport(en.target);
+        });
+      }, { rootMargin: "400px" });
+    }
+    // 지금 눈에 들어와 있는 것은 관찰자를 기다리지 않고 바로 채운다 — 검색 결과
+    // 첫 화면이 빈 채로 한 박자 늦게 나타나면 고장으로 보인다.
+    var reach = window.innerHeight * 1.5;
+    Array.prototype.forEach.call(boxes, function (b) {
+      if (b.getBoundingClientRect().top < reach) fillReport(b);
+      else reportObserver.observe(b);
+    });
   }
 
   /** 이 주제에서 오간 사진·첨부. 보고서에 손으로 적지 않고 여기서 찾는다. */
@@ -1122,7 +1171,7 @@
                 esc(k) + "</button>"; }).join("") + "</div>"
           : "";
       }()) +
-      detailBlock(t, lk.inline, lk.context) +
+      detailBlock(t, lk.context) +
       (people ? '<div class="tc-people">' + people + "</div>" : "") +
       (links ? '<div class="tc-links"><p class="tc-links-label">' +
         // 본문에 이미 걸린 링크가 있으면, 아래 목록은 '본문이 안 다룬 것'이다.
@@ -1154,6 +1203,7 @@
   function bindThreadCards(scope) {
     // 주제 카드의 태그도 같은 규칙으로 — 태그면 정확히, 아니면 글자 검색.
     bindKeywordChips(scope);
+    observeOpenReports(scope);
     Array.prototype.forEach.call(scope.querySelectorAll(".tc-dl"), function (b) {
       b.onclick = function () {
         var tid = b.parentNode.parentNode.getAttribute("data-tid");
@@ -1168,7 +1218,7 @@
         var label = b.querySelector(".tc-toggle-label");
         if (label) label.textContent = on ? "보고서 접기" : "보고서 읽기";
         b.setAttribute("aria-expanded", on ? "true" : "false");
-        if (on) fillMedia(box);
+        if (on) fillReport(box);
       };
     });
     Array.prototype.forEach.call(scope.querySelectorAll("[data-nick]"), function (b) {
@@ -1210,11 +1260,23 @@
     setView("timeline");
     requestAnimationFrame(function () {
       var t = document.getElementById(anchor);
-      if (t) {
-        t.scrollIntoView({ behavior: "smooth", block: "center" });
-        t.style.background = "var(--accent-soft)"; t.style.borderRadius = "10px";
-        setTimeout(function () { t.style.background = ""; }, 2600);
-      }
+      if (!t) return;
+      t.scrollIntoView({ behavior: "smooth", block: "center" });
+      /* 화면 밖 카드의 높이는 어림값이다(styles.css 의 content-visibility). 부드럽게
+       * 굴러가는 동안 실제 높이가 드러나 목적지가 밀리므로, 멈춘 뒤 한 번 더 맞춘다.
+       * 굴러가는 중에 끼어들면 애니메이션과 서로 밀어내므로, 스크롤이 멎은 것을
+       * 확인하고서 손을 댄다. */
+      var was = -1, tries = 0;
+      var settle = setInterval(function () {
+        var now = window.scrollY;
+        if (++tries > 12) { clearInterval(settle); return; }
+        if (now !== was) { was = now; return; }
+        clearInterval(settle);
+        var r = t.getBoundingClientRect();
+        if (r.top < 0 || r.bottom > window.innerHeight) t.scrollIntoView({ block: "center" });
+      }, 180);
+      t.style.background = "var(--accent-soft)"; t.style.borderRadius = "10px";
+      setTimeout(function () { t.style.background = ""; }, 2600);
     });
   }
 
