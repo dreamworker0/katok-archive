@@ -270,60 +270,98 @@ async function main() {
 
   // --dry-run 은 아무것도 쓰지 않는다. 하트비트도 쓰기다 — 확인해 보려고 돌린 것이
   // 화면에 "PC 연결됨"으로 뜨면, 실제로는 갱신을 받지 않는데 받는다고 보인다.
+  //
+  // 그리고 **듣고 있지 않는 동안에는 쓰지 않는다**. 리스너가 끊긴 채로 하트비트만
+  // 계속 찍으면, 버튼이 먹지 않는데 화면에는 'PC 연결됨' 으로 보인다 — dry-run 을
+  // 막아 둔 것과 똑같은 이유다.
+  let listening = false;
   const beat = () => {
-    if (DRY) return;
+    if (DRY || !listening) return;
     ref.set({ watcherSeenAt: new Date().toISOString() }, { merge: true })
       .catch((e) => say(`하트비트 실패: ${e.message}`, "WARN"));
   };
 
   say(`감시 시작 (once=${ONCE} dry-run=${DRY})`);
-  beat();
+  // 첫 하트비트는 첫 스냅샷에서 찍는다 — 그때가 실제로 듣기 시작한 순간이다.
   const timer = ONCE ? null : setInterval(beat, HEARTBEAT_MS);
 
+  // 리스너가 끊겼을 때 어떻게 하는가 — 이 스크립트의 성패가 여기 있다.
+  //
+  // 예전에는 오류가 나면 그냥 끝냈다. '살아 있는 척하지 않는다'는 뜻은 맞았지만,
+  // 예약 작업의 방아쇠가 **로그온 뿐**이라 한 번 죽으면 다음 로그온까지 되살아나지
+  // 않았다. 실측 2026-08-20 08:53 "A backoff operation is already in progress." 로
+  // 죽은 뒤, 관리 탭의 '지금 갱신' 이 이틀 동안 조용히 먹지 않았다. 주석에 적어 둔
+  // 최악의 결말("누른 게 먹었나?")이 그대로 벌어진 것이다.
+  //
+  // 그래서 스스로 다시 붙는다. 간격을 늘려 가며(1초→5분) 무한히 시도한다 — 끝내는
+  // 편이 더 위험하다. 못 듣는 동안 하트비트가 멈추므로 화면은 사실을 본다.
+  const BACKOFF_MS = [1000, 2000, 5000, 15000, 30000, 60000, 120000, 300000];
+  let attempt = 0;
+  let retryTimer = null;
   let unsub = null;
+
   const stop = (code, why) => {
     say(why);
     if (unsub) unsub();
     if (timer) clearInterval(timer);
+    if (retryTimer) clearTimeout(retryTimer);
     process.exit(code);
   };
 
-  unsub = ref.onSnapshot(async (snap) => {
-    const data = snap.exists ? (snap.data() || {}) : {};
-    if (data.status !== "queued" || !data.requestId) {
-      // --once 는 '지금 대기 중인 것 하나'만 본다. 없으면 기다리지 않고 끝낸다 —
-      // 손으로 확인할 때 쓰는 모드라, 매달려 있으면 확인이 안 된다.
-      if (ONCE && !busy) stop(0, "대기 중인 요청이 없습니다 — 종료합니다.");
-      return;
-    }
-    if (busy || seen.has(data.requestId)) return;
-    busy = true;
-    // claim() 트랜잭션이 진짜 방어선이고 이 집합은 덧방어다. 오래 떠 있어도
-    // 계속 자라지 않게 가끔 비운다.
-    if (seen.size > 200) seen.clear();
-    seen.add(data.requestId);
-    try {
-      await handle(ref, data);
-    } catch (e) {
-      say(`처리 중 오류: ${e.message}`, "ERROR");
-      // 상태를 못 적으면 화면이 영영 '진행 중'으로 남는다. 한 번은 더 시도한다.
-      try {
-        await finish(ref, data.requestId, {
-          status: "failed",
-          message: "감시 스크립트에서 오류가 났습니다: " + e.message.slice(0, 200),
-        });
-      } catch (e2) {
-        say(`상태 기록도 실패: ${e2.message}`, "ERROR");
+  const onListenerError = (e) => {
+    listening = false;
+    if (unsub) { try { unsub(); } catch (_) { /* 이미 끊겼을 수 있다 */ } unsub = null; }
+    // --once 는 사람이 확인용으로 돌리는 모드다. 매달려 재시도하면 확인이 안 된다.
+    if (ONCE) { stop(1, `리스너 오류: ${e.message} — --once 이므로 종료합니다.`); return; }
+    const wait = BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)];
+    attempt += 1;
+    say(`리스너 오류: ${e.message} — ${Math.round(wait / 1000)}초 뒤 다시 붙습니다 (${attempt}번째 시도).`, "WARN");
+    retryTimer = setTimeout(subscribe, wait);
+  };
+
+  const subscribe = () => {
+    retryTimer = null;
+    unsub = ref.onSnapshot(async (snap) => {
+      if (!listening) {
+        listening = true;
+        if (attempt > 0) say(`리스너 복구 — ${attempt}번 시도 끝에 다시 듣습니다.`);
+        attempt = 0;
+        beat();
       }
-    } finally {
-      busy = false;
-      if (ONCE) stop(0, "--once 처리 완료 — 종료합니다.");
-    }
-  }, (e) => {
-    // 리스너가 죽으면 버튼이 조용히 안 먹는다. 살아 있는 척하지 않고 끝낸다 —
-    // 작업 스케줄러가 로그온 때 다시 띄우고, 하트비트가 멈추면 화면도 알아챈다.
-    stop(1, `리스너 오류: ${e.message} — 종료합니다.`);
-  });
+      const data = snap.exists ? (snap.data() || {}) : {};
+      if (data.status !== "queued" || !data.requestId) {
+        // --once 는 '지금 대기 중인 것 하나'만 본다. 없으면 기다리지 않고 끝낸다 —
+        // 손으로 확인할 때 쓰는 모드라, 매달려 있으면 확인이 안 된다.
+        if (ONCE && !busy) stop(0, "대기 중인 요청이 없습니다 — 종료합니다.");
+        return;
+      }
+      if (busy || seen.has(data.requestId)) return;
+      busy = true;
+      // claim() 트랜잭션이 진짜 방어선이고 이 집합은 덧방어다. 오래 떠 있어도
+      // 계속 자라지 않게 가끔 비운다.
+      if (seen.size > 200) seen.clear();
+      seen.add(data.requestId);
+      try {
+        await handle(ref, data);
+      } catch (e) {
+        say(`처리 중 오류: ${e.message}`, "ERROR");
+        // 상태를 못 적으면 화면이 영영 '진행 중'으로 남는다. 한 번은 더 시도한다.
+        try {
+          await finish(ref, data.requestId, {
+            status: "failed",
+            message: "감시 스크립트에서 오류가 났습니다: " + e.message.slice(0, 200),
+          });
+        } catch (e2) {
+          say(`상태 기록도 실패: ${e2.message}`, "ERROR");
+        }
+      } finally {
+        busy = false;
+        if (ONCE) stop(0, "--once 처리 완료 — 종료합니다.");
+      }
+    }, onListenerError);
+  };
+
+  subscribe();
 
   process.on("SIGINT", () => stop(0, "종료 신호 — 감시를 멈춥니다."));
   process.on("SIGTERM", () => stop(0, "종료 신호 — 감시를 멈춥니다."));
