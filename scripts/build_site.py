@@ -15,6 +15,7 @@ import json
 import math
 import shutil
 from collections import Counter, OrderedDict, defaultdict
+from datetime import date, timedelta
 from pathlib import Path
 
 from scripts import interests as interestlib
@@ -60,6 +61,35 @@ def load_secondary(path: Path | None = None) -> dict:
 def _month(date: str) -> str:
     """'2026-05-11' -> '2026-05'"""
     return date[:7]
+
+
+
+# 카톡이 방에 올라온 파일을 붙들어 두는 기간.
+#
+# 실측 2026-08-20: 서랍의 파일 카드에 '유효기간' 이 찍혀 있고, 그 값이 공유일 + 14일
+# 이었다(7건 전부 일치). 그리고 **유효기간 날짜에 닿으면 이미 못 받는다** — 유효기간이
+# 그날이던 파일 3개와 하루 지난 1개가 모두 저장에 실패했고, 카톡이 '원본 파일이
+# 만료된 일부 파일을 저장할 수 없습니다' 라고 알려 줬다. 그래서 경계는 >= 다.
+FILE_RETENTION_DAYS = 14
+
+
+def file_share_expired(share_date: str, today: date | None = None) -> bool:
+    """원본을 못 구한 파일 공유가 **되살릴 수 없는 것**인지.
+
+    '원본 없음' 하나로 뭉뚱그리면 읽는 사람이 '아직 안 올린 것' 으로 읽는다. 사진
+    쪽에서 유실과 수집 대기를 이미 갈라 둔 것과 같은 이유다 — 대기라고 쓰면 언젠가
+    채워질 것처럼 읽히고, 남은 일이 얼마인지 흐려진다.
+
+    날짜를 못 읽으면 만료라고 하지 않는다. 모르는 것을 '영영 없다' 고 단정하는 쪽이
+    더 나쁘다 — 아직 받을 수 있는 것을 포기하게 만든다.
+    """
+    if not share_date:
+        return False
+    try:
+        shared = date.fromisoformat(str(share_date)[:10])
+    except ValueError:
+        return False
+    return (today or date.today()) >= shared + timedelta(days=FILE_RETENTION_DAYS)
 
 
 def build_digests(
@@ -374,7 +404,10 @@ def build_media(messages: list[dict]) -> list[dict]:
             # 사실이 사라져 다시 구해달라고 부탁할 근거도 없어진다. 파일명은 대화
             # 내용이 아니라 결과물의 이름이므로 남긴다.
             name = (m.get("text") or "").replace("파일:", "", 1).strip()
-            item = {"kind": "file", "name": name}
+            # 만료 여부를 함께 보낸다. build_media 는 필드를 골라 담으므로 여기서
+            # 빠뜨리면 화면은 '만료' 와 '수집 대기' 를 구별할 수 없다.
+            item = {"kind": "file", "name": name,
+                    "file_expired": bool(m.get("file_expired"))}
         if not item:
             continue
         item.update({
@@ -517,6 +550,10 @@ def build_data(
                 "path": f["local_path"],
                 "size": f["byte_size"],
             }
+        elif m["kind"] == "file":
+            # 못 구한 이유를 갈라 둔다. 만료는 기다려도 오지 않는다 — 카톡에서는
+            # 사라졌고, 가지고 있는 사람이 보내 주는 길만 남는다.
+            item["file_expired"] = file_share_expired(m.get("date"))
 
         out_messages.append(item)
 

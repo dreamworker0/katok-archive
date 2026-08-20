@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -364,6 +365,53 @@ class KnowledgeTest(unittest.TestCase):
             self.assertEqual(len(parsed["digests"]), len(self.topics["categories"]))
             # graph.js 도 함께 배포되는지
             self.assertTrue((site / "graph.js").exists())
+
+
+class FileShareExpiryTest(unittest.TestCase):
+    """'수집 대기' 와 '만료' 를 가르는 경계.
+
+    실측 2026-08-20: 서랍의 파일 카드 유효기간은 공유일 + 14일이고, **그 날짜에
+    닿으면 이미 못 받는다** — 유효기간이 그날이던 파일 3개가 모두 저장에 실패했다.
+    그래서 경계는 '지났으면' 이 아니라 '닿았으면' 이다.
+    """
+
+    TODAY = date(2026, 8, 20)
+
+    def test_boundary_day_is_already_gone(self):
+        # 08-06 공유 → 유효기간 08-20. 그날 이미 못 받는다.
+        self.assertTrue(build_site.file_share_expired("2026-08-06", self.TODAY))
+
+    def test_one_day_before_boundary_is_still_pending(self):
+        # 08-07 공유 → 유효기간 08-21. 아직 받을 수 있다.
+        self.assertFalse(build_site.file_share_expired("2026-08-07", self.TODAY))
+
+    def test_recent_share_is_pending(self):
+        self.assertFalse(build_site.file_share_expired("2026-08-19", self.TODAY))
+
+    def test_long_past_share_is_gone(self):
+        self.assertTrue(build_site.file_share_expired("2026-07-21", self.TODAY))
+
+    def test_unknown_date_is_not_called_gone(self):
+        """모르는 것을 '영영 없다' 고 단정하지 않는다 — 받을 수 있는 것을 포기하게 만든다."""
+        for value in ("", None, "날짜아님", "2026-13-99"):
+            self.assertFalse(build_site.file_share_expired(value, self.TODAY), value)
+
+    def test_timestamp_form_is_accepted(self):
+        self.assertTrue(build_site.file_share_expired("2026-07-21T10:00:00", self.TODAY))
+
+    def test_media_payload_carries_the_flag(self):
+        """build_media 는 필드를 골라 담는다 — 여기서 빠지면 화면이 구별할 수 없다."""
+        shares = [
+            {"id": "msg-1", "nickname": "가", "date": "2026-07-01", "time": "10:00",
+             "kind": "file", "is_file_share": True, "text": "파일: 옛것.pdf",
+             "file_expired": True},
+            {"id": "msg-2", "nickname": "나", "date": "2026-08-19", "time": "11:00",
+             "kind": "file", "is_file_share": True, "text": "파일: 새것.pdf",
+             "file_expired": False},
+        ]
+        out = {m["id"]: m for m in build_site.build_media(shares)}
+        self.assertTrue(out["msg-1"]["file_expired"])
+        self.assertFalse(out["msg-2"]["file_expired"])
 
 
 if __name__ == "__main__":

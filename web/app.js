@@ -1014,7 +1014,10 @@
           (m.file
             ? '<button class="btn ghost" data-file="' + esc(m.file.path) +
               '" data-name="' + esc(m.file.name) + '">받기</button>'
-            : '<span class="fc-none">원본 없음</span>') + "</div>");
+            : m.file_expired
+              ? '<span class="fc-gone" title="카톡 보관 기간(14일)이 지나 서랍에서 사라졌습니다">만료됨</span>'
+              : '<span class="fc-none" title="아직 받지 못했습니다 — 밤마다 다시 받아 옵니다">수집 대기</span>')
+          + "</div>");
       }
     });
     var cap = "";
@@ -1368,6 +1371,9 @@
       return;
     }
     var have = rows.filter(function (m) { return m.file; });
+    // 못 구한 것을 '만료' 와 '수집 대기' 로 갈라 센다. 뭉뚱그리면 남은 일이 얼마인지
+    // 알 수 없다 — 만료는 아무리 기다려도 줄지 않는다.
+    var gone = rows.filter(function (m) { return !m.file && m.file_expired; });
     var q = state.q.toLowerCase();
     var shown = rows.filter(function (m) {
       if (state.nick && m.nickname !== state.nick) return false;
@@ -1380,6 +1386,7 @@
 
     var html = ['<p class="room-sub" style="margin:0 0 12px">공유된 파일 ' + rows.length +
       "개 · 원본 보관 " + have.length + "개" +
+      (gone.length ? " · 만료 " + gone.length + "개" : "") +
       (shown.length !== rows.length ? " · 표시 " + shown.length + "개" : "") + "</p>"];
 
     if (!shown.length) {
@@ -1400,16 +1407,27 @@
           (m.file
             ? '<button class="btn ghost fc-dl" data-file="' + esc(m.file.path) +
               '" data-name="' + esc(m.file.name) + '">받기</button>'
-            : '<span class="fc-none" title="원본을 구하지 못했습니다">원본 없음</span>') +
+            : m.file_expired
+              ? '<span class="fc-gone" title="카톡이 파일을 14일만 보관해 서랍에서 사라졌습니다">만료됨</span>'
+              : '<span class="fc-none" title="아직 받지 못했습니다 — 밤마다 다시 받아 옵니다">수집 대기</span>') +
           '<button class="btn ghost fc-jump" data-jump="t-' + esc(m.thread_id || "") + '">주제</button>' +
           "</div></div>"
         );
       });
       html.push("</div>");
+      // 지금 화면에 없는 딱지는 설명하지 않는다. '수집 대기' 가 0건인 날에 그 말을
+      // 풀이하면 읽는 사람이 없는 것을 찾는다.
+      var pending = rows.length - have.length - gone.length;
       if (have.length < rows.length) {
-        html.push('<p class="hint" style="margin-top:14px">' +
-          "‘원본 없음’은 카톡 내보내기에 파일이 들어 있지 않아 이름만 남은 것입니다. " +
-          "가지고 계신 분이 관리자에게 보내주시면 연결됩니다.</p>");
+        var note = [];
+        if (pending) {
+          note.push("‘수집 대기’는 아직 받지 못한 것입니다 — 밤마다 자동으로 다시 받아 옵니다.");
+        }
+        if (gone.length) {
+          note.push("‘만료됨’은 카톡이 파일을 14일만 보관해 서랍에서 사라진 것이라 " +
+            "자동으로는 채워지지 않습니다. 가지고 계신 분이 관리자에게 보내주시면 연결됩니다.");
+        }
+        html.push('<p class="hint" style="margin-top:14px">' + note.join(" ") + "</p>");
       }
     }
 
@@ -2132,7 +2150,11 @@
         '<span class="mf-icon">' + fileIcon(fname) + "</span>" +
         '<span class="mf-body"><span class="mf-name">' + esc(fname) + "</span>" +
         '<span class="mf-meta">' +
-        (m.file ? fmtSize(m.file.size) + " · 원본 보관 중" : "원본을 구하지 못한 파일") +
+        (m.file
+          ? fmtSize(m.file.size) + " · 원본 보관 중"
+          : m.file_expired
+            ? "만료돼 원본을 구할 수 없는 파일"
+            : "원본 수집 대기 중인 파일") +
         "</span></span>" +
         (m.file
           ? '<button type="button" class="btn ghost mf-open" data-file="' + esc(m.file.path) +

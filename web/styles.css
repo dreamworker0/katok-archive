@@ -663,6 +663,10 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .fc-act { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
 .fc-act .btn { padding: 6px 12px; font-size: 13px; }
 .fc-none { font-size: 12.5px; color: var(--ink-faint); }
+/* '만료됨' 과 '수집 대기' 를 눈으로도 가른다. 파일 60여 개를 훑을 때 글자만
+   다르면 구분이 안 되고, 채워질 것과 안 채워질 것이 섞여 보이면 남은 일이
+   얼마인지 흐려진다. */
+.fc-gone { font-size: 12.5px; color: var(--ink-faint); font-style: italic; }
 @media (max-width: 560px) {
   .file-card { grid-template-columns: auto 1fr; }
   .fc-act { grid-column: 2; justify-content: flex-start; }

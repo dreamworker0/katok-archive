@@ -89,6 +89,55 @@ class ArchiveRebindContractTests(unittest.TestCase):
                                  "%s 를 init() 에서 다시 읽지 않는다" % name)
 
 
+class FileOriginContractTests(unittest.TestCase):
+    """원본을 못 구한 첨부를 '만료' 와 '수집 대기' 로 가르는 뼈대.
+
+    하나로 뭉뚱그리면 읽는 사람이 '아직 안 올린 것' 으로 읽는다. 사진 쪽에서 유실과
+    수집 대기를 이미 갈라 둔 것과 같은 이유다. 첨부가 보이는 자리는 세 곳이라
+    (주제 보고서 안 · 첨부파일 화면 · 내 글) 한 곳만 고치면 화면끼리 말이 달라진다.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        cls.css = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
+        cls.py = (ROOT / "scripts" / "build_site.py").read_text(encoding="utf-8")
+
+    def test_all_three_places_tell_the_two_apart(self):
+        # 첨부가 보이는 세 자리가 모두 file_expired 를 본다
+        self.assertGreaterEqual(self.app.count("m.file_expired"), 3, self.app.count("m.file_expired"))
+
+    def test_no_place_still_says_only_original_missing(self):
+        """'원본 없음' 한 마디로 끝내는 자리가 남아 있으면 안 된다."""
+        self.assertNotIn('">원본 없음</span>', self.app)
+        self.assertNotIn('"원본을 구하지 못한 파일"', self.app)
+
+    def test_the_two_states_look_different(self):
+        # 60여 개를 훑을 때 글자만 다르면 구분이 안 된다
+        self.assertIn(".fc-gone", self.css)
+        self.assertIn(".fc-none", self.css)
+
+    def test_the_count_line_says_how_many_are_gone(self):
+        self.assertIn('" · 만료 " + gone.length', self.app)
+
+    def test_the_note_does_not_explain_a_label_that_is_not_shown(self):
+        block = self.app[self.app.index("function renderFiles()"):]
+        self.assertIn("if (pending)", block[:4000])
+        self.assertIn("if (gone.length)", block[:4000])
+
+    def test_the_screen_and_the_publisher_agree_on_the_field(self):
+        """화면이 보는 이름과 발행이 적는 이름이 같아야 한다."""
+        self.assertIn('"file_expired"', self.py)
+
+    def test_retention_days_are_not_written_twice_differently(self):
+        """보관 기간은 발행 쪽이 원본이다 — 화면 안내문의 숫자가 어긋나면 거짓말이 된다."""
+        m = re.search(r"FILE_RETENTION_DAYS = (\d+)", self.py)
+        self.assertIsNotNone(m, "발행 쪽에 보관 기간 상수가 없습니다")
+        days = m.group(1)
+        for text in ("카톡 보관 기간(%s일)" % days, "파일을 %s일만 보관" % days):
+            self.assertIn(text, self.app, text)
+
+
 class TagPickContractTests(unittest.TestCase):
     """태그를 여러 개 골라 겹치는 주제를 보는 기능의 뼈대."""
 
