@@ -196,7 +196,12 @@ $WORK = @{ X = 0; Y = -110; W = 1900; H = 1106 }
 $TAB_Y      = 293
 $TAB_X      = @{ '사진/동영상' = 480; '파일' = 584 }
 $SAVE_BTN   = @{ X = 1842; Y = 1060 }
-$CLEAR_BTN  = @{ X = 401;  Y = 1068 }
+# 선택 해제(⊗)의 **중심**이다. 처음에는 (401,1068) 로 적었는데 그 점은 동그라미
+# 왼쪽 바로 밖이었다(실측 2026-08-21: 원이 x 403~424, y 1051~1072). 그래서 해제가
+# 조용히 안 먹었고, 화면을 넘길 때마다 앞 화면의 선택이 그대로 남아 같은 것을 다시
+# 저장했다 — 결과는 같았지만(중복은 걸러진다) 헛일이었다. 가장자리를 스치지 않게
+# 중심을 적는다.
+$CLEAR_BTN  = @{ X = 413;  Y = 1061 }
 
 $drawer = [DW]::ByTitle($DrawerTitle)
 if ($drawer -eq [IntPtr]::Zero) {
@@ -363,80 +368,95 @@ Write-Log ("작업 자리로 옮김 (원점 {0},{1})" -f $script:WinX, $script:W
 $totalClicked = 0
 try {
     foreach ($tab in @('파일', '사진/동영상')) {
-        Write-Log "── [$tab] 탭 ──"
-        if (-not (Invoke-Click $TAB_X[$tab] $TAB_Y "$tab 탭" -Always)) {
-            Write-Log "  탭을 누르지 못했습니다 — 건너뜁니다" 'WARN'
-            continue
-        }
-        Start-Sleep -Milliseconds 700
-
-        $pane = Get-PaneRect
-        if ($null -eq $pane) { Write-Log '  격자 패널을 찾지 못했습니다' 'WARN'; continue }
-        Write-Log ("  패널 ctrlId={0} (창기준 {1},{2} {3}x{4})" -f `
-            $pane.CtrlId, $pane.X, $pane.Y, $pane.W, $pane.H)
-
-        # 맨 위로 올린다. 위에서 시작하면 선택 바가 떠도 스크롤 위치가 안 바뀌므로
-        # 카드 좌표가 밀리지 않는다(실측).
-        Invoke-Wheel $pane 25 -Up
-
-        $prevShot = $null
-        for ($screen = 1; $screen -le $MaxScreens; $screen++) {
-            $pane = Get-PaneRect
-            $shot = Save-Shot ("{0}-{1}" -f ($tab -replace '/', ''), $screen)
-            if ($null -eq $shot) { break }
-
-            # 화면이 그대로면 더 내려갈 곳이 없다.
-            if ($prevShot -and
-                (Get-FileHash $shot).Hash -eq (Get-FileHash $prevShot).Hash) {
-                Write-Log "  화면이 더 바뀌지 않습니다 — [$tab] 끝"
-                break
-            }
-            $prevShot = $shot
-
-            $grid = Read-Grid $shot $pane
-            if ($null -eq $grid -or $grid.cards.Count -eq 0) {
-                Write-Log "  누를 카드가 없습니다 — [$tab] 끝"
-                break
-            }
-            Write-Log ("  {0}화면: 카드 {1}개" -f $screen, $grid.cards.Count)
-
-            if ($Discover) {
-                foreach ($c in $grid.cards) {
-                    Write-Log ("    카드 ({0},{1} {2}x{3}) 동그라미 ({4},{5})" -f `
-                        $c.x, $c.y, $c.w, $c.h, $c.circle[0], $c.circle[1])
-                }
-                Invoke-Wheel $pane 3
+        # 한 탭이 넘어져도 다른 탭과 그날 갱신을 끌고 내려가지 않게 감싼다.
+        #
+        # 실측 2026-08-21: 저장 단계에서 한 번 예외가 나 탭 하나를 남긴 채 스크립트가
+        # 끝났고, 곧바로 다시 돌리니 정상이었다. 재현되지 않는 일시적 실패다. 원인을
+        # 못 짚은 채로는 막을 수 없지만, **번지지 않게** 할 수는 있다 — 첨부는 더해지는
+        # 것이라 한 화면을 놓치는 것과 그날을 통째로 놓치는 것의 차이가 크다.
+        try {
+            Write-Log "── [$tab] 탭 ──"
+            if (-not (Invoke-Click $TAB_X[$tab] $TAB_Y "$tab 탭" -Always)) {
+                Write-Log "  탭을 누르지 못했습니다 — 건너뜁니다" 'WARN'
                 continue
             }
-
-            # 첫 카드로 선택 모드에 들어간다 → 패널이 86px 줄어든다.
-            # 맨 위에 있으므로 카드 좌표는 그대로다. 다시 재서 확인한다.
-            $first = $grid.cards[0]
-            [void](Invoke-Click $first.circle[0] $first.circle[1] '첫 카드')
-            $pane2 = Get-PaneRect
-            if ($pane2.H -ne $pane.H) {
-                Write-Log ("    선택 바가 떠서 패널이 {0}→{1} 로 줄었습니다 — 다시 잽니다" -f $pane.H, $pane2.H)
-                $shot2 = Save-Shot ("{0}-{1}-sel" -f ($tab -replace '/', ''), $screen)
-                $grid2 = Read-Grid $shot2 $pane2
-                if ($grid2 -and $grid2.cards.Count -gt 0) { $grid = $grid2 }
-            }
-
-            $clicked = 1
-            foreach ($c in $grid.cards) {
-                # 첫 카드는 이미 선택돼 있다. 다시 누르면 해제된다.
-                if ($c.circle[0] -eq $first.circle[0] -and $c.circle[1] -eq $first.circle[1]) { continue }
-                if (Invoke-Click $c.circle[0] $c.circle[1] '카드') { $clicked++ }
-            }
-            Write-Log ("    {0}개 선택" -f $clicked)
-            $totalClicked += $clicked
-
-            [void](Invoke-Click $SAVE_BTN.X $SAVE_BTN.Y '저장')
-            Start-Sleep -Seconds 3
-            [void](Close-ResultPopup)
-            [void](Invoke-Click $CLEAR_BTN.X $CLEAR_BTN.Y '선택 해제')
+            Start-Sleep -Milliseconds 700
 
             $pane = Get-PaneRect
-            Invoke-Wheel $pane 4
+            if ($null -eq $pane) { Write-Log '  격자 패널을 찾지 못했습니다' 'WARN'; continue }
+            Write-Log ("  패널 ctrlId={0} (창기준 {1},{2} {3}x{4})" -f `
+                $pane.CtrlId, $pane.X, $pane.Y, $pane.W, $pane.H)
+
+            # 맨 위로 올린다. 위에서 시작하면 선택 바가 떠도 스크롤 위치가 안 바뀌므로
+            # 카드 좌표가 밀리지 않는다(실측).
+            Invoke-Wheel $pane 25 -Up
+
+            $prevShot = $null
+            for ($screen = 1; $screen -le $MaxScreens; $screen++) {
+                $pane = Get-PaneRect
+                $shot = Save-Shot ("{0}-{1}" -f ($tab -replace '/', ''), $screen)
+                if ($null -eq $shot) { break }
+
+                # 화면이 그대로면 더 내려갈 곳이 없다.
+                if ($prevShot -and
+                    (Get-FileHash $shot).Hash -eq (Get-FileHash $prevShot).Hash) {
+                    Write-Log "  화면이 더 바뀌지 않습니다 — [$tab] 끝"
+                    break
+                }
+                $prevShot = $shot
+
+                $grid = Read-Grid $shot $pane
+                if ($null -eq $grid -or $grid.cards.Count -eq 0) {
+                    Write-Log "  누를 카드가 없습니다 — [$tab] 끝"
+                    break
+                }
+                Write-Log ("  {0}화면: 카드 {1}개" -f $screen, $grid.cards.Count)
+
+                if ($Discover) {
+                    foreach ($c in $grid.cards) {
+                        Write-Log ("    카드 ({0},{1} {2}x{3}) 동그라미 ({4},{5})" -f `
+                            $c.x, $c.y, $c.w, $c.h, $c.circle[0], $c.circle[1])
+                    }
+                    Invoke-Wheel $pane 3
+                    continue
+                }
+
+                # 첫 카드로 선택 모드에 들어간다 → 패널이 86px 줄어든다.
+                # 맨 위에 있으므로 카드 좌표는 그대로다. 다시 재서 확인한다.
+                $first = $grid.cards[0]
+                [void](Invoke-Click $first.circle[0] $first.circle[1] '첫 카드')
+                $pane2 = Get-PaneRect
+                if ($pane2.H -ne $pane.H) {
+                    Write-Log ("    선택 바가 떠서 패널이 {0}→{1} 로 줄었습니다 — 다시 잽니다" -f $pane.H, $pane2.H)
+                    $shot2 = Save-Shot ("{0}-{1}-sel" -f ($tab -replace '/', ''), $screen)
+                    $grid2 = Read-Grid $shot2 $pane2
+                    if ($grid2 -and $grid2.cards.Count -gt 0) { $grid = $grid2 }
+                }
+
+                $clicked = 1
+                foreach ($c in $grid.cards) {
+                    # 첫 카드는 이미 선택돼 있다. 다시 누르면 해제된다.
+                    if ($c.circle[0] -eq $first.circle[0] -and $c.circle[1] -eq $first.circle[1]) { continue }
+                    if (Invoke-Click $c.circle[0] $c.circle[1] '카드') { $clicked++ }
+                }
+                Write-Log ("    {0}개 선택" -f $clicked)
+                $totalClicked += $clicked
+
+                [void](Invoke-Click $SAVE_BTN.X $SAVE_BTN.Y '저장')
+                Start-Sleep -Seconds 3
+                [void](Close-ResultPopup)
+                [void](Invoke-Click $CLEAR_BTN.X $CLEAR_BTN.Y '선택 해제')
+
+                $pane = Get-PaneRect
+                Invoke-Wheel $pane 4
+            }
+        }
+        catch {
+            Write-Log ("  [$tab] 처리 중 오류: {0}" -f $_.Exception.Message) 'WARN'
+            Write-Log '  이 탭은 여기서 접고 다음으로 갑니다 — 남은 선택은 풀어 둡니다.' 'WARN'
+            # 선택이 남으면 다음 탭의 첫 클릭이 그것을 해제하는 데 쓰인다.
+            try { [void](Invoke-Click $CLEAR_BTN.X $CLEAR_BTN.Y '선택 해제') } catch { }
+            try { [void](Close-ResultPopup) } catch { }
         }
     }
 }
