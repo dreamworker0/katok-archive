@@ -182,6 +182,47 @@ Say "새 메시지: $added 건 / 멤버 요청 변경: $requestsChanged"
 
 if ($DryRun) { Say "===== DryRun 종료 (발행하지 않음) ====="; exit 0 }
 
+# 4b) 서랍에서 첨부 원본 받기 — 증분 반영 **뒤**, 작은 사진·개인정보 검사 **앞**
+#
+#     내보내기 txt 에는 첨부가 들어 있지 않다(파일은 이름 한 줄, 사진은 흔적만).
+#     원본은 '채팅방 서랍' 에서 따로 받아야 하는데, **파일은 공유일 + 14일이면
+#     만료된다** — 유효기간 날짜에 도달하면 이미 못 받으므로 실질 13일이다.
+#     실측 2026-08-20: 아카이브에 없던 파일 45개 중 서랍에 남은 것은 7개뿐이고
+#     그중 4개는 그날 만료였다. 38개는 영구 소실이었다. 그래서 매일 돌아야 한다.
+#
+#     여기 두는 이유는 순서 때문이다. 사진이 들어와야 '작은 사진 생성'과 '사진
+#     개인정보 검사'가 그것들을 훑고, 그 판정이 발행본에 반영된다. 뒤에 두면 그날
+#     받은 사진이 검사도 축소판도 없이 다음 날까지 밀린다.
+#
+#     **실패해도 갱신을 멈추지 않는다.** Invoke-Step 을 쓰지 않는 이유다. 첨부는
+#     더해지는 것이고, 서랍 창이 닫혀 있으면 그날은 못 받을 뿐이다. 그것 때문에
+#     그날 대화·주제·통계 발행이 통째로 날아가면 손해가 훨씬 크다. 13일 여유가
+#     있으니 다음 날 다시 받으면 된다. 대신 로그에 또렷이 남긴다.
+#     자세한 진행은 logs\kakao-drawer-<날짜>.log 에 따로 쌓인다.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    Say '서랍 첨부 수집'
+    $drawerOut = & powershell -ExecutionPolicy Bypass -File scripts\kakao_drawer.ps1 2>&1
+    $drawerExit = $LASTEXITCODE
+    foreach ($l in $drawerOut) {
+        if ($l -match '탭 ──|화면: 카드|개 선택|받은 파일 \d+개 →|WARN|ABORT') { Say "    $l" }
+    }
+    if ($drawerExit -eq 2) {
+        Say '    서랍 창이 없어 건너뛰었습니다 — 카카오톡에서 서랍을 한 번 열어 두면 다음 실행부터 됩니다.' 'WARN'
+    }
+    elseif ($drawerExit -ne 0) {
+        Say "    서랍 수집 실패 (exit $drawerExit) — 갱신은 계속합니다." 'WARN'
+    }
+    else {
+        foreach ($l in (& python -m scripts.collect_drawer 2>&1)) { Say "    $l" }
+        foreach ($l in (& python -m scripts.build_file_manifest 2>&1)) {
+            if ($l -match '연결 \(|짝을 못 찾은|같은 이름의') { Say "    $l" }
+        }
+    }
+}
+finally { $ErrorActionPreference = $prevEap }
+
 # 5) 주제 분류 (LLM) — 실패해도 갱신을 멈추지 않는다
 #
 #    파이프라인에서 유일하게 LLM 을 쓰는 칸이다. "이 대화가 어느 주제인가"는 코드가
