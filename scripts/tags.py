@@ -422,17 +422,27 @@ def broader_candidates(threads: list[dict], broader: dict[str, str] | None = Non
 
     **승격 전에** 불러야 한다 — `rollup_parent_tags` 가 부모를 붙인 뒤에는
     무엇이 고립이었는지 알 수 없다.
+
+    **자기가 부모인 태그는 후보가 아니다.** '게임' 은 보고서 한 편에만 직접 붙어
+    있어 세는 눈에는 1회짜리로 보이지만, 자식들이 승격돼 오므로 태그 목록에는 8편으로
+    나온다(실측 2026-08-21). 그것에 부모를 붙이라고 물으면 없는 층을 하나 더 세우게
+    되고, 실제로 이 헛후보가 목록에 섞여 있었다.
     """
     parents = _parent_lookup(threads, participants, broader, min_count, min_len,
                              short_parents)
     people = person_names(participants or {})
     places = places or set()
+    broader = broader if broader is not None else load_broader()
+    if short_parents is None:
+        short_parents = load_short_parents()
+    is_parent = ({fold(v) for v in broader.values()}
+                 | {fold(s) for s in short_parents})
     counts: Counter[str] = Counter(
         t for th in threads for t in (th.get("tags") or []))
 
     rows = [(t, n) for t, n in counts.items()
             if n < min_count and t not in people and fold(t) not in places
-            and not parents(t)]
+            and fold(t) not in is_parent and not parents(t)]
     rows.sort(key=lambda r: (-r[1], r[0]))
     return rows
 

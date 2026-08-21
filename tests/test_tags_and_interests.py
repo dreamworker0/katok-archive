@@ -130,6 +130,21 @@ class PlaceTagTests(unittest.TestCase):
                                        named=tags.load_named_people(table))
             self.assertEqual({"홍길동", "김종원(○○관)", "김종원"}, merged)
 
+    def test_a_tag_that_is_itself_a_parent_is_not_an_orphan(self):
+        """자기가 부모인 태그에 부모를 붙이라고 물으면 없는 층을 하나 더 세운다.
+
+        실측 2026-08-21: '게임' 은 보고서 한 편에만 직접 붙어 있어 1회짜리로 세어졌지만,
+        자식들이 승격돼 와 태그 목록에는 8편으로 나온다. 헛후보가 목록에 섞여 있었다.
+        """
+        threads = [{"id": "t-1", "keywords": ["게임", "아기하마 게임"]},
+                   {"id": "t-2", "keywords": ["아기하마 게임"]},
+                   {"id": "t-3", "keywords": ["없는말"]}]
+        tags.attach_tags(threads, {})
+        got = dict(tags.broader_candidates(threads, {"아기하마게임": "게임"}, {},
+                                           short_parents=["게임"]))
+        self.assertNotIn("게임", got, "부모인 태그는 후보가 아니다")
+        self.assertIn("없는말", got, "진짜 고립은 그대로 나와야 한다")
+
     def test_candidates_skip_what_the_table_already_answered(self):
         threads = [{"id": "t-1", "keywords": ["무지개노인복지관", "거주시설", "바이브코딩"]}]
         cands = tags.place_candidates(
