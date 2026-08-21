@@ -122,27 +122,50 @@ def save_json(path: Path, data) -> None:
     )
 
 
-def tag_vocabulary() -> list[str]:
-    """보고서 프롬프트에 넣을 공통 태그 목록. 한 번 만들어 두고 다시 쓴다.
+def tag_corpus() -> tuple[list[str], int, int]:
+    """(공통 태그 목록, 태그 종류 수, 1회짜리 수). 한 번 재고 다시 쓴다.
 
     프롬프트를 만드는 길이 여럿이다(분류·빠진 보고서 채우기·다시 쓰기 네 가지).
     인자로 물려 다니면 길마다 빠뜨릴 곳이 생기므로 여기서 한 번 읽는다. 파일이
     없거나 깨져 있으면 빈 목록으로 둔다 — 어휘를 못 읽는 것이 분류를 막을 이유는
     없고, tag_rules 가 그때는 고르라는 말을 하지 않는다.
+
+    종류 수와 1회짜리 수를 함께 재는 이유: 규칙 글이 '왜 목록에서 고르라 하는가'
+    를 숫자로 말한다(`tag_debt_line`). 그 숫자를 박아 두면 조용히 낡는다.
     """
-    if getattr(tag_vocabulary, "_cache", None) is None:
-        rows: list[tuple[str, int]] = []
+    if getattr(tag_corpus, "_cache", None) is None:
+        names: list[str] = []
+        kinds = once = 0
         try:
             topics = load_json(TOPICS)
             parts = load_json(PARTICIPANTS) if PARTICIPANTS.exists() else {}
             places, _ = taglib.load_places()
             threads = [t for t in topics.get("threads", [])
                        if not UNSORTED_RE.match(str(t.get("id") or ""))]
-            rows = taglib.vocabulary(threads, parts, places)
+            names = [name for name, _ in taglib.vocabulary(threads, parts, places)]
+            raw = [t for th in threads for t in (th.get("keywords") or [])]
+            tag_map = taglib.build_tag_map(raw)
+            counts: dict[str, int] = {}
+            for th in threads:
+                for name in taglib.canonical_tags(th.get("keywords") or [], tag_map):
+                    counts[name] = counts.get(name, 0) + 1
+            kinds = len(counts)
+            once = sum(1 for n in counts.values() if n == 1)
         except (OSError, ValueError, KeyError) as e:
             print(f"  태그 어휘를 읽지 못했습니다({e}) — 어휘 없이 진행합니다.")
-        tag_vocabulary._cache = [name for name, _ in rows]
-    return tag_vocabulary._cache
+        tag_corpus._cache = (names, kinds, once)
+    return tag_corpus._cache
+
+
+def tag_vocabulary() -> list[str]:
+    """공통 태그 목록만."""
+    return tag_corpus()[0]
+
+
+def tag_rules_now() -> str:
+    """지금의 어휘와 태그 빚으로 쓴 keywords 규칙."""
+    names, kinds, once = tag_corpus()
+    return tag_rules(names, kinds, once)
 
 
 def read_messages(ids: set[str]) -> list[dict]:
@@ -217,7 +240,7 @@ def build_prompt(msgs: list[dict], categories: list[dict],
   원문보다 짧아야 합니다. 짧은 대화면 두세 문장으로 충분합니다.
 
 ## 태그 규칙
-{tag_rules(tag_vocabulary())}
+{tag_rules_now()}
 
 ## 본문 규칙
 {REPORT_RULES}
@@ -251,8 +274,13 @@ JSON 만 출력하세요. 산문·설명·코드펜스 없이 이 형태 그대�
 """
 
 
-def call_claude(prompt: str, model: str, timeout: int = TIMEOUT_SEC) -> str | None:
+def call_claude(prompt: str, model: str, timeout: int = TIMEOUT_SEC,
+                what: str = "분류") -> str | None:
     """claude -p 를 호출해 결과 문자열을 돌려준다. 실패하면 None.
+
+    `what` 은 실패 로그에 쓸 일 이름이다. 이 함수를 분류 말고도 쓴다
+    (`assign_secondary`·`audit_thread_fit`·`retag_reports`) — 무엇이 실패했는지
+    로그가 틀리게 말하면 로그를 읽는 사람이 엉뚱한 데를 본다.
 
     도구·MCP 를 끊는다 — 이 일은 파일을 읽거나 명령을 돌릴 필요가 없고, 도구
     스키마가 프롬프트에 붙으면 그만큼 토큰이 더 든다.
@@ -275,10 +303,10 @@ def call_claude(prompt: str, model: str, timeout: int = TIMEOUT_SEC) -> str | No
             timeout=timeout, cwd=str(ROOT),
         )
     except FileNotFoundError:
-        print("claude CLI 를 찾을 수 없습니다 — 분류를 건너뜁니다.")
+        print(f"claude CLI 를 찾을 수 없습니다 — {what}를 건너뜁니다.")
         return None
     except subprocess.TimeoutExpired:
-        print(f"분류가 {timeout}초를 넘겨 포기합니다 — 미분류로 남깁니다.")
+        print(f"{what}가 {timeout}초를 넘겨 포기합니다 — 건너뜁니다.")
         return None
 
     if r.returncode != 0:
@@ -695,7 +723,7 @@ def build_report_prompt(thread: dict, msgs: list[dict],
 {length_rule}
 
 ## 태그 규칙
-{tag_rules(tag_vocabulary())}
+{tag_rules_now()}
 
 {REPORT_RULES}
 

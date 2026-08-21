@@ -109,6 +109,28 @@ def load_places(path: Path | None = None) -> tuple[set[str], set[str]]:
             {fold(t) for t in (raw.get("not_places") or []) if t})
 
 
+def load_named_people(path: Path | None = None) -> set[str]:
+    """`config/tag_places.json` 의 `people` — 참여자 목록에 없는 사람 이름.
+
+    참여자 이름은 participants.json 이 말해 준다. 그런데 이 방에서 **언급되는**
+    사람(초청 강사·저자·교수)은 참여자가 아니라서 그 목록에 없다. 그 이름이 태그로
+    두 번만 쓰이면 `vocabulary()` 의 추천 어휘에 올라, 다음 보고서들이 그 이름을 또
+    태그로 쓰게 된다 — 어휘가 이름을 퍼뜨리는 장치가 된다.
+
+    실측 2026-08-21: 어휘 142종에 한 교수의 이름이 그렇게 들어 있었고, 유산 태그를
+    다시 고르게 하니 그 이름이 새 보고서에 또 붙었다. 이 저장소는 공개다.
+    [[katok-archive-public-repo]]
+
+    지명·조직과 같은 파일에 적는 이유: 둘 다 '태그 자리에 오면 안 되는 고유명사'
+    이고, 그 파일은 실명이 줄줄이 적히므로 커밋하지 않는다(예시는 .example).
+    """
+    p = path or PLACES_PATH
+    if not p.exists():
+        return set()
+    raw = json.loads(p.read_text(encoding="utf-8")).get("people") or []
+    return {str(x).strip() for x in raw if str(x).strip()}
+
+
 def load_broader(path: Path | None = None,
                  aliases: dict[str, str] | None = None) -> dict[str, str]:
     """`config/tag_broader.json` → {좁은 태그의 fold: 넓은 태그 표시 이름}.
@@ -297,9 +319,13 @@ def backfill_from_titles(threads: list[dict], labels: list[str],
     return added
 
 
-def person_names(participants: dict) -> set[str]:
-    """참여자 이름(괄호 소속 제외)의 모음. '김종원(○○관)' → '김종원' 도 넣는다."""
-    names: set[str] = set()
+def person_names(participants: dict, named: set[str] | None = None) -> set[str]:
+    """사람 이름의 모음. 참여자(괄호 소속 제외) + 표에 적은 이름.
+
+    '김종원(○○관)' → '김종원' 도 넣는다. 방에 없는 사람의 이름은 참여자 목록으로
+    알 수 없어 표에서 읽는다(`load_named_people`).
+    """
+    names: set[str] = set(load_named_people() if named is None else named)
     rows = participants.get("participants") if isinstance(participants, dict) else participants
     for p in rows or []:
         nick = p.get("nickname") if isinstance(p, dict) else str(p)

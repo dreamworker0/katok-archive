@@ -108,6 +108,27 @@ class PlaceTagTests(unittest.TestCase):
     def test_missing_table_is_not_an_error(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual((set(), set()), tags.load_places(Path(d) / "없다.json"))
+            self.assertEqual(set(), tags.load_named_people(Path(d) / "없다.json"))
+
+    def test_a_named_outsider_is_not_offered_as_vocabulary(self):
+        """방에 없는 사람의 이름은 추천 어휘에 오르면 안 된다.
+
+        실측 2026-08-21: 한 교수의 이름이 태그로 4번 쓰여 어휘 142종에 올라 있었고,
+        유산 태그를 다시 고르게 하니 그 이름이 다른 보고서에도 붙었다. 참여자
+        목록으로는 못 막는다 — 그 사람은 이 방에 없다. 저장소는 공개다.
+        """
+        threads = [{"id": "t-%d" % i, "keywords": ["홍길동", "바이브코딩"]}
+                   for i in range(3)]
+        names = {n for n, _ in tags.vocabulary(threads, {})}
+        self.assertIn("홍길동", names, "표가 없으면 걸러지지 않는다(전제 확인)")
+
+        with tempfile.TemporaryDirectory() as d:
+            table = Path(d) / "tag_places.json"
+            table.write_text('{"people": ["홍길동"]}', encoding="utf-8")
+            self.assertEqual({"홍길동"}, tags.load_named_people(table))
+            merged = tags.person_names({"participants": [{"nickname": "김종원(○○관)"}]},
+                                       named=tags.load_named_people(table))
+            self.assertEqual({"홍길동", "김종원(○○관)", "김종원"}, merged)
 
     def test_candidates_skip_what_the_table_already_answered(self):
         threads = [{"id": "t-1", "keywords": ["무지개노인복지관", "거주시설", "바이브코딩"]}]

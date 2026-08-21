@@ -36,9 +36,9 @@ class RuleSourceTests(unittest.TestCase):
 
         예전에는 두 프롬프트가 각자 'keywords 는 2~6개' 한 줄만 적어 두었고, 둘 다
         무슨 말을 쓸지는 말하지 않았다. 그 결과가 태그 1,224종 중 1,090종이 한 번만
-        쓰인 상태다. 규칙이 다시 갈라지면 한쪽만 어휘를 보게 된다.
+        쓰인 상태였다(실측 2026-08-04). 규칙이 다시 갈라지면 한쪽만 어휘를 보게 된다.
         """
-        rules = tr.tag_rules(cu.tag_vocabulary())
+        rules = cu.tag_rules_now()
         classify = cu.build_prompt(MSGS, CATS, [], [])
         report = cu.build_report_prompt(
             {"id": "t-1", "title": "제목", "summary": "요지", "category": "projects"},
@@ -51,6 +51,22 @@ class RuleSourceTests(unittest.TestCase):
         self.assertIn("안티그래비티 · 앱스스크립트", rules)
         self.assertIn("%d개까지만" % tr.NEW_TAGS_ALLOWED, rules)
 
+    def test_tag_debt_numbers_are_measured_not_baked_in(self):
+        """규칙 글의 숫자는 재서 넣는다.
+
+        '1,224종 중 1,090종' 이 박혀 있던 동안 실제로는 1,091종 중 947종이었다
+        (실측 2026-08-21). 규칙 글의 숫자가 틀리면 규칙이 근거를 잃는다.
+        """
+        rules = tr.tag_rules(["안티그래비티"], 1091, 947)
+        self.assertIn("1,091종", rules)
+        self.assertIn("947종", rules)
+        # 규칙 글에 박힌 숫자가 남아 있으면 안 된다(주석의 옛 실측은 기록이므로 괜찮다).
+        self.assertNotIn("1,224", rules, "옛 숫자가 규칙 글에 아직 박혀 있다")
+        # 못 재면 숫자 없이 말한다 — 틀린 숫자보다 낫다.
+        blind = tr.tag_rules(["안티그래비티"])
+        self.assertNotIn("종 중", blind)
+        self.assertNotRegex(blind, r"\d[\d,]*종")
+
     def test_tag_rule_without_a_vocabulary_does_not_tell_a_lie(self):
         # 없는 목록에서 고르라고 하면 지시가 거짓이 된다(새 아카이브·첫 실행).
         rules = tr.tag_rules([])
@@ -60,12 +76,13 @@ class RuleSourceTests(unittest.TestCase):
     def test_vocabulary_failure_does_not_stop_classification(self):
         # 어휘를 못 읽는 것이 그날 분류를 막을 이유는 없다.
         try:
-            cu.tag_vocabulary.__dict__["_cache"] = None
+            cu.tag_corpus.__dict__["_cache"] = None
             real, cu.TOPICS = cu.TOPICS, cu.ROOT / "없는파일.json"
             self.assertEqual([], cu.tag_vocabulary())
+            self.assertEqual(([], 0, 0), cu.tag_corpus())
         finally:
             cu.TOPICS = real
-            cu.tag_vocabulary.__dict__["_cache"] = None
+            cu.tag_corpus.__dict__["_cache"] = None
 
     def test_quote_limit_has_one_source(self):
         self.assertEqual(cu.MAX_VERBATIM_CHARS, tr.MAX_VERBATIM_CHARS)

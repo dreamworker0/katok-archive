@@ -128,7 +128,23 @@ TAG_COUNT_MAX = 6
 NEW_TAGS_ALLOWED = 1     # 목록에 없는 말은 한 편에 이만큼만
 
 
-def tag_rules(vocabulary: list[str] | None = None) -> str:
+def tag_debt_line(kinds: int | None = None, once: int | None = None) -> str:
+    """'왜 목록에서 고르라 하는가' 를 한 줄로. 숫자는 **재서** 넣는다.
+
+    예전에는 이 문장에 '1,224종 중 1,090종' 이 박혀 있었다. 그 사이 표기 통일과
+    승격으로 1,091종 중 947종이 되었는데(실측 2026-08-21) 프롬프트는 옛 숫자를
+    계속 말하고 있었다. 규칙 글에 든 숫자가 틀리면 규칙이 근거를 잃는다 —
+    그래서 부르는 쪽이 재서 넘기고, 못 재면 숫자 없이 말한다.
+    """
+    if kinds and once:
+        return (f"지금 태그 {kinds:,}종 중 {once:,}종이 딱 한 번만 쓰였고, "
+                "그 대부분이 보고서마다 새로 지어낸 말입니다.")
+    return ("같은 것을 다른 말로 부르면 태그가 흩어지고, 한 번만 쓰인 태그는 태그 "
+            "목록에 나오지도 않습니다.")
+
+
+def tag_rules(vocabulary: list[str] | None = None, kinds: int | None = None,
+              once: int | None = None) -> str:
     """keywords 규칙. 이미 쓰이는 태그 목록을 함께 보여준다.
 
     목록이 비면(새 아카이브·첫 실행) 고르라는 말을 하지 않는다 — 없는 목록에서
@@ -137,6 +153,9 @@ def tag_rules(vocabulary: list[str] | None = None) -> str:
     새 말을 아주 막지는 않는다. 이 방은 매주 처음 나오는 도구·앱을 이야기하므로
     새 이름을 못 붙이면 태그가 뭉개진다. 다만 한 편에 하나로 묶어 두면, 진짜 새것일
     때만 쓰게 된다.
+
+    `kinds`·`once` 는 지금의 태그 빚이다. 넘기면 규칙 글이 그 숫자로 말한다
+    (`tag_debt_line`).
     """
     head = (f"- keywords 는 {TAG_COUNT_MIN}~{TAG_COUNT_MAX}개. 나중에 이 대화를 찾을 때 "
             "쓸 말(도구 이름, 개념, 결과물)입니다.\n"
@@ -147,8 +166,8 @@ def tag_rules(vocabulary: list[str] | None = None) -> str:
         return head
     words = " · ".join(vocabulary)
     return (f"""- keywords 는 {TAG_COUNT_MIN}~{TAG_COUNT_MAX}개. **아래 '이미 쓰이는 태그' 에서 먼저 고르세요.**
-  같은 이야기가 매번 다른 말로 붙으면 태그로 찾을 수 없습니다 — 지금 태그 1,224종 중
-  1,090종이 딱 한 번만 쓰였고, 그 대부분이 보고서마다 새로 지어낸 말입니다.
+  같은 이야기가 매번 다른 말로 붙으면 태그로 찾을 수 없습니다 —
+  {tag_debt_line(kinds, once)}
 - 목록에 없는 말은 **한 편에 {NEW_TAGS_ALLOWED}개까지만** 새로 만드세요. 이 대화에만 있는
   고유한 것(처음 나온 도구·앱 이름 같은 것)일 때만입니다. 목록의 말로 충분하면
   새로 만들지 마세요.
