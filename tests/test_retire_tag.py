@@ -17,7 +17,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.retire_tag import guard_broader, targets, without
+from scripts.retire_tag import guard_broader, overlap_parents, targets, without
 
 TAG = "링크 공유"
 
@@ -52,6 +52,35 @@ class WithoutTest(unittest.TestCase):
     def test_removing_a_tag_that_is_not_there_changes_nothing(self):
         self.assertEqual(["클로드", "요금·비용"],
                          without(REPORTS["t-900"]["keywords"], TAG))
+
+
+class OverlapParentsTest(unittest.TestCase):
+    """표에 없어도 글자가 겹치면 부모다 — 거두면 그쪽 입구도 줄어든다.
+
+    실측 2026-08-21: '유튜브 영상' 15편을 거두면 '유튜브' 가 19 → 6 으로 주저앉는다.
+    표에는 흔적이 없어 `guard_broader` 가 통과시킨다. 그래서 이 경고가 필요했고,
+    그 덕에 '유튜브 영상'·'페이스북 공유' 는 거두는 대신 표기 통일로 합쳤다.
+    """
+    REPORTS = {
+        "t-1": {"keywords": ["유튜브 영상", "유튜브"]},
+        "t-2": {"keywords": ["유튜브 영상", "AI 교육"]},
+        "t-3": {"keywords": ["유튜브", "댓글"]},
+        "t-4": {"keywords": ["사진 공유", "인사"]},
+    }
+
+    def test_a_containing_tag_is_reported_with_its_count(self):
+        self.assertEqual([("유튜브", 2)], overlap_parents(self.REPORTS, "유튜브 영상"))
+
+    def test_a_tag_with_no_containing_tag_is_clean(self):
+        self.assertEqual([], overlap_parents(self.REPORTS, "사진 공유"))
+
+    def test_a_tag_used_only_once_is_not_counted_as_a_parent(self):
+        """한 번만 쓰인 말은 기계가 부모로 쓰지 않는다(min_count)."""
+        self.assertEqual([], overlap_parents(self.REPORTS, "유튜브 영상", min_count=3))
+
+    def test_the_tag_itself_is_never_its_own_parent(self):
+        got = overlap_parents({"t-1": {"keywords": ["유튜브", "유튜브"]}}, "유튜브")
+        self.assertEqual([], got)
 
 
 class GuardBroaderTest(unittest.TestCase):

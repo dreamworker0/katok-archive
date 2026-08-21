@@ -46,6 +46,7 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import shutil
 import sys
@@ -102,6 +103,36 @@ def targets(reports: dict[str, dict], tag: str) -> list[str]:
     key = taglib.fold(tag)
     return sorted(t for t, r in reports.items()
                   if any(taglib.fold(k) == key for k in r["keywords"]))
+
+
+def overlap_parents(reports: dict[str, dict], tag: str, min_count: int = 2
+                    ) -> list[tuple[str, int]]:
+    """글자가 겹쳐 이 태그를 받아 주던 넓은 태그들. (태그, 지금 편수)
+
+    표(`guard_broader`)만 보면 놓치는 길이 있다. 승격은 표 말고 **글자 겹침**으로도
+    붙는다 — '유튜브 영상' 은 '유튜브' 를 품고 있으니 '유튜브' 의 자식이다. 그래서
+    거두면 그쪽 입구도 함께 줄어든다.
+
+    실측 2026-08-21: '유튜브 영상' 15편을 거두면 '유튜브' 가 19 → 6 으로 주저앉고,
+    '페이스북 공유' 6편을 거두면 '페이스북' 이 10 → 4, 그 부모 '협업 도구' 가
+    25 → 19 가 된다. 표에는 아무 흔적이 없어 검사기가 통과시킨다.
+
+    막지는 않는다 — 거두는 것이 옳을 때도 있다. 다만 얼마를 잃는지 보고 결정해야
+    하고, 잃는 것이 크면 거두는 대신 **표기 통일**(config/tag_aliases.json)로
+    넓은 쪽에 합치는 편이 낫다. 그러면 보고서를 안 고치고도 행위 표현만 사라진다.
+    """
+    key = taglib.fold(tag)
+    counts: collections.Counter[str] = collections.Counter()
+    for rep in reports.values():
+        for k in rep["keywords"]:
+            counts[k] += 1
+    out = []
+    for other, n in counts.items():
+        okey = taglib.fold(other)
+        if okey != key and okey in key and n >= min_count:
+            out.append((other, n))
+    out.sort(key=lambda r: -r[1])
+    return out
 
 
 def without(keywords: list[str], tag: str) -> list[str]:
@@ -231,6 +262,14 @@ def main() -> int:
     thin = [t for t in ids if len(without(reports[t]["keywords"], args.tag)) < args.need]
     print("'%s' 를 지닌 보고서 %d편 · 떼면 태그가 %d개 미만이 되는 편 %d개"
           % (args.tag, len(ids), args.need, len(thin)))
+    feeds = overlap_parents(reports, args.tag)
+    if feeds:
+        print("\n  주의 — 글자가 겹쳐 이 태그를 받아 주던 넓은 태그가 있습니다."
+              " 거두면 그쪽도 줄어듭니다:")
+        for other, n in feeds:
+            print("    %s (지금 %d편)" % (other, n))
+        print("  잃는 것이 크면 거두는 대신 config/tag_aliases.json 으로 그쪽에"
+              " 합치세요 — 보고서를 안 고치고도 행위 표현만 사라집니다.")
     if args.stats:
         return 0
     if not ids:
