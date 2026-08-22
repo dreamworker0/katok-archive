@@ -3,6 +3,9 @@
     {
       "site": "sw-ai-archive",
       "public": "hosting",
+      "predeploy": [
+        "python -m scripts.build_hosting"
+      ],
       "ignore": [
         "firebase.json",
         "**/.*",
@@ -78,6 +81,9 @@
     {
       "site": "katok-crawling-project",
       "public": "hosting",
+      "predeploy": [
+        "python -m scripts.build_hosting"
+      ],
       "ignore": [
         "firebase.json",
         "**/.*",
@@ -161,7 +167,10 @@
   },
   "firestore": {
     "rules": "firestore.rules",
-    "indexes": "firestore.indexes.json"
+    "indexes": "firestore.indexes.json",
+    "predeploy": [
+      "node scripts/test_rules.js"
+    ]
   },
   "storage": {
     "rules": "storage.rules"

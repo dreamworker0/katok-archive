@@ -14,9 +14,14 @@
     "claims": "node scripts/approve_claims.js",
     "watch:refresh": "node scripts/refresh_watcher.js",
     "watch:refresh:once": "node scripts/refresh_watcher.js --once",
-    "deploy": "firebase deploy"
+    "deploy": "python -m scripts.build_hosting && firebase deploy",
+    "test:rules": "node scripts/test_rules.js"
   },
   "dependencies": {
     "firebase-admin": "^13.0.0"
+  },
+  "devDependencies": {
+    "firebase-tools": "^15.24.0",
+    "google-auth-library": "^10.9.1"
   }
 }
