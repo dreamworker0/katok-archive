@@ -12,6 +12,7 @@
 두 번째가 더 중요하다. 안 지운 실수는 다음 날 지우면 되지만, 지운 실수는 그것으로
 끝이다.
 """
+import json
 import unittest
 from datetime import date
 from pathlib import Path
@@ -201,6 +202,122 @@ class AssetsAreProtectedTest(unittest.TestCase):
         dup, orphan = pw.plan_assets()
         self.assertEqual(len(dup), 2)
         self.assertEqual(orphan, [])
+
+
+class UnreferencedTest(unittest.TestCase):
+    """원장이 가리키지 않는 보관본 파일 — 가장 위험한 판정이다.
+
+    "원장에 없으면 지운다" 는 기준은 원장을 잘못 읽는 순간 보관본 전체를 지울
+    것으로 만든다. 실측 2026-08-22: `assets/` 를 절대 경로로 들고 있어서 원장의
+    상대 경로와 하나도 안 맞았고, 사진 335장·첨부 21개를 포함한 684개(649MB)가
+    전부 '원장에 없음' 으로 잡혔다. 기본이 '계획만' 이어서 살았다.
+
+    그래서 여기서 보는 것은 "지울 것을 찾는가" 보다 "안 지울 것을 지키는가" 다.
+    """
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.assets = self.root / "assets"
+        for d in ("images", "videos", "thumbs", "files"):
+            (self.assets / d).mkdir(parents=True)
+        self.out = self.root / "output"
+        self.out.mkdir()
+        self._p = [patch.object(pw, "ROOT", self.root),
+                   patch.object(pw, "ASSETS", self.assets),
+                   patch.object(pw, "OUT", self.out)]
+        for p in self._p:
+            p.start()
+
+    def tearDown(self):
+        for p in self._p:
+            p.stop()
+        self._tmp.cleanup()
+
+    def ledger(self, rows):
+        (self.out / "images.jsonl").write_text(
+            "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows),
+            encoding="utf-8")
+
+    def put(self, rel: str, data: bytes) -> Path:
+        p = self.root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+        return p
+
+    def test_finds_a_duplicate_the_ledger_forgot(self):
+        """옛 백업을 합칠 때 같은 동영상이 새 image_id 로 또 들어왔다."""
+        self.put("assets/videos/2026-03/img-1-01.mp4", b"VIDEO")
+        self.put("assets/videos/2026-03/img-9-01.mp4", b"VIDEO")   # 원장에 없음
+        self.ledger([{"local_path": "assets/videos/2026-03/img-1-01.mp4"}])
+        doomed, unique = pw.plan_unreferenced()
+        self.assertEqual([p.name for p, _ in doomed], ["img-9-01.mp4"])
+        self.assertEqual(unique, [])
+
+    def test_a_unique_unreferenced_file_is_kept(self):
+        """원장에서 빠진 것일 수 있다. 마름질할 쓰레기가 아니다."""
+        self.put("assets/videos/2026-03/img-1-01.mp4", b"VIDEO")
+        self.put("assets/videos/2026-03/img-9-01.mp4", b"OTHER")
+        self.ledger([{"local_path": "assets/videos/2026-03/img-1-01.mp4"}])
+        doomed, unique = pw.plan_unreferenced()
+        self.assertEqual(doomed, [])
+        self.assertEqual([p.name for p, _ in unique], ["img-9-01.mp4"])
+
+    def test_paths_are_compared_relative_to_the_repo(self):
+        """절대/상대 경로가 어긋나면 보관본 전체가 지울 것이 된다.
+
+        이 검사가 이 클래스의 존재 이유다. 어긋난 채로 돌면 참조된 파일까지
+        doomed 에 들어오는데, 그것을 잡아 주는 것은 이 한 줄뿐이다.
+        """
+        self.put("assets/images/2026-03/img-1-01.jpg", b"PHOTO")
+        self.ledger([{"local_path": "assets/images/2026-03/img-1-01.jpg"}])
+        doomed, unique = pw.plan_unreferenced()
+        self.assertEqual((doomed, unique), ([], []),
+                         "원장이 가리키는 파일이 지울 것으로 잡혔다")
+
+    def test_refuses_when_nothing_on_disk_matches_the_ledger(self):
+        """맞는 것이 하나도 없으면 보관본이 빈 것이 아니라 견주기가 어긋난 것이다."""
+        self.put("assets/images/2026-03/img-1-01.jpg", b"PHOTO")
+        self.put("assets/images/2026-03/img-2-01.jpg", b"PHOTO2")
+        # 원장이 엉뚱한 곳을 가리킨다 (경로 규칙이 바뀐 상황을 흉내 낸다)
+        self.ledger([{"local_path": "assets/photos/2026-03/img-1-01.jpg"}])
+        doomed, unique = pw.plan_unreferenced()
+        self.assertEqual((doomed, unique), ([], []))
+
+    def test_refuses_when_the_ledger_is_missing(self):
+        """원장이 없으면 모든 파일이 '원장에 없음' 이 된다 — 최악의 경우다."""
+        self.put("assets/images/2026-03/img-1-01.jpg", b"PHOTO")
+        doomed, unique = pw.plan_unreferenced()
+        self.assertEqual((doomed, unique), ([], []))
+
+    def test_nested_asset_paths_count_as_referenced(self):
+        """경로는 한 자리에 없다 — assets[].local_path·thumb_path 에 흩어져 있다.
+
+        특정 키만 읽으면 한 메시지의 사진 일곱 장 중 여섯 장이 '원장에 없음' 이
+        된다. 그 실수의 대가가 사진 원본 삭제다.
+        """
+        self.put("assets/images/2026-03/img-1-01.jpg", b"A")
+        self.put("assets/images/2026-03/img-1-02.jpg", b"B")
+        self.put("assets/thumbs/2026-03/img-1-02.webp", b"T")
+        self.ledger([{
+            "local_path": "assets/images/2026-03/img-1-01.jpg",
+            "assets": [
+                {"local_path": "assets/images/2026-03/img-1-01.jpg"},
+                {"local_path": "assets/images/2026-03/img-1-02.jpg",
+                 "thumb_path": "assets/thumbs/2026-03/img-1-02.webp"},
+            ],
+        }])
+        doomed, unique = pw.plan_unreferenced()
+        self.assertEqual((doomed, unique), ([], []))
+
+    def test_a_thumb_is_deleted_without_asking_about_content(self):
+        """축소판은 원본에서 다시 만든다 — 내용이 유일해도 지운다."""
+        self.put("assets/images/2026-03/img-1-01.jpg", b"A")
+        self.put("assets/thumbs/2026-03/img-9-01.webp", b"UNIQUE-THUMB")
+        self.ledger([{"local_path": "assets/images/2026-03/img-1-01.jpg"}])
+        doomed, unique = pw.plan_unreferenced()
+        self.assertEqual([p.name for p, _ in doomed], ["img-9-01.webp"])
+        self.assertEqual(unique, [])
 
 
 class DefaultIsToKeepTest(unittest.TestCase):
