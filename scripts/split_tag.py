@@ -45,14 +45,14 @@ from __future__ import annotations
 import argparse
 import collections
 import json
-import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from scripts import tags as taglib
-from scripts.classify_unsorted import DEFAULT_MODEL, call_claude, parse_reply
-from scripts.retag_reports import REPORTS_DIR, replace_keywords_line, shown
+from scripts.llm import DEFAULT_MODEL, call_claude, parse_reply
+from scripts.tag_surgery import apply_keyword_changes, backup_dir, shown
+from scripts.topic_reports import REPORTS_DIR
 from scripts.topic_reports import load_reports
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -198,29 +198,8 @@ def screen(reports: dict[str, dict], answers: dict[str, str], tag: str,
 
 def apply_proposal(proposal: dict, day: str) -> tuple[int, list[str], Path]:
     """제안대로 keywords 줄을 바꾼다. 바꾸기 전 md 와 태그는 백업 폴더에 남긴다."""
-    backup = OUT / ("backup-split-%s" % day)
-    backup.mkdir(parents=True, exist_ok=True)
-    changes = proposal["changes"]
-    (backup / "keywords-before.json").write_text(
-        json.dumps({t: v["before"] for t, v in changes.items()},
-                   ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-    done, failed = 0, []
-    for tid, change in sorted(changes.items()):
-        path = REPORTS_DIR / ("%s.md" % tid)
-        if not path.is_file():
-            failed.append("%s: 파일이 없습니다" % tid)
-            continue
-        text = path.read_text(encoding="utf-8", newline="")
-        try:
-            new_text = replace_keywords_line(text, change["after"])
-        except ValueError as e:
-            failed.append("%s: %s" % (tid, e))
-            continue
-        if new_text != text:
-            shutil.copy2(path, backup / path.name)
-            path.write_text(new_text, encoding="utf-8", newline="")
-            done += 1
+    backup = backup_dir("split", day)
+    done, failed = apply_keyword_changes(proposal["changes"], backup)
     return done, failed, backup
 
 

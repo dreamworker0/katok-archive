@@ -38,6 +38,7 @@
     "firebase-config.js",
     "images.js",
     "graph.js",
+    "text.js",
     "app.js",
     "boot.js",
     "pwa.js",

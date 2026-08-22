@@ -24,7 +24,7 @@ import json
 import sys
 from pathlib import Path
 
-from scripts.classify_unsorted import DEFAULT_MODEL, call_claude
+from scripts.llm import DEFAULT_MODEL, call_claude
 from scripts.topic_reports import load_reports
 
 ROOT = Path(__file__).resolve().parent.parent

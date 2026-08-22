@@ -60,13 +60,12 @@ import argparse
 import collections
 import json
 import re
-import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from scripts import tags as taglib
-from scripts.classify_unsorted import DEFAULT_MODEL, call_claude, parse_reply
+from scripts.llm import DEFAULT_MODEL, call_claude, parse_reply
 from scripts.topic_reports import (
     REPORTS_DIR,
     TAG_COUNT_MAX,
@@ -74,6 +73,17 @@ from scripts.topic_reports import (
     load_reports,
     tag_rules,
 )
+from scripts.tag_surgery import (
+    apply_keyword_changes,
+    backup_dir,
+    replace_keywords_line,
+    shown,
+)
+
+# `shown` 과 `replace_keywords_line` 은 scripts/tag_surgery.py 로 옮겼다. 네
+# 스크립트가 함께 쓰는 것이라 한 곳에 두는 편이 맞다. 예전 이름으로 부르는 곳이
+# 셋이고 검사도 그 이름을 쓰므로 여기 남긴다 (`jsonio`·`llm` 때와 같은 방식).
+__all_reexported__ = ("shown", "replace_keywords_line")
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "output"
@@ -97,14 +107,6 @@ TIMEOUT_SEC = 300
 
 
 # ---------------------------------------------------------------- 읽기·재기
-
-def shown(path: Path) -> str:
-    """로그에 적을 경로. 저장소 밖(또는 상대 경로로 받은 것)이면 있는 그대로 적는다."""
-    try:
-        return str(path.resolve().relative_to(ROOT))
-    except ValueError:
-        return str(path)
-
 
 def load_state() -> dict:
     reports = load_reports()
@@ -298,29 +300,6 @@ def canonical_name(tag: str, tag_map: dict[str, str]) -> str:
 
 # ---------------------------------------------------------------- 쓰기
 
-_FRONT = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.S)
-_KW_LINE = re.compile(r"(?m)^keywords[ \t]*:[^\r\n]*")
-
-
-def replace_keywords_line(text: str, tags: list[str]) -> str:
-    """프론트매터의 keywords 줄만 바꾼다. 본문·줄바꿈은 한 글자도 안 건드린다.
-
-    다시 렌더하지 않는 이유가 이 함수의 존재 이유다 — 이 폴더는 CRLF 이고,
-    `render_report` 로 다시 쓰면 371편의 줄바꿈이 전부 바뀌어 git diff 에서
-    무엇을 고쳤는지 보이지 않는다. 그래서 `$` 대신 `[^\\r\\n]*` 로 끊는다 —
-    `$` 는 CRLF 의 `\\r` 까지 먹어 그 줄만 LF 로 바뀐다.
-    """
-    m = _FRONT.match(text)
-    if not m:
-        raise ValueError("--- 로 감싼 프론트매터가 없습니다")
-    head_start, head_end = m.start(1), m.end(1)
-    head = text[head_start:head_end]
-    line = "keywords: " + ", ".join(tags)
-    new_head, n = _KW_LINE.subn(lambda _m: line, head, count=1)
-    if n != 1:
-        raise ValueError("프론트매터에 keywords 줄이 없습니다")
-    return text[:head_start] + new_head + text[head_end:]
-
 
 # ---------------------------------------------------------------- 통계
 
@@ -427,33 +406,17 @@ def screen(state: dict, replies: dict[str, list], vocab: list[str]) -> dict[str,
 # ---------------------------------------------------------------- 적용
 
 def apply_proposal(proposal: dict, day: str) -> tuple[int, list[str], Path]:
-    """제안대로 keywords 줄을 바꾼다. 바꾸기 전 md 와 태그는 백업 폴더에 남긴다."""
-    backup = OUT / ("backup-retag-%s" % day)
-    backup.mkdir(parents=True, exist_ok=True)
-    changes = proposal["changes"]
-    (backup / "keywords-before.json").write_text(
-        json.dumps({t: v["before"] for t, v in changes.items()},
-                   ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    """제안대로 keywords 줄을 바꾼다. 바꾸기 전 md 와 태그는 백업 폴더에 남긴다.
+
+    어휘 목록도 함께 남기는 것은 이 스크립트뿐이다. 여기서 LLM 이 고른 태그는
+    '그때 보여준 목록' 안에서 고른 것이라, 목록이 없으면 나중에 판단을 되짚을 수
+    없다 — 어휘는 발행본이 바뀔 때마다 달라진다.
+    """
+    backup = backup_dir("retag", day)
     (backup / "vocabulary.json").write_text(
         json.dumps(proposal.get("vocabulary") or [], ensure_ascii=False, indent=2)
         + "\n", encoding="utf-8")
-
-    done, failed = 0, []
-    for tid, change in sorted(changes.items()):
-        path = REPORTS_DIR / ("%s.md" % tid)
-        if not path.is_file():
-            failed.append("%s: 파일이 없습니다" % tid)
-            continue
-        text = path.read_text(encoding="utf-8", newline="")
-        try:
-            new_text = replace_keywords_line(text, change["after"])
-        except ValueError as e:
-            failed.append("%s: %s" % (tid, e))
-            continue
-        if new_text != text:
-            shutil.copy2(path, backup / path.name)
-            path.write_text(new_text, encoding="utf-8", newline="")
-            done += 1
+    done, failed = apply_keyword_changes(proposal["changes"], backup)
     return done, failed, backup
 
 

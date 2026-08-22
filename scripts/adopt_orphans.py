@@ -49,8 +49,8 @@ from datetime import datetime
 from pathlib import Path
 
 from scripts import tags as taglib
-from scripts.classify_unsorted import DEFAULT_MODEL, call_claude, parse_reply
-from scripts.retag_reports import shown
+from scripts.llm import DEFAULT_MODEL, call_claude, parse_reply
+from scripts.tag_surgery import shown
 from scripts.topic_reports import apply_reports, load_reports
 
 ROOT = Path(__file__).resolve().parent.parent
