@@ -14,12 +14,14 @@ sys.path.insert(0, str(ROOT))
 
 from scripts import build_firestore_payload as bfp  # noqa: E402
 from scripts import build_site  # noqa: E402
+from tests.realdata import needs_real_data  # noqa: E402
 
 
 def _messages():
     return build_site._read_jsonl(ROOT / "output" / "messages.jsonl")
 
 
+@needs_real_data
 class PayloadShapeTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -206,6 +208,7 @@ class MemberNicknameTest(unittest.TestCase):
         self.assertNotIn("김종원", warnings[0])
 
 
+@needs_real_data
 class ExclusionTest(unittest.TestCase):
     """제외 규칙이 발행본 전체에서 소거되는지 확인."""
 

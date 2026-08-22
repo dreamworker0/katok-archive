@@ -4,6 +4,7 @@
 여기 있는 것은 기능이 아니라 **습관**에 대한 검사다. 기능 버그는 한 번 물면 눈에
 보이는데, 이런 것은 몇 달 뒤에 엉뚱한 자리에서 터진다.
 """
+import json
 import re
 import unittest
 from pathlib import Path
@@ -143,3 +144,57 @@ class GhostFileTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HostingConfigTests(unittest.TestCase):
+    """firebase.json 의 두 사이트 설정이 갈라지지 않게 한다.
+
+    hosting 항목이 둘이다(sw-ai-archive, katok-crawling-project). 두 블록은 `site`
+    값 하나만 빼고 74줄이 똑같이 적혀 있다. 헤더 하나를 고치면 두 곳을 고쳐야 하고,
+    한 곳만 고치면 같은 앱이 주소에 따라 다르게 동작한다 — 그 차이는 배포한 뒤
+    브라우저에서 눌러 보기 전까지 보이지 않는다.
+
+    하나로 합치려면 hosting target 을 쓰면 되는데(`firebase target:apply`),
+    그것은 배포해 봐야 확인되는 변경이다. 그때까지는 갈라짐만 막는다.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.cfg = json.loads((ROOT / "firebase.json").read_text(encoding="utf-8"))
+
+    def test_every_hosting_block_is_identical_except_the_site_name(self):
+        blocks = self.cfg["hosting"]
+        self.assertGreater(len(blocks), 1, "hosting 항목이 하나면 이 검사는 필요 없다")
+        stripped = []
+        for b in blocks:
+            b = dict(b)
+            b.pop("site", None)
+            stripped.append(json.dumps(b, sort_keys=True, ensure_ascii=False))
+        self.assertEqual(len(set(stripped)), 1,
+                         "hosting 블록들이 갈라졌습니다 — 같은 앱이 주소에 따라 "
+                         "다르게 동작합니다")
+
+    def test_sites_are_distinct(self):
+        sites = [b.get("site") for b in self.cfg["hosting"]]
+        self.assertEqual(len(sites), len(set(sites)), "같은 site 를 두 번 적었다")
+        self.assertTrue(all(sites), "site 이름이 빠진 블록이 있다")
+
+    def test_hosting_is_rebuilt_before_deploy(self):
+        """`hosting/` 은 `web/` 의 사본이다. 빌드 없이 배포하면 구버전이 올라간다.
+
+        DEPLOY.md 는 build_hosting → deploy 순서를 적어 두었지만, 사람이 그 순서를
+        기억하는 것과 도구가 그 순서를 지키는 것은 다르다. predeploy 에 걸어 두면
+        어느 경로로 배포해도 걸린다.
+        """
+        for b in self.cfg["hosting"]:
+            with self.subTest(site=b.get("site")):
+                self.assertIn("python -m scripts.build_hosting", b.get("predeploy", []))
+
+    def test_rules_are_verified_before_deploy(self):
+        """규칙은 배포 관문에서 검사한다.
+
+        CI 에서는 못 돈다 — 서비스 계정 키가 필요하고 그 키를 깃허브에 두지 않는다.
+        규칙이 바뀌는 순간은 배포하는 순간뿐이므로 거기가 맞는 자리다.
+        """
+        self.assertIn("node scripts/test_rules.js",
+                      self.cfg["firestore"].get("predeploy", []))

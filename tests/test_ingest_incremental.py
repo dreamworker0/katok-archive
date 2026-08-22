@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT))
 
 from scripts import ingest_incremental as inc  # noqa: E402
 from scripts.kakao_parser import parse_chat  # noqa: E402
+from tests.realdata import needs_real_data  # noqa: E402
 
 
 def export_text(days):
@@ -156,6 +157,7 @@ class TopicAssignmentTest(unittest.TestCase):
         topics = inc.assign_to_topics(topics, ["msg-001512"], "2026-07-26")
         self.assertEqual(len(topics["threads"]), 2)
 
+    @needs_real_data
     def test_unsorted_category_exists_in_real_topics(self):
         """폴백 카테고리가 실제 topics.json 에 존재해야 화면이 깨지지 않는다."""
         from scripts import build_site
