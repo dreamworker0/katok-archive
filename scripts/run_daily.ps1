@@ -13,6 +13,8 @@
   7. 발행본 재생성                             build_firestore_payload.py
   8. 테스트로 정합성 확인 (적재 전에)          unittest
   9. Firestore·Storage 적재                    upload_firestore.js
+ 10. 결과를 화면에 남기기                      report_run.js
+ 11. 작업 폴더 마름질(로그·스크린샷)          prune_workspace.py
 
 설계
   - 각 단계는 실패하면 즉시 중단한다. 반쪽 상태로 발행하지 않는다.
@@ -80,6 +82,31 @@ function Say { param([string]$m, [string]$lvl = 'INFO')
     }
 }
 
+# 갱신 결과를 화면에도 남긴다 (settings/lastRun).
+#
+# 로그만으로는 부족했다. '지금 갱신' 버튼 경로는 refresh_watcher.js 가 상태를 써서
+# 관리 탭이 실시간으로 보여주는데, 매일 23:40 스케줄러는 아무것도 쓰지 않았다.
+# 그래서 야간 갱신이 며칠 내리 실패해도 화면은 조용하고, 사람이 logs\daily-*.log 를
+# 열어 보기 전까지 아무도 모른다.
+#
+# **실패해도 갱신 결과를 바꾸지 않는다.** 종료 코드를 보지 않고, stderr 를 오류로
+# 승격시키지 않는다 — 알림을 남기려는 코드가 그날 갱신을 죽여서는 안 된다.
+# -DryRun 에서는 쓰지 않는다. 확인만 하는 실행이 화면의 '마지막 갱신' 을 덮으면
+# 그것이 곧 거짓말이 된다.
+function Report-Run {
+    param([string]$status, [string]$step, [int]$code = 0, [string]$why, [int]$added = -1)
+    if ($DryRun) { return }
+    $a = @('scripts\report_run.js', '--status', $status, '--exit', "$code")
+    if ($step)      { $a += @('--step', $step) }
+    if ($why)       { $a += @('--why', $why) }
+    if ($added -ge 0) { $a += @('--added', "$added") }
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $out = & node @a 2>&1 } catch { $out = "기록 실패: $_" }
+    finally { $ErrorActionPreference = $prevEap }
+    foreach ($l in $out) { Say "    $l" }
+}
+
 # 한 번에 하나만 돈다 — 겹쳐 돌면 발행이 반쪽 상태로 섞인다.
 #
 # 실행 경로가 둘이 됐다: 매일 23:40 작업 스케줄러, 그리고 관리 탭의 '지금 갱신'
@@ -123,6 +150,8 @@ function Invoke-Step {
     foreach ($l in $out) { Say "    $l" }
     if ($null -ne $code -and $code -ne 0) {
         Say "$name 실패 (exit $code) — 중단합니다." 'ERROR'
+        # 어느 단계에서 멈췄는지까지 남긴다. 로그를 열지 않고도 관리 탭에서 보인다.
+        Report-Run -status 'failed' -step $name -code $code
         exit $code
     }
     , $out
@@ -305,6 +334,9 @@ if ($null -eq $stale) {
 # 발행할지 판단 — 분류 뒤에 둔다(위 주석 참고)
 if ($added -eq 0 -and -not $requestsChanged -and $classified -eq 0 -and -not $stale) {
     Say "새 메시지도 멤버 요청 변경도 분류 변경도 없고 발행본도 최신이라 발행을 건너뜁니다."
+    # 건너뛴 것은 실패가 아니다. 그래도 남긴다 — 이 기록이 없으면 화면은 '실패'와
+    # '조용한 날'을 구분하지 못하고, 둘 다 '소식 없음'으로 보인다.
+    Report-Run -status 'skipped' -why '발행 사유 없음' -added 0
     Say "===== 일일 갱신 종료 ====="
     exit 0
 }
@@ -388,6 +420,34 @@ if ($requestsChanged) { $why += "멤버 요청 변경" }
 if ($classified -gt 0) { $why += "분류 $classified 건" }
 if ($stale) { $why += "뒤처진 발행본 따라잡기" }
 Say ("===== 일일 갱신 완료: {0} 발행 =====" -f ($why -join ', '))
+Report-Run -status 'ok' -why ($why -join ', ') -added $added
+
+# 11) 작업 폴더 마름질 — 적재가 끝난 뒤에 한다
+#
+#     `abort-*.png` 가 급한 이유는 용량이 아니다. 자동화가 멈출 때 무슨 화면이었는지
+#     남기려고 찍은 것인데 그 화면이 카톡 대화창이다 — 대화 내용이 담긴 이미지가
+#     평문으로 무기한 남았다(실측 2026-08-22: 14장, 가장 오래된 것이 넉 주째).
+#     발행본에서는 사진 속 개인정보까지 OCR 로 걸러내면서 진단 스크린샷은 그대로
+#     둔 셈이었다.
+#
+#     적재 **뒤**에 두는 이유: 마름질이 잘못돼도 그날 발행은 이미 끝나 있어야 한다.
+#     앞에 두면 지우는 코드의 실수가 발행을 막는다.
+#
+#     자산 중복(766MB)은 여기서 건드리지 않는다. 해시를 다 계산해 1분 가까이 걸리고,
+#     무엇보다 그 폴더들에 아카이브에 없는 사진·동영상이 섞여 있었다. 사람이 보고
+#     판단할 일이라 손으로만 돌린다: python -m scripts.prune_workspace --assets
+#
+#     실패해도 갱신을 멈추지 않는다 — 마름질은 없으면 쌓일 뿐이다.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $pruneArgs = @('-m', 'scripts.prune_workspace')
+    if (-not $DryRun) { $pruneArgs += '--apply' }
+    foreach ($l in (& python @pruneArgs 2>&1)) {
+        if ($l -match '지움|합계|마름질할 것이 없습니다') { Say "    $l" }
+    }
+}
+finally { $ErrorActionPreference = $prevEap }
 # 미분류가 남았는지는 세어 보고 말한다.
 #
 # 예전에는 '새 메시지가 있으면' 무조건 이 줄을 찍었다. 사람이 주 1회 재분류하던

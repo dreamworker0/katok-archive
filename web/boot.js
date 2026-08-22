@@ -348,6 +348,19 @@
           function (e) { onChange(null, e); }
         );
       },
+
+      /* 매일 밤 스케줄러가 돈 결과. `settings/refresh` 와 따로 둔 이유가 있다.
+       *
+       * refresh 는 '지금 갱신' 버튼 한 건의 생애(대기→진행→끝)를 담는 문서다.
+       * 야간 갱신을 여기에 섞으면 버튼을 누르지 않았는데도 "갱신 중" 이 뜨고,
+       * 반대로 버튼 한 번이 지난 밤의 실패를 덮어 지운다. 둘은 서로를 지워서는
+       * 안 되는 별개의 소식이라 문서를 나눴다. 쓰는 쪽은 scripts/report_run.js. */
+      watchLastRun: function (onChange) {
+        return db.collection("settings").doc("lastRun").onSnapshot(
+          function (d) { onChange(d.exists ? d.data() : null, null); },
+          function (e) { onChange(null, e); }
+        );
+      },
     };
   }
 
