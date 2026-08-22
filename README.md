@@ -104,7 +104,7 @@ Firestore 적재       달라진 문서만 (해시 비교)
 output/                 원장·주제·보고서·관계망 (전부)
 config/members.json     멤버 이메일
 config/pii_allow.json   감추지 않을 연락처 — 그 자체가 연락처 목록이다
-assets/                 사진·동영상·첨부
+assets/*                사진·동영상·첨부 (통째로 무시 — 열거하면 샌다)
 serviceAccountKey.json  Firebase 서비스 계정 키
 KakaoTalk_*.txt         내보내기 원문
 ```
@@ -132,9 +132,25 @@ npm install
 개발은 Python 3.14 · Node 24 에서 한다.
 
 ```bash
-python -m unittest discover -s tests    # 파이썬 검사
-npm test                                # 적재 로직 검사
+python -m unittest discover -s tests    # 파이썬 검사 712개
+npm test                                # 프런트·적재 검사 45개
+npm run test:rules                      # 보안 규칙 59개 (서비스 계정 키 필요)
+python -m scripts.prune_workspace       # 작업 폴더 마름질 계획 (지우지는 않음)
 ```
+
+검사는 두 종류가 섞여 있다.
+
+- **로직 검사** — 어디서든 돈다. 새로 clone 한 곳에서 6초에 661개.
+- **정합성 검사 51개** — `output/` 의 실제 발행 데이터를 훑는다. 오늘 밤 올릴 것이
+  앞뒤가 맞는지 보는, 적재 **앞**에 서 있는 관문이다. 데이터가 없으면 건너뛴다
+  ([`tests/realdata.py`](tests/realdata.py)) — 판단 기준은 원장 하나다. 원장이
+  있으면 관리자 컴퓨터이므로 전부 돌아야 하고, 파일 하나가 없어진 것은 건너뛸
+  일이 아니라 터져야 할 일이다.
+
+push 하면 [GitHub Actions](.github/workflows/test.yml) 가 로직 검사와 적재 검사를
+돌린다. 보안 규칙 검사는 서비스 계정 키가 필요해 거기서 돌지 않고, 대신
+`firebase.json` 의 predeploy 에 걸려 있다 — 규칙이 바뀌는 순간은 배포하는
+순간뿐이므로 거기가 맞는 자리다.
 
 Windows 콘솔에서 한글이 깨지면 `PYTHONIOENCODING=utf-8`을 붙인다.
 
@@ -144,7 +160,13 @@ powershell -File scripts\run_daily.ps1 -SkipExport           # inbox 의 txt 로
 powershell -File scripts\run_daily.ps1                       # 내보내기까지 자동
 ```
 
-배포는 [docs/DEPLOY.md](docs/DEPLOY.md)에 있다.
+```bash
+npm run deploy
+```
+
+배포 전에 `hosting/` 을 다시 만들고 보안 규칙을 검증한다(`firebase.json` 의
+predeploy). `hosting/` 은 `web/` 의 사본이라 빌드 없이 배포하면 묵묵히 구버전이
+올라간다. 자세한 것은 [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## 문서
 
