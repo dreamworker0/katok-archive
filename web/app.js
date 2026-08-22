@@ -14,27 +14,29 @@
    * 발행 때 이미 통일했지만, 요지 산문의 태그는 사람이 따로 쓴 말이라 '차량
    * 운행일지'처럼 띄어쓰기가 다를 수 있다. */
   var TAG_THREADS = {};
-  /* 조각만 로마자인 태그를 위한 음역 대응. `scripts/tags.py` 의 TRANSLIT 과 같아야
-   * 한다 — 발행 때 'Claude Code' 를 '클로드 코드' 로 합쳐 놓았으니, 카드 칩(사람이
-   * 쓴 원래 표기)을 눌렀을 때 여기서도 같은 곳에 닿아야 태그가 열린다.
-   * 어긋나면 태그 대신 글자 검색으로 떨어진다. tests/test_ui_contract.py 가 지킨다. */
-  var TAG_TRANSLIT = {
-    gemini: "제미나이", claude: "클로드", opus: "오퍼스", sonnet: "소네트",
-    ontology: "온톨로지", playground: "플레이그라운드", modeling: "모델링",
-    tutorial: "튜토리얼", workspace: "워크스페이스", studio: "스튜디오",
-    code: "코드", pro: "프로", plus: "플러스", max: "맥스", flash: "플래시",
-    github: "깃허브", youtube: "유튜브", python: "파이썬", discord: "디스코드",
-    facebook: "페이스북", hackathon: "해커톤", agent: "에이전트",
-    vercel: "버셀", firebase: "파이어베이스", cloudflare: "클라우드플레어",
-    codex: "코덱스", perplexity: "퍼플렉시티", lovable: "러버블",
-    azure: "애저", chatgpt: "챗gpt", google: "구글", notebooklm: "노트북lm"
-  };
-  function tagFold(s) {
-    return String(s || "").trim().toLowerCase().split(/[\s\-_.]+/)
-      .filter(Boolean)
-      .map(function (p) { return TAG_TRANSLIT[p] || p; })
-      .join("");
-  }
+  /* 글자·마크다운 다루기는 web/text.js 로 옮겼다.
+   *
+   * 여기 이름을 다시 묶어 두는 이유: 이 파일 안에서 `esc(...)` 로 부르는 곳이
+   * 200군데가 넘는다. 전부 `T.esc(...)` 로 바꾸면 diff 가 그것으로만 가득 차서
+   * 무엇이 실제로 달라졌는지 보이지 않는다. */
+  var T = window.ArchiveText;
+  var tagFold = T.tagFold;
+  var esc = T.esc;
+  var linkify = T.linkify;
+  var highlightText = T.highlightText;
+  var hashHue = T.hashHue;
+  var initial = T.initial;
+  var fmtSize = T.fmtSize;
+  var fmtDate = T.fmtDate;
+  var mdInline = T.mdInline;
+  var mdRow = T.mdRow;
+  var hostOf = T.hostOf;
+  var splitLinks = T.splitLinks;
+  var linkifyHosts = T.linkifyHosts;
+  var renderMarkdown = T.renderMarkdown;
+  var msAgo = T.msAgo;
+  var agoText = T.agoText;
+
   // 태그를 한 번에 몇 개까지 겹쳐 볼 수 있나. 넷 이상 겹치면 거의 0건이 된다.
   var TAG_PICK_MAX = 3;
   THREADS.forEach(function (t) {
@@ -82,7 +84,9 @@
                 // 태그 화면에서 고른 태그(최대 TAG_PICK_MAX 개)
                 tagPick: [],
                 // 갱신 상태와 그 구독 해제 함수 (관리자 전용)
-                refresh: null, refreshUnsub: null };
+                refresh: null, refreshUnsub: null,
+                // 매일 밤 스케줄러가 돈 결과 (settings/lastRun)
+                lastRun: null, lastRunUnsub: null };
   try {
     var savedG = localStorage.getItem("gallery-view");
     if (savedG === "list" || savedG === "grid") state.gview = savedG;
@@ -90,39 +94,7 @@
     if (savedS === "asc" || savedS === "desc") state.tsort = savedS;
   } catch (e) { /* 프라이빗 모드 등 — 기본값으로 간다 */ }
 
-  // ---------- 유틸 ----------
-  function esc(s) {
-    return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  }
-  var URL_RE = /(https?:\/\/[^\s]+)/g;
-  function linkify(escaped) {
-    return escaped.replace(URL_RE, function (u) {
-      return '<a href="' + u + '" target="_blank" rel="noopener noreferrer">' + u + "</a>";
-    });
-  }
-  function highlightText(html, q) {
-    if (!q) return html;
-    var parts = html.split(/(<[^>]+>)/);
-    var re = new RegExp("(" + q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "ig");
-    for (var i = 0; i < parts.length; i++) {
-      if (parts[i] && parts[i][0] !== "<") parts[i] = parts[i].replace(re, "<mark>$1</mark>");
-    }
-    return parts.join("");
-  }
-  function hashHue(s) { var h = 0; for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360; return h; }
   function avatarStyle(n) { return "background:hsl(" + hashHue(n) + ",42%,50%)"; }
-  function initial(n) { var x = (n || "?").replace(/\s*\(.*\)\s*$/, "").trim(); return x ? x.charAt(0) : "?"; }
-  function fmtSize(bytes) {
-    if (!bytes) return "";
-    if (bytes < 1024 * 1024) return Math.max(1, Math.round(bytes / 1024)) + " KB";
-    return (bytes / 1024 / 1024).toFixed(1) + " MB";
-  }
-  var WD = ["일", "월", "화", "수", "목", "금", "토"];
-  function fmtDate(d) {
-    var p = d.split("-"), dt = new Date(+p[0], +p[1] - 1, +p[2]);
-    return p[0] + "년 " + (+p[1]) + "월 " + (+p[2]) + "일 (" + WD[dt.getDay()] + ")";
-  }
 
   function emptyState(kind, title, body, actionHtml) {
     var art = kind === "search" ? "state-search.webp" : "state-empty.webp";
@@ -719,188 +691,11 @@
     Array.prototype.forEach.call(el.view.querySelectorAll(".tc-detail.on"), fillMedia);
   }
 
-  /* ---------- 마크다운 ----------
-   *
-   * 보고서 원본이 .md 라서 화면에서도 마크다운을 그린다. 라이브러리를 쓰지
-   * 않는 이유는 두 가지다. 필요한 문법이 소제목·목록·표·인용·강조뿐이고,
-   * 무엇보다 남이 쓴 파서에 원문을 통과시키면 어디서 HTML 이 새는지 알기
-   * 어렵다. 여기서는 **가장 먼저 전부 이스케이프**하고 그 위에 규칙을
-   * 얹으므로, 본문에 <script> 가 들어 있어도 글자로만 나온다.
-   */
-  function mdInline(s) {
-    var h = esc(s);
-    h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
-    h = h.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-    h = h.replace(/==([^=]+)==/g, '<mark class="key">$1</mark>');
-    // 링크는 http/https 만 통과시킨다. javascript: 를 막기 위함이다.
-    h = h.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-      '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-    return h;
-  }
 
-  function mdRow(line) {
-    var cells = line.replace(/^\||\|$/g, "").split("|");
-    return cells.map(function (c) { return c.trim(); });
-  }
 
-  /* 본문에 이미 적힌 주소를 링크로 만든다.
-   *
-   * 보고서를 쓰다 보면 "urimal.vercel.app 을 공개했다"처럼 주소를 글 안에
-   * 적게 된다. 그런데 같은 링크가 카드 아래 목록에도 또 나와서 두 번 보였다.
-   * ==내용 중에 나오면 내용 중에 넣는 것이 낫다== — 본문에서 링크로 걸고
-   * 아래 목록에서는 뺀다.
-   *
-   * 이미 <a> 나 <code> 안에 있는 글자는 건드리지 않는다. 태그 경계를 세어
-   * 판단하므로 링크 안의 링크나 코드 속 주소가 깨지지 않는다.
-   */
-  function linkifyHosts(html, map) {
-    if (!map || !map.length) return html;
-    var parts = html.split(/(<[^>]+>)/);
-    var depth = 0;
-    for (var i = 0; i < parts.length; i++) {
-      var p = parts[i];
-      if (!p) continue;
-      if (p[0] === "<") {
-        if (/^<(a|code)\b/i.test(p)) depth++;
-        else if (/^<\/(a|code)>/i.test(p)) depth = Math.max(0, depth - 1);
-        continue;
-      }
-      if (depth) continue;
-      map.forEach(function (m) {
-        if (p.indexOf(m.host) === -1) return;
-        p = p.split(m.host).join(
-          '<a href="' + esc(m.url) + '" target="_blank" rel="noopener noreferrer">' +
-          esc(m.host) + "</a>");
-      });
-      parts[i] = p;
-    }
-    return parts.join("");
-  }
 
-  /** 링크의 호스트. www 는 떼어 본문 표기와 맞춘다. */
-  function hostOf(url) {
-    var m = /^https?:\/\/([^/?#]+)/.exec(String(url || ""));
-    return m ? m[1].replace(/^www\./, "") : "";
-  }
 
-  /** 본문에 주소가 적힌 링크와 그렇지 않은 링크로 가른다. */
-  function splitLinks(t) {
-    var rep = t.report || "", inline = [], context = [], rest = [], seen = {};
-    var contextIds = {};
-    rep.replace(/^!\[\[link:([A-Za-z0-9_-]+)\]\]\s*$/gm, function (all, id) {
-      contextIds[id] = 1;
-      return all;
-    });
-    (t.links || []).forEach(function (l) {
-      if (l.id && contextIds[l.id]) {
-        context.push(l);
-        return;
-      }
-      var h = hostOf(l.url);
-      if (h && rep.indexOf(h) !== -1 && !seen[h]) {
-        seen[h] = 1;
-        inline.push({ host: h, url: l.url });
-      } else {
-        rest.push(l);
-      }
-    });
-    // 긴 호스트를 먼저 바꿔야 짧은 것이 긴 것 안을 잘라먹지 않는다
-    inline.sort(function (a, b) { return b.host.length - a.host.length; });
-    return { inline: inline, context: context, rest: rest };
-  }
 
-  function renderMarkdown(src) {
-    var lines = String(src || "").replace(/\r\n/g, "\n").split("\n");
-    var out = [], i = 0;
-    function flushPara(buf) {
-      if (buf.length) out.push("<p>" + mdInline(buf.join(" ")) + "</p>");
-      buf.length = 0;
-    }
-    var para = [];
-    while (i < lines.length) {
-      var ln = lines[i];
-
-      if (!ln.trim()) { flushPara(para); i++; continue; }
-
-      var linkAnchor = /^!\[\[link:([A-Za-z0-9_-]+)\]\]$/.exec(ln.trim());
-      if (linkAnchor) {
-        flushPara(para);
-        out.push('<div class="md-link-anchor" data-link-anchor="' +
-          esc(linkAnchor[1]) + '"></div>');
-        i++; continue;
-      }
-
-      /* 사진·첨부 자리표 — `![[msg-000123]]` 한 줄.
-       *
-       * 보고서 끝에 사진을 몰아 두면 "무슨 얘기 중에 올라온 것"인지가 사라진다.
-       * 본문을 쓸 때 그 대목 뒤에 자리표를 남겨 두면, 화면이 media 발행본에서
-       * 같은 message id 를 찾아 그 자리에 끼운다. 사람이 두 군데를 맞춰 적는
-       * 것이 아니라 자리만 가리키므로 어긋날 여지가 없다. */
-      var an = /^!\[\[\s*([A-Za-z0-9_-]+)\s*\]\]$/.exec(ln.trim());
-      if (an) {
-        flushPara(para);
-        out.push('<div class="md-anchor" data-anchor="' + esc(an[1]) + '"></div>');
-        i++; continue;
-      }
-
-      var h = /^(#{1,6})\s+(.*)$/.exec(ln);
-      if (h) {
-        flushPara(para);
-        var lv = Math.min(6, h[1].length + 2);   // ## → h4, 카드 안이므로 낮춘다
-        out.push("<h" + lv + ">" + mdInline(h[2]) + "</h" + lv + ">");
-        i++; continue;
-      }
-
-      if (/^(---|\*\*\*)\s*$/.test(ln)) { flushPara(para); out.push("<hr />"); i++; continue; }
-
-      // 표 — 두 번째 줄이 구분선이어야 표로 본다
-      if (ln.indexOf("|") !== -1 && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1] || "")) {
-        flushPara(para);
-        var head = mdRow(ln), body = [];
-        i += 2;
-        while (i < lines.length && lines[i].indexOf("|") !== -1 && lines[i].trim()) {
-          body.push(mdRow(lines[i])); i++;
-        }
-        out.push('<div class="md-table"><table><thead><tr>' +
-          head.map(function (c) { return "<th>" + mdInline(c) + "</th>"; }).join("") +
-          "</tr></thead><tbody>" +
-          body.map(function (r) {
-            return "<tr>" + r.map(function (c) {
-              return "<td>" + mdInline(c) + "</td>"; }).join("") + "</tr>";
-          }).join("") + "</tbody></table></div>");
-        continue;
-      }
-
-      var b = /^\s*([-*]|\d+\.)\s+(.*)$/.exec(ln);
-      if (b) {
-        flushPara(para);
-        var ordered = /\d/.test(b[1]), items = [];
-        while (i < lines.length) {
-          var m2 = /^\s*([-*]|\d+\.)\s+(.*)$/.exec(lines[i]);
-          if (!m2) break;
-          items.push("<li>" + mdInline(m2[2]) + "</li>");
-          i++;
-        }
-        out.push((ordered ? "<ol>" : "<ul>") + items.join("") + (ordered ? "</ol>" : "</ul>"));
-        continue;
-      }
-
-      if (/^>\s?/.test(ln)) {
-        flushPara(para);
-        var q = [];
-        while (i < lines.length && /^>\s?/.test(lines[i])) {
-          q.push(lines[i].replace(/^>\s?/, "")); i++;
-        }
-        out.push("<blockquote>" + mdInline(q.join(" ")) + "</blockquote>");
-        continue;
-      }
-
-      para.push(ln.trim());
-      i++;
-    }
-    flushPara(para);
-    return out.join("");
-  }
 
   /* 대화 보고서.
    *
@@ -2502,22 +2297,7 @@
   // 감시 스크립트는 5분마다 하트비트를 쓴다. 두 번 놓칠 여유를 준다.
   var WATCHER_ALIVE_MS = 12 * 60 * 1000;
 
-  function msAgo(value) {
-    if (!value) return null;
-    var t = Date.parse(String(value));
-    return isNaN(t) ? null : (Date.now() - t);
-  }
 
-  function agoText(value) {
-    var ms = msAgo(value);
-    if (ms === null) return "";
-    if (ms < 60000) return "방금";
-    var m = Math.floor(ms / 60000);
-    if (m < 60) return m + "분 전";
-    var h = Math.floor(m / 60);
-    if (h < 24) return h + "시간 전";
-    return Math.floor(h / 24) + "일 전";
-  }
 
   function watcherAlive(r) {
     var ms = msAgo(r && r.watcherSeenAt);
@@ -2538,6 +2318,53 @@
       return !watcherAlive(r) || msAgo(r.startedAt) > 90 * 60 * 1000;
     }
     return false;
+  }
+
+  /* 매일 밤 스케줄러가 돈 결과를 한 줄로 보여준다.
+   *
+   * 왜 필요한가: 이 카드는 지금까지 '지금 갱신' 버튼만 비췄다. 야간 갱신은
+   * Firestore 에 아무것도 쓰지 않아, 사흘 내리 실패해도 화면은 조용했고
+   * logs\daily-*.log 를 열어 보기 전까지 아무도 몰랐다.
+   *
+   * 조용한 날과 실패한 날을 반드시 구분해 보여준다. 둘 다 '새 소식 없음' 으로
+   * 보이면 이 줄이 있으나 마나다 — 그래서 건너뛴 날도 status 를 남긴다.
+   *
+   * 하루가 넘도록 아무 기록이 없으면 그것도 알린다. 스케줄러 자체가 꺼졌거나
+   * PC 가 며칠 꺼져 있던 경우인데, '마지막 결과' 만 보여주면 그 상태가 옛
+   * 성공으로 남아 계속 초록으로 보인다.
+   */
+  var LASTRUN_STALE_MS = 36 * 60 * 60 * 1000;   // 23:40 실행 + 반나절 여유
+
+  function lastRunLine(lr) {
+    if (!lr) {
+      return '<p class="mine-note">야간 갱신 기록이 아직 없습니다.</p>';
+    }
+    var ms = msAgo(lr.finishedAt);
+    var when = agoText(lr.finishedAt);
+    var stale = ms === null || ms > LASTRUN_STALE_MS;
+
+    if (lr.status === "failed") {
+      return '<p class="rf-warn">야간 갱신이 실패했습니다' +
+        (lr.lastStep ? " — <b>" + esc(lr.lastStep) + "</b> 단계" : "") +
+        (lr.exitCode ? " (exit " + esc(lr.exitCode) + ")" : "") +
+        (when ? " · " + esc(when) : "") +
+        ". 원본은 그대로 있으니 고친 뒤 다시 돌리면 됩니다 — " +
+        "자세한 것은 PC 의 logs\\daily-*.log 에 있습니다.</p>";
+    }
+    if (stale) {
+      return '<p class="rf-warn">야간 갱신이 하루가 넘도록 돌지 않았습니다' +
+        (when ? " (마지막 " + esc(when) + ")" : "") +
+        ". PC 가 켜져 있는지, 작업 스케줄러가 살아 있는지 보세요.</p>";
+    }
+    // why 는 run_daily 가 적은 발행 사유("새 메시지 3건, 분류 2건")다. 그것이
+    // 있으면 added 를 따로 안 쓴다 — 같은 말을 두 번 하게 된다.
+    var body = lr.status === "skipped"
+      ? "야간 갱신 · 올릴 것이 없어 건너뜀"
+      : "야간 갱신 · 마침";
+    var detail = lr.why || (lr.added ? "새 글 " + lr.added + "건" : "");
+    return '<p class="mine-note">' + esc(body) +
+      (detail ? " · " + esc(detail) : "") +
+      (when ? ' <span class="adm-mail">' + esc(when) + "</span>" : "") + "</p>";
   }
 
   function refreshCardBody(r) {
@@ -2582,6 +2409,9 @@
       html.push('<p class="mine-note">PC 연결됨 · 마지막 응답 ' +
         esc(agoText(r.watcherSeenAt)) + "</p>");
     }
+
+    // 야간 갱신 소식은 버튼 위에 둔다. 아래에 두면 설명문에 묻힌다.
+    html.push(lastRunLine(state.lastRun));
 
     html.push('<div class="rf-act">' +
       '<button class="btn rf-go"' + (busy ? " disabled" : "") + ">" +
@@ -2645,6 +2475,7 @@
   }
 
   function watchRefresh() {
+    watchLastRun();
     if (state.refreshUnsub) return;
     state.refreshUnsub = state.session.admin.watchRefresh(function (data, err) {
       if (err) {
@@ -2657,7 +2488,21 @@
     });
   }
 
+  /* 야간 갱신 결과도 함께 듣는다.
+   *
+   * 실패해도 조용히 넘긴다 — 이것을 못 읽는 것이 '지금 갱신' 버튼을 막을 이유는
+   * 없다. 문서가 아예 없을 수도 있다(이 기능이 들어오기 전에는 없었다). */
+  function watchLastRun() {
+    if (state.lastRunUnsub) return;
+    if (!state.session.admin.watchLastRun) return;
+    state.lastRunUnsub = state.session.admin.watchLastRun(function (data) {
+      state.lastRun = data;
+      renderRefreshCard();
+    });
+  }
+
   function unwatchRefresh() {
+    if (state.lastRunUnsub) { state.lastRunUnsub(); state.lastRunUnsub = null; }
     if (!state.refreshUnsub) return;
     state.refreshUnsub();
     state.refreshUnsub = null;

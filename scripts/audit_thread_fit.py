@@ -32,7 +32,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 from pathlib import Path
 
-from scripts.classify_unsorted import call_claude, parse_reply
+from scripts.llm import call_claude, parse_reply
 from scripts.jsonio import read_json, read_jsonl, write_json
 
 ROOT = Path(__file__).resolve().parent.parent

@@ -37,6 +37,24 @@ REQUIRED_IDS = {
 }
 
 
+def front_end_js() -> str:
+    """app.js + text.js 를 이어 읽는다.
+
+    이 검사들이 묻는 것은 "프런트가 이렇게 하는가" 이고, 그 답은 두 파일에 걸쳐
+    있다. 글자·마크다운 다루기는 `web/text.js` 로 떼어냈다(app.js 안에 있는 동안
+    동작 검사가 하나도 없었다 — 닫힌 IIFE 라 node 에서 부를 방법이 없었다).
+
+    한쪽만 읽으면 코드를 옮길 때마다 이 검사들이 함께 깨진다. 실제로 떼어낼 때
+    네 건이 그렇게 깨졌는데, 프런트의 동작은 하나도 바뀌지 않았다 — 검사가 파일
+    경계를 본 것이지 동작을 본 것이 아니라는 뜻이다.
+
+    동작 자체는 `tests/text.test.js` 가 실제로 함수를 불러서 본다.
+    """
+    parts = [(ROOT / "web" / name).read_text(encoding="utf-8")
+             for name in ("app.js", "text.js")]
+    return "".join(parts)
+
+
 class Markup(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -75,7 +93,7 @@ class ArchiveRebindContractTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        cls.app = front_end_js()
         cls.init = cls.app[cls.app.index("function init(session)"):]
 
     def test_every_archive_derived_global_is_rebound_in_init(self):
@@ -99,7 +117,7 @@ class FileOriginContractTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        cls.app = front_end_js()
         cls.css = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
         cls.py = (ROOT / "scripts" / "build_site.py").read_text(encoding="utf-8")
 
@@ -143,7 +161,7 @@ class TagPickContractTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        cls.app = front_end_js()
         cls.css = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
 
     def test_pick_limit_is_stated_once_and_shown_to_the_user(self):
@@ -221,7 +239,7 @@ class RoutingContractTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        cls.app = front_end_js()
 
     def test_view_change_writes_the_address(self):
         block = self.app[self.app.index("function setView(v)"):]
@@ -286,7 +304,7 @@ class InlineDisplayContractTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        cls.app = front_end_js()
         cls.css = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
 
     def test_ids_hidden_by_css_are_shown_with_an_explicit_value(self):
@@ -313,7 +331,7 @@ class HiddenAttributeContractTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        cls.app = front_end_js()
         cls.css = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
 
     def test_js_hidden_targets_have_a_matching_css_rule(self):
@@ -474,7 +492,7 @@ class UiStyleContractTests(unittest.TestCase):
         물건처럼 보였다. 모바일에서는 '가' 와 달 모양만 보고 무엇인지 추측해야
         한다는 문제도 있었다. 이름과 지금 값을 적어 목록에 맞춘다.
         """
-        app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        app = front_end_js()
         self.assertIn('.mobile-more button[data-mobile-action="font"]', self.css)
         self.assertIn('.mobile-more button[data-mobile-action="theme"]', self.css)
         self.assertIn("function mobileRow(", app)
@@ -494,7 +512,7 @@ class UiStyleContractTests(unittest.TestCase):
     def test_sidebar_keeps_the_compact_icon_toggles(self):
         # 사이드바 푸터는 40px 아이콘 자리다. 목록이 아니므로 라벨 행이 아니라
         # 아이콘이 맞다 — 같은 동작이라도 자리에 따라 모양이 다를 수 있다.
-        app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        app = front_end_js()
         self.assertIn('class="font-toggle__mark" aria-hidden="true">가<', app)
         self.assertIn(".font-toggle__mark", self.css)
 
@@ -532,7 +550,7 @@ class UiStyleContractTests(unittest.TestCase):
 class UiJavascriptContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        cls.app = front_end_js()
 
     def test_navigation_updates_every_data_view_control(self):
         self.assertIn('querySelectorAll("[data-view]")', self.app)
@@ -611,7 +629,7 @@ class MobileDensityContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.css = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
-        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        cls.app = front_end_js()
         cls.mobile = cls.css[cls.css.index("@media (max-width: 760px)"):]
 
     def test_desktop_never_shows_the_toggle_and_never_collapses(self):
@@ -698,7 +716,7 @@ class UiGateContractTests(unittest.TestCase):
 class UiViewContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        cls.app = front_end_js()
 
     def test_summary_opens_with_archive_welcome(self):
         self.assertIn("archive-welcome", self.app)
@@ -712,7 +730,7 @@ class UiViewContractTests(unittest.TestCase):
 class UiSafetyContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        cls.app = front_end_js()
 
     def test_risky_actions_use_the_shared_dialog(self):
         self.assertNotIn("window.confirm", self.app)
