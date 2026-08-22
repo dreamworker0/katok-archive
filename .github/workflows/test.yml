@@ -1,0 +1,58 @@
+# 검사를 push 시점에 돌린다.
+#
+# 왜 필요한가: 이 저장소는 공개다(2026-08-02 전환). 실명·연락처가 코드나 검사
+# 자료로 흘러드는 것을 막는 것은 `tests/test_repo_is_publishable.py` 인데, 그것은
+# **사람이 로컬에서 검사를 돌릴 때만** 작동했다. push 시점에는 아무것도 막지 않았다.
+# 발행본에서는 공들여 가리면서 저장소에는 원본이 남은 적이 실제로 있었다.
+#
+# 왜 이제야 붙였는가: 검사 654개 중 51개가 `output/` 의 실제 발행 데이터를 훑는
+# 정합성 검사다. 대화 데이터는 저장소에 없으니(그것이 설계다) 새로 clone 한 곳에서는
+# 12건이 에러로 시작했다. 첫 실행부터 빨간불이면 "원래 저렇다"가 되어 검사가 신호이기를
+# 그만둔다. `tests/realdata.py` 가 그 51개를 가려 건너뛰게 한 뒤에야 붙일 수 있었다.
+# 마지막 줄의 `OK (skipped=NN)` 이 그 수다 — 조용히 늘면 CI 가 점점 아무것도 안 본다.
+#
+# 규칙 검증(`scripts/test_rules.js`)은 여기서 돌지 않는다 — 서비스 계정 키가 필요하고
+# 그 키를 깃허브에 두지 않는다. 대신 `firebase.json` 의 firestore predeploy 에 걸어
+# 두었다. 규칙은 배포할 때만 바뀌므로 배포 관문이 맞는 자리다.
+name: 검사
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 개발은 Python 3.14 · Node 24 에서 한다 (README).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      # 파이썬 의존성은 Pillow 하나다.
+      - name: 파이썬 의존성
+        run: pip install -r requirements.txt
+
+      # devDependencies(firebase-tools)는 빼고 받는다. 200MB 가까이 되는데 CI 는
+      # 배포하지 않으므로 쓸 일이 없다. `npm test` 가 쓰는 firebase-admin 은
+      # dependencies 라 그대로 들어온다.
+      - name: 노드 의존성
+        run: npm ci --omit=dev
+
+      # 파이프를 물리지 않는다. `... | tail` 로 감으면 종료 코드가 tail 것이 되어
+      # 검사가 실패해도 단계가 초록으로 지나간다.
+      - name: 파이썬 검사
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m unittest discover -s tests
+
+      - name: 적재 로직 검사
+        run: npm test

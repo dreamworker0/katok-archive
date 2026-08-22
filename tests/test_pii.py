@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from scripts import pii  # noqa: E402
+from tests.realdata import needs_real_data  # noqa: E402
 
 EMPTY = {"phones": set(), "emails": set()}
 
@@ -273,6 +274,7 @@ class RepoHygieneTest(unittest.TestCase):
         self.assertLess(scan, publish, "사진 개인정보 검사가 발행보다 뒤에 있다")
 
 
+@needs_real_data
 class PublicationTest(unittest.TestCase):
     """발행본에 가릴 것이 남아 있으면 배포를 막는다."""
 
@@ -331,6 +333,7 @@ class PublicationTest(unittest.TestCase):
             self.assert_untouched(items, "my_messages[%s]" % email)
 
 
+@needs_real_data
 class HiddenPhotoIsNotUploadedTest(unittest.TestCase):
     """감출 사진은 **업로드 목록에서** 빠져야 한다.
 

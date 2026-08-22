@@ -167,10 +167,65 @@ class ArchiveContentIsNotCommittedTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIn(path, ignore)
 
+    def test_data_folders_are_ignored_wholesale_not_enumerated(self):
+        """`assets/`·`inbox/` 는 통째로 무시하고 예외만 적는다.
+
+        하위 폴더를 하나씩 열거하는 방식은 이미 두 번 샜다 — `/KakaoTalk_*.txt` 가
+        파일 하나만 잡아 내보내기 **폴더**가 빠져나갔고(2026-07-27, 483MB), 폴더
+        이름이 'Chats'/'Chat' 으로 갈려 좁게 잡은 규칙이 또 빠져나갔다. 열거식은
+        새 폴더가 생길 때마다 다시 새고, 새는 곳이 공개 저장소라 되돌릴 수 없다.
+        """
+        ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        for blanket in ("/assets/*", "/inbox/*"):
+            with self.subTest(blanket=blanket):
+                self.assertIn(blanket, ignore,
+                              "%s 로 통째로 막아야 합니다 — 하위 폴더 열거는 샙니다"
+                              % blanket)
+
     def test_no_conversation_export_is_tracked(self):
         bad = [rel(p) for p in tracked_files()
                if p.name.startswith("KakaoTalk_") and p.suffix == ".txt"]
         self.assertEqual(bad, [], "카톡 내보내기 원문이 추적되고 있다: %s" % bad)
+
+    def test_no_data_directory_is_tracked(self):
+        """`assets/`·`logs/`·`inbox/` 아래에 추적되는 파일이 없다.
+
+        `output/` 은 위에서 .gitignore 에 있는지로 본다. 이 셋은 다르다 —
+        일부만 무시하고 일부는(README 처럼) 일부러 추적한다. 그래서 "무시 규칙이
+        있는가"가 아니라 "실제로 무엇이 추적되고 있는가"를 본다.
+        """
+        allowed = {"inbox/README.md"}
+        bad = [rel(p) for p in tracked_files()
+               if rel(p).split("/")[0] in ("assets", "logs")
+               or (rel(p).startswith("inbox/") and rel(p) not in allowed)]
+        self.assertEqual(bad, [], "대화 데이터 폴더의 파일이 추적되고 있다: %s" % bad)
+
+    def test_nothing_is_left_untracked_and_unignored(self):
+        """추적도 무시도 되지 않은 데이터 파일이 없다.
+
+        .gitignore 가 `assets/` 아래를 하위 폴더마다 하나씩 열거해 무시한다 —
+        staging·design-source·files·images·Kakao*·thumbs·videos. 열거식이라
+        나중에 `assets/audio/` 가 생기면 **추적도 무시도 안 된 상태**가 되고,
+        `git add -A` 한 번에 공개 저장소로 들어간다. `inbox/` 는 이미 안전한
+        방식을 쓴다(`/inbox/*` + README 만 예외).
+
+        `git status --porcelain` 이 데이터 경로를 하나라도 물고 오면 실패한다.
+        지금 당장 새는 것이 없어도, 새기 **전에** 알려주는 것이 이 검사의 일이다.
+        """
+        out = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=ROOT, capture_output=True, text=True, encoding="utf-8").stdout
+        watched = ("assets/", "logs/", "inbox/", "output/", "firestore-payload/",
+                   "site/", "hosting/")
+        leaks = []
+        for line in out.splitlines():
+            # 앞 두 칸이 상태, 그 뒤가 경로. 이름에 공백이 있으면 따옴표로 온다.
+            path = line[3:].strip().strip('"')
+            if line[:2].strip() == "??" and path.startswith(watched):
+                leaks.append(path)
+        self.assertEqual(leaks, [],
+                         "추적도 무시도 되지 않은 데이터 경로가 있다 — "
+                         ".gitignore 에 넣으세요: %s" % leaks)
 
     def test_no_service_account_key_is_tracked(self):
         # 표식을 이어 붙여 만든다. 통째로 적으면 이 파일 자신이 걸린다.

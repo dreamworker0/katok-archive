@@ -3,16 +3,6 @@
 /hosting/
 /firestore-payload/
 
-# 사진 수집 중간 스테이징 (원본 다운로드 덤프, 재수집 가능)
-/assets/staging/
-/assets/design-source/
-
-# 대화방에서 공유된 첨부 파일 원본.
-# 사진(assets/images)과 달리 커밋하지 않는다 — 문서·발표자료·zip 이라 용량이 크고
-# (84MB PDF 한 장 포함) 저작물·내부 자료가 섞여 있다. 배포본은 Storage 로 올라가고,
-# 목록은 output/files.jsonl 이 들고 있으므로 git 이 원본을 보관할 이유가 없다.
-/assets/files/
-
 # 비밀 — 절대 커밋 금지
 # 서비스 계정 키는 다운로드 시 파일명이 제각각이라 넓게 잡는다
 serviceAccountKey.json
@@ -82,21 +72,31 @@ Thumbs.db
 #
 # 이전에 올라갔던 이력은 git filter-repo 로 지우고 다시 올렸다.
 /output/
-/assets/images/
 /KakaoTalk_*.txt
-# 폴더째 내보낸 것 (대화 txt + 미디어 원본). 위 /KakaoTalk_*.txt 는 파일 하나만
-# 잡아서 이 폴더들이 그물을 빠져나갔다.
+
+# assets/ 아래는 통째로 무시한다 — 열거하지 않는다.
 #
-# 이름을 넓게 잡는 이유: 카톡 내보내기 폴더명은 기기와 판마다 다르다. 실측 2026-07-27
-# 하루에만 두 가지가 들어왔다 —
-#   KakaoTalk_Chats_2026-07-27_16.27.33_-604971728        (43MB, 사진 77개)
-#   Kakaotalk_Chat_바이브코딩,…_20260721_142500-…-1-001    (483MB, 파일 309개)
-# 대소문자도 'Chats'/'Chat' 도 달랐다. 좁게 잡으면 다음 폴더가 또 빠져나간다.
-/assets/[Kk]akao[Tt]alk_*/
-
-# 갤러리용 작은 사진 — 원본에서 다시 만들 수 있는 파생물이다.
-# (python -m scripts.build_thumbnails)
-/assets/thumbs/
-
-# 동영상 원본 — 대화 데이터다(assets/images 와 같은 이유로 커밋하지 않는다).
-/assets/videos/
+# 예전에는 하위 폴더를 하나씩 적었다: staging·design-source·files·images·thumbs·
+# videos·[Kk]akao[Tt]alk_*. 그 방식이 이미 두 번 샜다. `/KakaoTalk_*.txt` 는 파일
+# 하나만 잡아서 폴더째 내보낸 것이 그물을 빠져나갔고(실측 2026-07-27, 483MB·파일
+# 309개), 폴더 이름이 'Chats'/'Chat' 으로 갈려 좁게 잡은 규칙이 또 빠져나갔다.
+#
+# 열거식은 새 폴더가 생길 때마다 다시 샌다. 그때 그 파일은 추적도 무시도 안 된
+# 상태로 `git status` 에 떠 있고, `git add -A` 한 번에 들어간다 — 새는 곳이 공개
+# 저장소라 되돌릴 수가 없다(이력을 지우고 다시 올려야 한다).
+#
+# 그래서 뒤집었다. 기본은 무시, 커밋할 것이 생기면 그때 예외를 적는다.
+# `/inbox/*` + README 예외가 이미 이 방식이다.
+# tests/test_repo_is_publishable.py 가 이 형태를 지킨다.
+#
+# 무엇이 들어 있는가 — 전부 대화 데이터이거나 그 파생물이다.
+#   images/               사진 원본. 36명의 개인정보다.
+#   videos/               동영상 원본. 같은 이유.
+#   files/                공유된 첨부(문서·발표자료·zip, 84MB PDF 한 장 포함).
+#                         저작물·내부 자료가 섞여 있다. 배포본은 Storage 로 올라가고
+#                         목록은 output/files.jsonl 이 들고 있다.
+#   thumbs/               갤러리용 작은 사진. build_thumbnails 로 다시 만든다.
+#   staging/              수집 중간 덤프. 재수집 가능.
+#   design-source/        화면 삽화 원본.
+#   [Kk]akao[Tt]alk_*/    카톡이 폴더째 내보낸 것(대화 txt + 미디어 원본).
+/assets/*

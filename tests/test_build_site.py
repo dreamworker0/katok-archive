@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from scripts import build_site  # noqa: E402
+from tests.realdata import needs_real_data  # noqa: E402
 
 
 def _load():
@@ -23,6 +24,7 @@ def _load():
     return messages, images, participants, topics, knowledge, digest_prose
 
 
+@needs_real_data
 class BuildDataTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -247,6 +249,7 @@ class NodeSpanTest(unittest.TestCase):
         self.assertEqual(1, k["nodes"][0]["mentions"], "언급은 셌지만 날짜는 없다")
 
 
+@needs_real_data
 class KnowledgeTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
