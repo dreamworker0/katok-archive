@@ -26,13 +26,15 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # 액션 판을 최신으로 둔다. v4/v5 는 Node 20 을 대상으로 해서 러너가
+      # 강제로 24 에서 돌리며 폐기 경고를 낸다(첫 CI 실행에서 실제로 떴다).
+      - uses: actions/checkout@v7
 
       # 개발은 Python 3.14 · Node 24 에서 한다 (README).
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
