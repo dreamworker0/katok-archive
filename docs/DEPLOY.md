@@ -90,10 +90,22 @@ node scripts/upload_firestore.js
 → Firestore 적재 + Storage 이미지 업로드.
 
 ```bash
-python -m scripts.build_hosting
-firebase deploy
+npm run deploy
 ```
 → 규칙·Hosting 배포. 끝나면 `https://sw-ai-archive.web.app` 접속.
+
+`firebase deploy` 를 직접 불러도 된다 — `firebase.json` 의 `predeploy` 가 두 가지를
+먼저 한다.
+
+| predeploy | 무엇을 막는가 |
+|---|---|
+| `python -m scripts.build_hosting` | `hosting/` 은 `web/` 의 사본이다. 빌드 없이 배포하면 **묵묵히 구버전이 올라간다** |
+| `node scripts/test_rules.js` | 검증 없이 규칙이 배포되는 것. 규칙이 막으면 저장이 조용히 실패하고 화면은 "저장했습니다"라고 말한다 |
+
+규칙 검증은 CI 에서 돌지 않는다 — 서비스 계정 키가 필요하고 그 키를 깃허브에
+두지 않는다. 규칙이 바뀌는 순간은 배포하는 순간뿐이므로 거기가 맞는 자리다.
+따로 돌리려면 `npm run test:rules` (59개 경우: 발행본 다섯 갈래·chunks·myMessages·
+settings·messagesSource·members·claims·deletionRequests·preferences·catch-all).
 
 ### 부분 배포
 ```bash
