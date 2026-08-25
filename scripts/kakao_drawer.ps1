@@ -30,24 +30,52 @@
   · 하단 바에 **삭제 버튼은 없다** (오조작으로 지울 경로가 없다)
   · Ctrl+A·Shift+↓ 는 듣지 않는다 — 이 컨트롤에 키보드 모델이 없다
 
+서랍 창이 없으면 직접 연다 (2026-08-25 추가)
+  '열어 두면 된다' 는 전제로는 매일 자동 실행이 성립하지 않는다. 실측: 8/22~8/25
+  나흘 연속으로 창이 없어 첨부를 한 개도 못 받았고, 경고가 로그에만 남아 아무도
+  몰랐다. kakao_export.ps1 이 방 창에 대해 같은 결론에 이른 것과 같은 이유다.
+
+  **Ctrl+J 로 연다 — 메뉴를 지나가지 않는다.**
+  서랍으로 가는 유일한 앱 내 경로는 방 창 ☰ 메뉴다. 방 창 머리에도(돋보기·통화·
+  화상통화·☰), 발치에도(+·이모티콘·파일·전송) 서랍 단추는 없고, 메인 창
+  '⋯ 더보기' 에도 없다(실측). 그런데 그 ☰ 메뉴에는 '채팅방 나가기' 가 같이 있다
+  (실측 2026-08-25: 서랍 y=277, 나가기 y=544 — 267px 떨어져 있지만, 카톡이 항목
+  하나만 끼워 넣어도 좌표가 밀린다). 46명짜리 방을 잘못 나가면 되돌릴 수 없다.
+
+  그 메뉴를 열어 읽어 보니 하위 메뉴 '채팅방 서랍 > 파일' 에 **Ctrl+J** 가 붙어
+  있었다. 그래서 메뉴를 아예 열지 않는다. kakao_export.ps1 이 '대화 내보내기' 를
+  Ctrl+S 로 처리하는 것과 같은 설계다 — 위험 항목 근처에 가지 않는 것이 요점이다.
+
+  Esc 를 쓰지 않는다. 카카오톡에서 Esc 는 '취소' 가 아니라 '창 닫기' 이고, 메뉴가
+  닫힌 뒤의 Esc 는 방 창을 닫는다(실측 2026-08-25: 그렇게 방 창을 날렸다).
+
 안전 원칙
   · 누르기 직전에 그 픽셀의 창이 '채팅방 서랍' 소속인지 확인하고, 아니면 중단한다
     (실측: 확인을 안 넣었을 때 커서가 Chrome 과 작업표시줄 위에 있었다)
-  · 방 창에는 아무것도 보내지 않는다
-  · 서랍 창이 없으면 **아무것도 하지 않고** 물러난다 — 방 창 ☰ 로 열려고 하지 않는다
+  · 방 창에 보내는 것은 **입력칸 클릭 한 번과 Ctrl+J** 뿐이다. 그 둘도 방 창이
+    최상단인지, 누를 자리가 정말 카톡인지 확인한 뒤에만 보낸다 — 덮은 창이
+    편집기라면 단축키가 남의 파일에 간다(kakao_export.ps1 실측)
+  · ☰ 메뉴는 열지 않는다
+  · 방 창까지 없으면 그때는 물러난다 (run_daily.ps1 은 이 스크립트 앞에
+    kakao_export.ps1 을 돌리고, 그쪽이 방 창을 열어 두므로 보통은 이미 있다)
 
 사용
-  powershell -File scripts\kakao_drawer.ps1 -Discover   # 판독만, 클릭 없음
-  powershell -File scripts\kakao_drawer.ps1             # 실제 저장
+  powershell -File scripts\kakao_drawer.ps1 -Discover     # 판독만, 고르기·저장 없음
+  powershell -File scripts\kakao_drawer.ps1 -NoAutoOpen   # 서랍이 없으면 그냥 중단 (예전 동작)
+  powershell -File scripts\kakao_drawer.ps1               # 실제 저장
 #>
 param(
     [switch]$Discover,
     [string]$DrawerTitle = '채팅방 서랍',
+    # 서랍이 닫혀 있을 때 Ctrl+J 를 보낼 방. kakao_export.ps1 의 기본값과 같다.
+    [string]$Room = '바이브코딩,업무자동화 화상회의모임',
     [string]$LogDir = 'logs',
     [string]$ShotDir = 'logs\drawer',
     [string]$SaveDir = "$env:USERPROFILE\Documents\카카오톡 받은 파일",
     # 한 탭에서 훑을 화면 수. 사진 28장이 3~4화면이라 넉넉히 둔다.
-    [int]$MaxScreens = 10
+    [int]$MaxScreens = 10,
+    # 서랍 창이 없어도 직접 열지 않고 중단한다(예전 동작).
+    [switch]$NoAutoOpen
 )
 
 $ErrorActionPreference = 'Stop'
@@ -149,6 +177,25 @@ public class DW {
         System.Threading.Thread.Sleep(30);
         keybd_event(0x12, 0, 2, IntPtr.Zero);
     }
+    // Ctrl+J — '채팅방 서랍 > 파일' 단축키. 메뉴를 지나가지 않는 유일한 길이다.
+    // SendKeys 를 쓰지 않는 이유는 kakao_export.ps1 의 Ctrl+S 와 같다(Alt 선행
+    // 입력 뒤에 삼켜지는 경우가 있었다) — 실제 키 이벤트로 보낸다.
+    public static void SendCtrlJ() {
+        keybd_event(0x11, 0, 0, IntPtr.Zero);   // Ctrl down
+        System.Threading.Thread.Sleep(40);
+        keybd_event(0x4A, 0, 0, IntPtr.Zero);   // J down
+        System.Threading.Thread.Sleep(40);
+        keybd_event(0x4A, 0, 2, IntPtr.Zero);   // J up
+        System.Threading.Thread.Sleep(40);
+        keybd_event(0x11, 0, 2, IntPtr.Zero);   // Ctrl up
+    }
+    // 그 화면 좌표를 실제로 차지한 창의 프로세스. 0 이면 창이 없다.
+    public static uint PidAt(int x, int y) {
+        var p = new POINT(); p.X = x; p.Y = y;
+        IntPtr h = WindowFromPoint(p);
+        if (h == IntPtr.Zero) return 0;
+        uint pid; GetWindowThreadProcessId(h, out pid); return pid;
+    }
     public static bool ForceForeground(IntPtr h) {
         uint pid; uint target = GetWindowThreadProcessId(h, out pid);
         uint me = GetCurrentThreadId();
@@ -203,6 +250,88 @@ $SAVE_BTN   = @{ X = 1842; Y = 1060 }
 # 중심을 적는다.
 $CLEAR_BTN  = @{ X = 413;  Y = 1061 }
 
+function Open-DrawerWindow {
+    <#
+      서랍 창이 없을 때 방 창에서 Ctrl+J 로 연다. 실패하면 [IntPtr]::Zero.
+
+      왜 메뉴를 안 쓰는지, 왜 Ctrl+J 인지는 파일 머리의 '서랍 창이 없으면 직접 연다'
+      를 보라. 요점은 '채팅방 나가기' 가 있는 메뉴를 아예 열지 않는다는 것이다.
+
+      방 창은 전제다. run_daily.ps1 은 이 스크립트 앞에 kakao_export.ps1 을 돌리고,
+      그쪽이 방 창이 없으면 목록에서 열어 두므로 보통은 이미 있다. 여기서 방 목록까지
+      뒤지지 않는 것은 그 일이 이미 한 곳에 있기 때문이다 — 두 벌로 두면 갈라진다.
+    #>
+    Write-Log "서랍 창이 없습니다 — 방 창에서 Ctrl+J 로 엽니다"
+
+    $room = [DW]::ByTitle($Room)
+    if ($room -eq [IntPtr]::Zero) {
+        Write-Log "  방 창 '$Room' 이 없습니다 — 열 방법이 없어 물러납니다" 'WARN'
+        return [IntPtr]::Zero
+    }
+    $kpid = 0
+    [void][DW]::GetWindowThreadProcessId($room, [ref]$kpid)
+
+    # 최상단 확보 — 다른 앱에 Ctrl+J 를 보내면 안 된다.
+    $front = $false
+    for ($try = 1; $try -le 5; $try++) {
+        if ([DW]::ForceForeground($room)) { $front = $true; break }
+        Start-Sleep -Milliseconds 400
+        if ([DW]::GetForegroundWindow() -eq $room) { $front = $true; break }
+        Write-Log "  최상단 전환 재시도 $try/5" 'WARN'
+    }
+    if (-not $front) {
+        Write-Log ("  방 창을 최상단으로 올리지 못했습니다 — 앞에 있는 창: {0}. " +
+            "다른 앱에 단축키가 갈 위험이 있어 보내지 않습니다" -f `
+            [DW]::Describe([DW]::GetForegroundWindow())) 'WARN'
+        return [IntPtr]::Zero
+    }
+
+    # 창 내부 포커스가 있어야 단축키가 먹는다(실측 — 최상단만으로는 안 된다).
+    # 메시지 입력칸을 한 번 누른다. 커서만 놓는 동작이라 안전하다 — Enter 도,
+    # 글자도 보내지 않는다. 자리는 kakao_export.ps1 이 Ctrl+S 에 쓰는 것과 같다.
+    $r = New-Object DW+RECT; [void][DW]::GetWindowRect($room, [ref]$r)
+    $ix = $r.Left + 60
+    $iy = $r.Bottom - 145
+
+    # 최상단인데도 '항상 위' 창이 그 위에 그려질 수 있다(kakao_export.ps1 실측:
+    # 작업 관리자). 그 상태로 누르면 포커스가 그리로 넘어가고 Ctrl+J 도 따라간다.
+    $pidAt = [DW]::PidAt($ix, $iy)
+    if ($pidAt -ne $kpid) {
+        $who = '알 수 없음'
+        if ($pidAt -ne 0) { try { $who = (Get-Process -Id $pidAt -ErrorAction Stop).ProcessName } catch {} }
+        Write-Log ("  입력칸 자리($ix,$iy)가 다른 창에 덮여 있습니다 — '$who'(PID $pidAt). " +
+            "누르지 않습니다") 'WARN'
+        return [IntPtr]::Zero
+    }
+
+    Write-Log "  입력칸 클릭 ($ix,$iy) — 그 자리 카톡 확인됨"
+    $saved = New-Object DW+POINT; [void][DW]::GetCursorPos([ref]$saved)
+    [void][DW]::SetCursorPos($ix, $iy)
+    Start-Sleep -Milliseconds 220
+    [DW]::mouse_event([DW]::LEFTDOWN, 0, 0, 0, [IntPtr]::Zero)
+    Start-Sleep -Milliseconds 60
+    [DW]::mouse_event([DW]::LEFTUP, 0, 0, 0, [IntPtr]::Zero)
+    Start-Sleep -Milliseconds 400
+    [void][DW]::SetCursorPos($saved.X, $saved.Y)
+
+    Write-Log "  Ctrl+J 전송 ('채팅방 서랍 > 파일' 단축키)"
+    [DW]::SendCtrlJ()
+
+    # 제목이 정확히 맞는 창이 떴는지로만 성공을 판정한다.
+    $deadline = (Get-Date).AddSeconds(12)
+    while ((Get-Date) -lt $deadline) {
+        $opened = [DW]::ByTitle($DrawerTitle)
+        if ($opened -ne [IntPtr]::Zero) {
+            Write-Log ("  서랍 창 열림 확인 0x{0:X}" -f [int64]$opened)
+            Start-Sleep -Milliseconds 800   # 격자가 그려질 틈
+            return $opened
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    Write-Log "  Ctrl+J 를 보냈지만 서랍 창이 뜨지 않았습니다" 'WARN'
+    return [IntPtr]::Zero
+}
+
 $drawer = [DW]::ByTitle($DrawerTitle)
 if ($drawer -eq [IntPtr]::Zero) {
     $hidden = [DW]::ByTitleAny($DrawerTitle)
@@ -213,9 +342,12 @@ if ($drawer -eq [IntPtr]::Zero) {
         $drawer = [DW]::ByTitle($DrawerTitle)
     }
 }
+if ($drawer -eq [IntPtr]::Zero -and -not $NoAutoOpen) {
+    $drawer = Open-DrawerWindow
+}
 if ($drawer -eq [IntPtr]::Zero) {
-    Write-Log "'$DrawerTitle' 창이 없습니다 — 첨부 수집을 건너뜁니다." 'WARN'
-    Write-Log "  카카오톡에서 서랍을 한 번 열어 두면 다음 실행부터 자동으로 됩니다." 'WARN'
+    Write-Log "'$DrawerTitle' 창이 없고 열지도 못했습니다 — 첨부 수집을 건너뜁니다." 'WARN'
+    Write-Log "  카카오톡에서 서랍을 한 번 열어 두면 다음 실행은 그것을 씁니다." 'WARN'
     Write-Log "  방 창 ☰ 메뉴는 건드리지 않습니다('채팅방 나가기'·'대화 내용 모두 삭제'가 있는 메뉴입니다)." 'WARN'
     exit 2
 }

@@ -237,11 +237,20 @@ try {
     foreach ($l in $drawerOut) {
         if ($l -match '탭 ──|화면: 카드|개 선택|받은 파일 \d+개 →|WARN|ABORT') { Say "    $l" }
     }
+    # 첨부를 못 받은 날은 **화면에도** 남긴다.
+    #
+    # 실측 2026-08-22~25: 서랍 창이 닫혀 있어 나흘 내리 한 개도 못 받았는데,
+    # 경고가 logs\kakao-drawer-*.log 에만 있어서 아무도 몰랐다. 파일은 공유일 +
+    # 14일에 만료되므로, 모르고 지나간 날이 쌓이면 그대로 영구 소실이다.
+    # 발행은 멀쩡히 됐으니 status 는 'ok' 로 두되, 사유 줄에 얹어 관리 탭에서
+    # 보이게 한다 — 조용한 실패가 이 일의 진짜 위험이다.
     if ($drawerExit -eq 2) {
-        Say '    서랍 창이 없어 건너뛰었습니다 — 카카오톡에서 서랍을 한 번 열어 두면 다음 실행부터 됩니다.' 'WARN'
+        Say '    서랍 창이 없고 열지도 못했습니다 — 카카오톡이 트레이에 있거나 잠겨 있는지 보세요.' 'WARN'
+        $script:drawerWarn = '서랍 첨부 못 받음(창 없음)'
     }
     elseif ($drawerExit -ne 0) {
         Say "    서랍 수집 실패 (exit $drawerExit) — 갱신은 계속합니다." 'WARN'
+        $script:drawerWarn = "서랍 첨부 못 받음(exit $drawerExit)"
     }
     else {
         foreach ($l in (& python -m scripts.collect_drawer 2>&1)) { Say "    $l" }
@@ -419,6 +428,8 @@ if ($added -gt 0) { $why += "새 메시지 $added 건" }
 if ($requestsChanged) { $why += "멤버 요청 변경" }
 if ($classified -gt 0) { $why += "분류 $classified 건" }
 if ($stale) { $why += "뒤처진 발행본 따라잡기" }
+# 발행 사유는 아니지만 같은 줄에 얹는다 — 여기가 사람이 실제로 보는 유일한 자리다.
+if ($script:drawerWarn) { $why += "⚠ $($script:drawerWarn)" }
 Say ("===== 일일 갱신 완료: {0} 발행 =====" -f ($why -join ', '))
 Report-Run -status 'ok' -why ($why -join ', ') -added $added
 
