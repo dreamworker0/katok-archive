@@ -95,24 +95,72 @@ def place_documents(items: list[tuple[Path, str]], dry_run: bool) -> tuple[int, 
     if not dry_run:
         FILES_DIR.mkdir(parents=True, exist_ok=True)
     added = existing = 0
+    # 이번 실행에서 이미 찜한 자리. 디스크만 봐서는 --dry-run 이 같은 묶음의 두 번째
+    # 파일을 알아보지 못한다(아무것도 안 쓰니 자리가 계속 비어 보인다). 미리보기가
+    # 실제와 다른 수를 말하면 그것이 곧 거짓말이다.
+    claimed: dict[Path, str] = {}
     for src, name in docs:
-        dst = FILES_DIR / name
-        if dst.exists():
+        digest = _digest(src)
+        dst = _place_for(src, name, digest, claimed)
+        if dst is None:
             existing += 1
             continue
-        # 카톡은 같은 것을 또 저장하면 'name (1).html' 로 떨군다. 그 표시를 떼고
-        # 같은 내용이 이미 있으면 새 파일이 아니다 — 그대로 두면 대장에서 영원히
-        # '짝을 못 찾은 파일' 로 남는다(실측: 그렇게 3개가 쌓였다).
-        marked = re.match(r"^(?P<base>.*) \(\d+\)$", Path(name).stem)
-        if marked:
-            plain = FILES_DIR / (marked.group("base") + Path(name).suffix)
-            if plain.is_file() and _digest(plain) == _digest(src):
-                existing += 1
-                continue
+        claimed[dst] = digest
         added += 1
         if not dry_run:
             shutil.copy2(src, dst)
     return added, existing
+
+
+def _place_for(src: Path, name: str, digest: str, claimed: dict[Path, str]) -> Path | None:
+    """`assets/files/` 안에서 이 파일이 놓일 자리. 같은 내용이 이미 있으면 None.
+
+    카톡은 같은 것을 또 저장하면 'name (1).pdf' 로 떨군다. 그 표시는 저장할 때
+    이름이 겹쳐서 붙은 것이지 다른 파일이라는 뜻이 아니다. 그래서 **표시를 뗀
+    이름을 먼저 노린다.**
+
+    예전에는 'name (1).pdf' 를 그대로 놓은 뒤, 표시를 뗀 이름이 이미 있으면
+    건너뛰는 식이었다. 그 검사는 한 묶음 안에서는 듣지 않는다 — 정렬하면
+    'name (1).pdf' 가 'name.pdf' 보다 **앞선다**(공백 0x20 < 마침표 0x2E).
+    표시 붙은 쪽이 먼저 처리되는 그 시점에는 견줄 원본이 아직 없어서 그냥
+    들어가고, 곧이어 원본도 들어간다. 실측 2026-08-25: 같은 PDF 가 두 벌
+    쌓였고(227391 bytes, 같은 해시) 자료 목록에 두 번 뜰 뻔했다.
+    """
+    suffix = Path(name).suffix
+    marked = re.match(r"^(?P<base>.*) \(\d+\)$", Path(name).stem)
+    # 노리는 순서: 표시를 뗀 이름 → 받은 그대로의 이름
+    wanted = [FILES_DIR / name]
+    if marked:
+        wanted.insert(0, FILES_DIR / (marked.group("base") + suffix))
+
+    for dst in wanted:
+        taken = _taken_digest(dst, claimed)
+        if taken is None:
+            return dst
+        if taken == digest:
+            return None
+
+    # 두 이름 다 **다른 내용**이 차지하고 있다. 덮어쓰지 않고 옆에 둔다
+    # (같은 이름 다른 판본을 지키는 stash() 의 규칙과 같다).
+    stem = wanted[-1].stem
+    n = 2
+    while True:
+        dst = FILES_DIR / f"{stem}~{n}{suffix}"
+        taken = _taken_digest(dst, claimed)
+        if taken is None:
+            return dst
+        if taken == digest:
+            return None
+        n += 1
+
+
+def _taken_digest(dst: Path, claimed: dict[Path, str]) -> str | None:
+    """그 자리를 차지한 내용의 해시. 비어 있으면 None."""
+    if dst in claimed:
+        return claimed[dst]
+    if dst.exists():
+        return _digest(dst)
+    return None
 
 
 def main() -> int:
