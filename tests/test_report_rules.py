@@ -177,5 +177,64 @@ class StructureCheckTests(unittest.TestCase):
         self.assertEqual(tr.structure_gaps([{"id": "t-1", "count": 30, "report": ""}]), [])
 
 
+class AiReportTests(unittest.TestCase):
+    """AI 보고서(output/ai-reports/) 로더와 규칙.
+
+    이 테스트가 있는 이유: 통과 기준이 '두 모델의 합의' 였던 판이 오류를
+    통과시켰다(2026-08-27). 두 모델이 파이어베이스 전송량을 "Blaze 는 월 10GB" 로
+    나란히 틀렸고, 동의했다는 사실이 그것을 걸러 주지 못했다. 기준은 원 출처다.
+    """
+
+    def _write(self, lines):
+        import tempfile, pathlib
+        d = pathlib.Path(tempfile.mkdtemp())
+        (d / "t-001.md").write_text(chr(10).join(lines), encoding="utf-8")
+        return d
+
+    def test_ai_report_needs_no_title_or_summary(self):
+        """사람 보고서 파서와 달라야 한다 — 제목은 사람 쪽 것을 쓴다."""
+        got = tr.load_ai_reports(self._write(
+            ["---", "checked: 2026-08-27", "models: a, b", "---",
+             "", "본문이다.", ""]))
+        self.assertEqual(got["t-001"]["report"], "본문이다.")
+        self.assertEqual(got["t-001"]["checked"], "2026-08-27")
+        self.assertEqual(got["t-001"]["models"], "a, b")
+
+    def test_empty_body_is_skipped(self):
+        """프론트매터만 있고 할 말이 없으면 싣지 않는다."""
+        d = self._write(["---", "checked: 2026-08-27", "---", "", "   ", ""])
+        self.assertEqual(tr.load_ai_reports(d), {})
+
+    def test_missing_folder_is_not_an_error(self):
+        import pathlib
+        self.assertEqual(tr.load_ai_reports(pathlib.Path("없는폴더")), {})
+
+    def test_apply_does_not_touch_the_human_title(self):
+        """화면에 보이는 제목은 사람이 쓴 것 하나여야 한다."""
+        threads = [{"id": "t-001", "title": "사람 제목", "summary": "사람 요지",
+                    "keywords": ["가"], "report": "사람 본문"}]
+        n = tr.apply_ai_reports(threads, {
+            "t-001": {"report": "기계 본문", "checked": "2026-08-27",
+                      "models": "a, b", "method": ""}})
+        self.assertEqual(n, 1)
+        t = threads[0]
+        self.assertEqual(t["title"], "사람 제목")
+        self.assertEqual(t["summary"], "사람 요지")
+        self.assertEqual(t["keywords"], ["가"])
+        self.assertEqual(t["report"], "사람 본문")
+        self.assertEqual(t["ai_report"], "기계 본문")
+
+    def test_unknown_id_is_ignored(self):
+        """주제가 합쳐지거나 사라져도 파이프라인이 멈추면 안 된다."""
+        threads = [{"id": "t-001"}]
+        self.assertEqual(tr.apply_ai_reports(threads, {"t-999": {
+            "report": "x", "checked": "", "models": "", "method": ""}}), 0)
+
+    def test_rule_passes_on_sources_not_on_agreement(self):
+        """'합의하면 통과' 로 되돌아가면 여기서 걸린다."""
+        self.assertIn("원 출처", tr.AI_REPORT_RULES)
+        self.assertIn("합의했다는 사실은 근거가 아닙니다", tr.AI_REPORT_RULES)
+        self.assertIn("확인하지 못한 것", tr.AI_REPORT_RULES)
+
 if __name__ == "__main__":
     unittest.main()

@@ -63,6 +63,10 @@ from pathlib import Path
 
 REPORTS_DIR = Path(__file__).resolve().parent.parent / "output" / "reports"
 
+# AI 보고서(사람 보고서와 짝을 이루는 기계의 말)는 따로 둔다. 같은 폴더에 섞으면
+# 밤 자동 갱신이 사람 보고서로 알고 덮어쓴다 — 두 글은 쓰는 주체도 규칙도 다르다.
+AI_REPORTS_DIR = Path(__file__).resolve().parent.parent / "output" / "ai-reports"
+
 # 인용 한 줄의 상한. 넘기면 요약이 아니라 원문 발행이다.
 MAX_VERBATIM_CHARS = 40
 
@@ -113,6 +117,39 @@ REPORT_RULES = f"""- 사실만 씁니다. 대화에 없는 내용을 채우지 �
   읽기 불편합니다 — 사진이 왜 거기 있는지 본문이 말해 주어야 합니다.
 - 같은 자리에 여러 장이 오갔으면 자리표를 여러 줄로 잇대어 적습니다."""
 
+
+
+# AI 보고서 규칙 — 사람 보고서 옆에 붙는 기계의 검증 주석(output/ai-reports/)이
+# 지키는 것. **원본은 여기 하나다.**
+#
+# 통과 기준이 '두 모델의 합의' 였던 판을 버리고 '원 출처 확인' 으로 바꾼 이유가
+# 있다. 2026-08-27 첫 일곱 편을 만들면서 두 번 사고가 났다.
+#
+#   1. 두 모델이 Hosting 무료 전송량을 "Blaze 는 월 10GB" 로 **사이좋게 동의**했다.
+#      공식 요금 페이지를 열어 보니 두 요금제 모두 하루 360MB 였다. 합의가 오류를
+#      막은 것이 아니라 **통과시켰다.**
+#   2. 한 모델이 '한국디지털사회복지학회' 가 실재한다고 옳게 답했는데, 다른 쪽
+#      검색(미국 기준)이 못 찾자 몰아붙였고 **맞는 답이 철회됐다.** 그 잘못된
+#      철회가 '합의' 로 기록됐다. 홈페이지를 직접 열고서야 바로잡혔다.
+#
+# 둘 다 같은 것을 말한다 — 모델이 몇이든 **동의는 근거가 아니다.** 같은 오해를
+# 나눠 갖거나 한쪽이 다른 쪽에 끌려간다. 근거는 원 출처 하나뿐이다.
+AI_REPORT_RULES = """- **원 출처를 연 것만 단정합니다.** 두 모델이 합의했다는 사실은 근거가 아닙니다.
+  합의는 '무엇을 확인할지' 를 고르는 단계일 뿐이고, 보고서에 단정으로 싣는 것은
+  공식 문서·기관 홈페이지·저장소 파일을 **실제로 열어 본 것**에 한합니다.
+- **확인하지 못한 것은 따로 모아 적습니다.** 마지막에 `## 확인하지 못한 것` 절을
+  두고, 확인 못 한 이유까지 한 줄로 적으세요. 빈칸을 그럴듯한 말로 채우지 마세요.
+- **검색에 없다는 것은 없다는 뜻이 아닙니다.** 도구의 언어·지역 한계를 먼저
+  의심하세요. 한국 학회·기관·제도는 영어권 검색에 잘 잡히지 않습니다.
+- **한쪽 모델을 몰아붙여 얻은 동의는 버립니다.** 답이 바뀌면 그 자체가 신호가
+  아니라 잡음입니다. 바뀐 답이 아니라 원 출처를 보세요.
+- **틀렸던 자리는 지우지 말고 남깁니다.** 무엇을 어떻게 잘못 짚었는지가 다음에
+  읽는 사람에게 가장 쓸모 있습니다.
+- **검증할 것이 없는 대화에는 쓰지 않습니다.** 인사·가입·안부처럼 대조할 사실이
+  없으면 아예 만들지 마세요. "검증할 것이 없습니다" 만 반복하는 칸이 되면, 정작
+  정정이 실린 편까지 그냥 넘기게 됩니다.
+- **개인의 경력·신원은 캐지 않습니다.** 기관·제도·제품처럼 공개된 것만 확인하고,
+  사람에 대한 서술은 본인과 소개한 이의 말로 둡니다."""
 
 # 태그(keywords) 규칙 — 본문 규칙과 같은 이유로 **원본은 여기 하나다.**
 #
@@ -319,6 +356,63 @@ def load_reports(path: Path | None = None) -> dict[str, dict]:
     for p in sorted(d.glob("*.md")):
         out[p.stem] = parse_report(p.read_text(encoding="utf-8"), p.name)
     return out
+
+
+def load_ai_reports(path: Path | None = None) -> dict[str, dict]:
+    """output/ai-reports/*.md 를 읽는다. 폴더가 없으면 빈 dict.
+
+    **모든 주제에 있어야 하는 글이 아니다.** 인사·가입·안부처럼 검증할 사실이
+    없는 대화에는 쓰지 않는다. 억지로 채우면 "검증할 것이 없습니다"만 반복하는
+    칸이 되어, 정작 정정이 실린 편까지 그냥 넘기게 만든다.
+
+    parse_report 를 쓰지 않는다. 그쪽은 title·summary 를 반드시 요구하는데,
+    AI 보고서는 제목을 따로 갖지 않는다 — 사람 보고서에 딸린 주석이라 제목은
+    그쪽 것을 쓴다. 여기서 필요한 것은 본문과 '언제 무엇으로 검증했나' 뿐이다.
+    """
+    d = path or AI_REPORTS_DIR
+    if not d.exists():
+        return {}
+    out: dict[str, dict] = {}
+    for p in sorted(d.glob("*.md")):
+        text = p.read_text(encoding="utf-8")
+        m = _FM.match(text)
+        meta, body = {}, text
+        if m:
+            body = m.group(2)
+            for line in m.group(1).splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or ":" not in line:
+                    continue
+                k, v = line.split(":", 1)
+                meta[k.strip()] = v.strip()
+        body = body.strip()
+        if not body:
+            continue
+        out[p.stem] = {
+            "report": body,
+            "checked": meta.get("checked", ""),
+            "models": meta.get("models", ""),
+            "method": meta.get("method", ""),
+        }
+    return out
+
+
+def apply_ai_reports(threads: list[dict], reports: dict[str, dict]) -> int:
+    """스레드에 AI 보고서를 얹는다. 얹은 개수를 돌려준다.
+
+    사람 보고서와 달리 title·summary·keywords 는 건드리지 않는다. 화면에 보이는
+    제목은 사람이 쓴 것 하나뿐이어야 한다.
+    """
+    applied = 0
+    for t in threads:
+        r = reports.get(t["id"])
+        if not r:
+            continue
+        t["ai_report"] = r["report"]
+        t["ai_checked"] = r["checked"]
+        t["ai_models"] = r["models"]
+        applied += 1
+    return applied
 
 
 def _context_text(value: str) -> str:

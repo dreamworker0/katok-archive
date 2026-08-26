@@ -961,3 +961,46 @@ img.img-error {
   background: rgba(0,0,0,.18); pointer-events: none;
 }
 #lightboxVideo { max-width: 92vw; max-height: 86vh; display: none; background: #000; }
+
+/* ── AI 검증 보고서 ──────────────────────────────────────────────
+   사람이 쓴 보고서 아래에 붙지만 같은 글로 읽히면 안 된다. 왼쪽 굵은 띠와
+   다른 바탕색으로 '여기서부터는 기계의 말'을 눈으로 먼저 알게 한다. */
+.tc-ai {
+  margin-top: 22px; padding: 14px 16px 12px;
+  border: 1px solid var(--line); border-left: 4px solid var(--sage);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--sage) 7%, transparent);
+}
+.tc-ai-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.tc-ai-badge {
+  font-size: 11px; font-weight: 800; letter-spacing: .02em;
+  padding: 3px 9px; border-radius: 999px;
+  color: var(--accent-ink);
+  background: color-mix(in srgb, var(--sage) 82%, var(--ink));
+}
+.tc-ai-meta { font-size: 11.5px; color: var(--ink-faint); word-break: keep-all; }
+.tc-ai-body { font-size: 14.5px; }
+.tc-ai-body > :first-child { margin-top: 0; }
+/* renderMarkdown 은 `##` 을 h4 로 낸다. 사람 보고서와 같은 단계로 보이게 맞춘다. */
+/* `.md h4` 와 특정성이 같아 순서에만 기대게 된다. 규칙 순서가 바뀌면 조용히
+   깨지는 자리라 한 단계 올려 둔다. */
+.tc-ai .tc-ai-body h2,
+.tc-ai .tc-ai-body h3,
+.tc-ai .tc-ai-body h4 {
+  font-size: 14.5px; font-weight: 800; margin: 18px 0 7px;
+  padding-bottom: 0; border-bottom: 0;
+  color: color-mix(in srgb, var(--sage) 55%, var(--ink));
+}
+.tc-ai .tc-ai-body h4:first-child { margin-top: 0; }
+.tc-ai-body table { font-size: 13.5px; }
+/* `.md p` 안에 놓이므로 특정성을 올려야 한다 — 이 꼬리말은 본문보다 작아야
+   본문으로 안 읽힌다. */
+.tc-ai .tc-ai-foot {
+  margin: 14px 0 0; padding-top: 9px;
+  border-top: 1px dashed var(--line-strong);
+  font-size: 11.5px; line-height: 1.65; color: var(--ink-faint);
+  word-break: keep-all;
+}

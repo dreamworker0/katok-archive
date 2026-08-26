@@ -734,6 +734,28 @@
    * 하나를 펼치는 것만으로도 문서 전체가 다시 레이아웃되어 브라우저가 멈춘다.
    * 만들지 않은 것은 레이아웃할 것도 없다.
    */
+  /* 기계가 쓴 검증 주석. 사람 보고서 아래에 **테두리를 두른 채로** 붙인다.
+   *
+   * 섞어 쓰지 않는 것이 요점이다. 이 방의 말은 사람이 한 말이고, 여기 적힌 것은
+   * 그 말을 기계 둘이 맞춰 본 결과다. 둘을 한 흐름으로 읽히게 두면 누가 한
+   * 말인지 알 수 없어진다.
+   */
+  function aiReportBlock(t) {
+    if (!t.ai_report) return "";
+    var meta = [];
+    if (t.ai_models) meta.push(esc(t.ai_models));
+    if (t.ai_checked) meta.push(esc(t.ai_checked) + " 확인");
+    return '<section class="tc-ai" aria-label="AI 검증 보고서">' +
+      '<div class="tc-ai-head">' +
+      '<span class="tc-ai-badge">AI 검증</span>' +
+      (meta.length ? '<span class="tc-ai-meta">' + meta.join(" · ") + "</span>" : "") +
+      "</div>" +
+      '<div class="tc-ai-body md">' + renderMarkdown(t.ai_report) + "</div>" +
+      '<p class="tc-ai-foot">사람이 쓴 위 보고서를 두 AI 가 따로 검토해 ' +
+      '<strong>합의한 것만</strong> 적었습니다. 기계의 말이니 그대로 인용하기 전에 ' +
+      '원 출처를 한 번 확인해 주세요.</p></section>';
+  }
+
   function fillReport(box) {
     var body = box.querySelector(".tc-detail-body");
     if (!body || body.getAttribute("data-filled")) return;
@@ -744,7 +766,8 @@
     body.innerHTML =
       highlightText(linkifyHosts(renderMarkdown(t.report), splitLinks(t).inline), state.q) +
       (body.getAttribute("data-res")
-        ? '<div class="tc-media" data-media="' + esc(t.id) + '"></div>' : "");
+        ? '<div class="tc-media" data-media="' + esc(t.id) + '"></div>' : "") +
+      aiReportBlock(t);
     fillMedia(box);
   }
 

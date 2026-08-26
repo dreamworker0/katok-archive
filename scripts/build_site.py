@@ -24,8 +24,10 @@ from scripts import ontology
 from scripts import pii
 from scripts import tags as taglib
 from scripts.topic_reports import (
+    apply_ai_reports,
     apply_reports,
     content_chars,
+    load_ai_reports,
     load_reports,
     place_context_anchors,
     structure_gaps,
@@ -648,6 +650,12 @@ def build_data(
     # 원문을 발행하지 않으므로 보고서가 원문을 대신해야 한다. 사람이 원문을 읽고
     # 쓴 마크다운을 얹는다. 없는 스레드는 한 줄 요약만 남는다.
     apply_reports(threads_meta, load_reports())
+
+    # 사람 보고서 옆에 기계가 쓴 검증 주석을 얹는다. 없으면 없는 대로 둔다 —
+    # 전체 주제에 다 있어야 하는 글이 아니다.
+    ai_n = apply_ai_reports(threads_meta, load_ai_reports())
+    if ai_n:
+        print("[AI보고서] %d개 주제에 얹었습니다" % ai_n)
 
     # 태그 표기를 통일해 `tags` 로 얹는다(보고서 원문은 손대지 않는다).
     taglib.attach_tags(threads_meta, participants)
