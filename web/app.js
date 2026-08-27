@@ -710,6 +710,15 @@
       '<path d="M14 3v4h4M9 12h6M9 16h6"></path></svg>';
   }
 
+  /* 사람 보고서 단추와 눈에 띄게 달라야 한다 — 같은 문서 아이콘을 쓰면 같은 글의
+     다른 판처럼 보인다. 확인·대조를 뜻하는 겹친 표시로 둔다. */
+  function aiToggleIcon() {
+    return '<svg class="tc-toggle-icon" aria-hidden="true" viewBox="0 0 24 24" ' +
+      'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" ' +
+      'stroke-linejoin="round"><path d="M4 7h9M4 12h5M4 17h7"></path>' +
+      '<path d="M13.5 16.5l2.5 2.5 5-5.5"></path></svg>';
+  }
+
   function detailBlock(t, contextualLinks) {
     if (!t.report) return "";
     var open = !!state.q;
@@ -720,11 +729,20 @@
       '<button class="tc-toggle" type="button" aria-expanded="' + (open ? "true" : "false") + '">' +
       reportToggleIcon() + '<span class="tc-toggle-label">' +
       (open ? "보고서 접기" : "보고서 읽기") + "</span></button>" +
+      // AI 보고서는 **있는 카드에만** 단추가 뜬다. 없는 카드에 회색 단추를 두면
+      // 눌러 보고서야 없다는 것을 알게 되고, 그런 단추가 대부분이다.
+      (t.ai_report
+        ? '<button class="tc-ai-toggle" type="button" aria-expanded="false" ' +
+          'title="이 대화를 두 AI 가 따로 검증한 결과입니다">' +
+          aiToggleIcon() + '<span class="tc-ai-toggle-label">AI 보고서</span></button>'
+        : "") +
       '<button class="tc-dl" type="button" title="이 보고서를 .md 파일로 저장합니다">' +
       "⬇ .md</button></div>" +
       // 본문은 비워 둔다 — 읽겠다고 누른 카드만 fillReport() 가 채운다.
       '<div class="tc-detail-body md"' + (hasResources ? ' data-res="1"' : "") +
-      "></div></div>";
+      "></div>" +
+      (t.ai_report ? '<div class="tc-ai-body-wrap"></div>' : "") +
+      "</div>";
   }
 
   /* 보고서 본문은 '읽겠다'고 할 때 비로소 만든다.
@@ -756,6 +774,18 @@
       '원 출처를 한 번 확인해 주세요.</p></section>';
   }
 
+  /* AI 보고서도 누를 때 비로소 만든다. 사람 보고서와 같은 이유다 — 목록에
+     들어서자마자 전부 마크다운을 HTML 로 바꿔 두면 펼치는 것만으로 멈춘다. */
+  function fillAiReport(box) {
+    var wrap = box.querySelector(".tc-ai-body-wrap");
+    if (!wrap || wrap.getAttribute("data-filled")) return;
+    var tid = box.getAttribute("data-tid");
+    var t = THREADS.filter(function (x) { return x.id === tid; })[0];
+    if (!t || !t.ai_report) return;
+    wrap.setAttribute("data-filled", "1");
+    wrap.innerHTML = aiReportBlock(t);
+  }
+
   function fillReport(box) {
     var body = box.querySelector(".tc-detail-body");
     if (!body || body.getAttribute("data-filled")) return;
@@ -766,8 +796,7 @@
     body.innerHTML =
       highlightText(linkifyHosts(renderMarkdown(t.report), splitLinks(t).inline), state.q) +
       (body.getAttribute("data-res")
-        ? '<div class="tc-media" data-media="' + esc(t.id) + '"></div>' : "") +
-      aiReportBlock(t);
+        ? '<div class="tc-media" data-media="' + esc(t.id) + '"></div>' : "");
     fillMedia(box);
   }
 
@@ -1040,6 +1069,18 @@
         if (label) label.textContent = on ? "보고서 접기" : "보고서 읽기";
         b.setAttribute("aria-expanded", on ? "true" : "false");
         if (on) fillReport(box);
+      };
+    });
+    // 사람 보고서와 **따로** 여닫는다. 둘을 묶으면 AI 보고서만 보려는 사람이
+    // 원문 요약을 지나쳐 스크롤해야 한다.
+    Array.prototype.forEach.call(scope.querySelectorAll(".tc-ai-toggle"), function (b) {
+      b.onclick = function () {
+        var box = b.parentNode.parentNode;
+        var on = box.classList.toggle("ai-on");
+        var label = b.querySelector(".tc-ai-toggle-label");
+        if (label) label.textContent = on ? "AI 보고서 접기" : "AI 보고서";
+        b.setAttribute("aria-expanded", on ? "true" : "false");
+        if (on) fillAiReport(box);
       };
     });
     Array.prototype.forEach.call(scope.querySelectorAll("[data-nick]"), function (b) {

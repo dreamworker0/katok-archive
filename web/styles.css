@@ -561,7 +561,8 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 
 /* 대화 보고서 — 목록을 훑을 때는 접혀 있고, 눌러야 펴진다 */
 .tc-detail { margin: 0 0 10px; }
-.tc-detail-bar { display: flex; align-items: center; gap: 10px; }
+/* 단추가 셋(보고서·AI 보고서·.md)이라 좁은 화면에서 한 줄에 안 들어간다. */
+.tc-detail-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .tc-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 7px;
   min-height: 40px; border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line));
   border-radius: 10px; padding: 8px 14px; color: var(--accent); background: var(--accent-soft);
@@ -577,6 +578,21 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 /* 아직 만들지 않은 본문(검색으로 펼쳐진 채 화면 밖에 있는 카드)은 빈 상자로
    보이지 않게 둔다 — 채워지면 :empty 가 풀려 저절로 나타난다. */
 .tc-detail.on .tc-detail-body:empty { display: none; }
+
+/* AI 보고서 단추 — 사람 보고서 단추와 **다른 색**이어야 한다. 같은 강조색을 쓰면
+   같은 글의 두 판처럼 보인다. 사람 것은 주황(accent), 기계 것은 초록(sage)이다.
+   테두리만 두고 바탕을 비워 '곁딸린 것' 이라는 것도 함께 말한다. */
+.tc-ai-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  min-height: 40px; border: 1px solid color-mix(in srgb, var(--sage) 55%, var(--line));
+  border-radius: 10px; padding: 8px 13px;
+  color: color-mix(in srgb, var(--sage) 62%, var(--ink)); background: transparent;
+  cursor: pointer; font: inherit; font-size: 13.5px; font-weight: 800; }
+.tc-ai-toggle:hover {
+  border-color: var(--sage); color: var(--ink);
+  background: color-mix(in srgb, var(--sage) 10%, transparent); }
+.tc-ai-body-wrap { display: none; }
+.tc-detail.ai-on .tc-ai-body-wrap { display: block; }
+.tc-detail.ai-on .tc-ai-body-wrap:empty { display: none; }
 
 /* 마크다운 본문 — 문서처럼 읽히게 */
 .md > :first-child { margin-top: 0; }
@@ -966,7 +982,7 @@ img.img-error {
    사람이 쓴 보고서 아래에 붙지만 같은 글로 읽히면 안 된다. 왼쪽 굵은 띠와
    다른 바탕색으로 '여기서부터는 기계의 말'을 눈으로 먼저 알게 한다. */
 .tc-ai {
-  margin-top: 22px; padding: 14px 16px 12px;
+  margin-top: 8px; padding: 14px 16px 12px;
   border: 1px solid var(--line); border-left: 4px solid var(--sage);
   border-radius: 10px;
   background: color-mix(in srgb, var(--sage) 7%, transparent);
