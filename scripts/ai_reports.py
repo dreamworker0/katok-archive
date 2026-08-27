@@ -42,6 +42,7 @@ import argparse
 import json
 import re
 import subprocess
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -371,6 +372,14 @@ def run_one(thread: dict, report: str, today: str, model: str,
 
 
 def main() -> None:
+    # 한 편에 몇 분이 든다. 버퍼에 물고 있으면 끝날 때까지 로그가 한 줄도 안 나와
+    # 멈춘 것인지 도는 것인지 알 수 없다 — 야간 갱신이 늦는 날 어디서 늦는지
+    # 보려면 줄 단위로 흘려보내야 한다.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+
     ap = argparse.ArgumentParser(description="AI 검증 주석을 쓴다")
     ap.add_argument("--limit", type=int, default=DEFAULT_LIMIT,
                     help="한 번에 쓸 편수 (기본 %d)" % DEFAULT_LIMIT)
