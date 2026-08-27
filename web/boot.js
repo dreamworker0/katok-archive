@@ -177,12 +177,20 @@
 
       return Promise.all([
         db.collection("threads").get(),   // threads/all 1문서
+        /* AI 검증 주석. **없어도 아카이브는 떠야 한다** — 곁딸린 글 하나 때문에
+           본문 전체가 안 보이는 것은 맞바꿀 만한 일이 아니다. Promise.all 은
+           하나만 깨져도 전부 깨지므로 여기서 삼킨다(규칙 전파가 늦거나 아직
+           적재 전인 환경도 있다). */
+        db.collection("aiReports").get().catch(function (e) {
+          console.warn("AI 보고서를 불러오지 못했습니다 — 없이 진행합니다.", e);
+          return null;
+        }),
         db.collection("media").get(),     // media/all 1문서
         db.collection("digests").get(),
         db.collection("graph").get(),     // graph/nodes, graph/edges
       ]).then(function (res) {
-        var threadSnap = res[0], mediaSnap = res[1],
-            digestSnap = res[2], graphSnap = res[3];
+        var threadSnap = res[0], aiSnap = res[1], mediaSnap = res[2],
+            digestSnap = res[3], graphSnap = res[4];
 
         // 스레드·미디어는 각각 한 문서에 묶여 있다(읽기 절약)
         var threads = [];
@@ -191,6 +199,21 @@
           if (items) threads = threads.concat(items);
         });
         threads.sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });
+
+        /* AI 검증 주석은 따로 실려 온다(threads/all 이 1MiB 한도에 다가갔다).
+           화면은 스레드의 한 속성으로 읽으므로 여기서 도로 붙인다 — 갈라 담은
+           것은 저장의 사정이지 화면이 알 일이 아니다. */
+        var aiById = {};
+        if (aiSnap) aiSnap.forEach(function (d) {
+          (d.data().items || []).forEach(function (r) { aiById[r.id] = r; });
+        });
+        threads.forEach(function (t) {
+          var r = aiById[t.id];
+          if (!r) return;
+          t.ai_report = r.ai_report;
+          t.ai_checked = r.ai_checked;
+          t.ai_models = r.ai_models;
+        });
 
         var media = [];
         mediaSnap.forEach(function (d) {

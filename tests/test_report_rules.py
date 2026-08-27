@@ -235,6 +235,8 @@ class AiReportTests(unittest.TestCase):
         self.assertIn("원 출처", tr.AI_REPORT_RULES)
         self.assertIn("합의했다는 사실은 근거가 아닙니다", tr.AI_REPORT_RULES)
         self.assertIn("확인하지 못한 것", tr.AI_REPORT_RULES)
+        self.assertIn("근거 링크를 답니다", tr.AI_REPORT_RULES)
+        self.assertIn("직접 연 것과 검색 결과로만 안 것을 갈라", tr.AI_REPORT_RULES)
 
 if __name__ == "__main__":
     unittest.main()

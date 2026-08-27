@@ -419,7 +419,29 @@ def build_payload() -> dict:
     #   messages_source 규칙이 관리자만 허용하는 원장이다. 여기까지 가리면 관리자가
     #                   "원래 뭐였나" 를 확인할 길이 없어져 오탐을 못 되돌린다.
     allow = pii.load_allow()
+    # AI 보고서는 threads/all 에서 빼내 따로 담는다.
+    #
+    # 386편 중 7편에만 있는데 문서 전체가 그만큼 무거워진다. 이 방의 화면은
+    # threads/all 을 **들어올 때마다** 통째로 읽으므로, 몇 편이 늘 때마다 모두의
+    # 첫 화면이 느려지는 셈이다. 게다가 앞으로 늘어날 글이라 한 문서에 두면
+    # 1MiB 한도까지 남은 여유를 이쪽이 다 먹는다(측정 2026-08-27: 편당 2.6KB,
+    # 남은 여유로 139편이면 한도).
+    ai_reports = []
+    for t in threads_pub:
+        if not t.get("ai_report"):
+            continue
+        ai_reports.append({
+            "id": t["id"],
+            "ai_report": t.pop("ai_report"),
+            "ai_checked": t.pop("ai_checked", ""),
+            "ai_models": t.pop("ai_models", ""),
+        })
+    for t in threads_pub:            # 보고서가 없는 쪽에 남은 빈 열쇠도 지운다
+        t.pop("ai_checked", None)
+        t.pop("ai_models", None)
+
     threads_pub, h1 = pii.mask_tree(threads_pub, allow)
+    ai_reports, _hr = pii.mask_tree(ai_reports, allow)
     digests_pub, h2 = pii.mask_tree(data["digests"], allow)
     media, h3 = pii.mask_tree(media, allow)
     graph, h4 = pii.mask_tree(graph, allow)
@@ -429,6 +451,7 @@ def build_payload() -> dict:
     return {
         "meta": meta,
         "threads": threads_pub,
+        "ai_reports": ai_reports,
         "media": media,
         "my_messages": my_messages,
         "digests": digests_pub,
@@ -455,6 +478,7 @@ def write_payload(payload: dict) -> None:
 
     dump("meta.json", payload["meta"])
     dump("threads.json", payload["threads"])
+    dump("ai-reports.json", payload["ai_reports"])
     dump("media.json", payload["media"])
     dump("my-messages.json", payload["my_messages"])
     dump("digests.json", payload["digests"])

@@ -43,6 +43,8 @@ service cloud.firestore {
     // 안 보여도 devtools 로 전부 읽을 수 있었다.
     match /meta/{docId}       { allow read: if isMember(); allow write: if false; }
     match /threads/{threadId} { allow read: if isMember(); allow write: if false; }
+    // AI 검증 주석. threads/all 이 1MiB 한도에 다가가 따로 뺐다(2026-08-27).
+    match /aiReports/{docId}  { allow read: if isMember(); allow write: if false; }
     match /media/{docId}      { allow read: if isMember(); allow write: if false; }
     match /digests/{catId}    { allow read: if isMember(); allow write: if false; }
     match /graph/{docId}      { allow read: if isMember(); allow write: if false; }

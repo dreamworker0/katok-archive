@@ -49,7 +49,7 @@ class PayloadShapeTest(unittest.TestCase):
 
     def test_published_docs_are_well_under_firestore_limit(self):
         """스레드·미디어는 한 문서로 묶어 발행한다. 1MiB 한도를 지켜야 한다."""
-        for name in ("threads", "media"):
+        for name in ("threads", "media", "ai_reports"):
             size = len(json.dumps({"items": self.payload[name]},
                                   ensure_ascii=False).encode("utf-8"))
             self.assertLess(size, 700_000, "%s 가 너무 큼: %d bytes" % (name, size))
@@ -98,6 +98,7 @@ class PayloadShapeTest(unittest.TestCase):
         """스레드·그래프는 한 문서로 묶어 발행한다(읽기 절약). 1MiB 한도 확인."""
         for name, obj in (
             ("threads/all", {"items": self.payload["threads"]}),
+            ("aiReports/all", {"items": self.payload["ai_reports"]}),
             ("media/all", {"items": self.payload["media"]}),
             ("graph/nodes", {"items": self.payload["graph"]["nodes"]}),
             ("graph/edges", {"items": self.payload["graph"]["edges"]}),
@@ -114,6 +115,7 @@ class PayloadShapeTest(unittest.TestCase):
         reads = (
             1                                   # meta/archive
             + 1                                 # threads/all
+            + 1                                 # aiReports/all
             + 1                                 # media/all
             + len(self.payload["digests"])      # 요지(주제별 편집 단위라 개별 유지)
             + 2                                 # graph/nodes, graph/edges
