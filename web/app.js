@@ -447,7 +447,10 @@
     if (state.nick && (t.participants || []).indexOf(state.nick) === -1) return false;
     if (state.q) {
       var q = state.q.toLowerCase();
+      // AI 보고서 본문도 찾는 대상이다 — 'Blaze'·'KWCAG' 처럼 사람 보고서에는
+      // 없고 검증 주석에만 있는 말이 적지 않다.
       var hay = (t.title + " " + t.summary + " " + (t.report || "") + " " +
+                 (t.ai_report || "") + " " +
                  (t.keywords || []).join(" ") + " " + (t.participants || []).join(" ") +
                  " " + t.start_date + " " + (t.links || []).map(function (l) {
                    return l.url; }).join(" ")).toLowerCase();
@@ -722,9 +725,15 @@
   function detailBlock(t, contextualLinks) {
     if (!t.report) return "";
     var open = !!state.q;
+    // 걸린 말이 AI 보고서에만 있으면 그쪽을 펴 두어야 한다. 카드가 결과에 떴는데
+    // 어디가 걸렸는지 안 보이면 고장으로 읽힌다. 반대로 사람 보고서에 걸린
+    // 검색까지 AI 쪽을 열면 안 본다고 한 글이 매번 따라 나온다.
+    var aiOpen = !!(state.q && t.ai_report &&
+      t.ai_report.toLowerCase().indexOf(state.q.toLowerCase()) !== -1);
     var n = mediaOf(t.id).length;
     var hasResources = n || contextualLinks.length;
-    return '<div class="tc-detail' + (open ? " on" : "") + '" data-tid="' + esc(t.id) + '">' +
+    return '<div class="tc-detail' + (open ? " on" : "") + (aiOpen ? " ai-on" : "") +
+      '" data-tid="' + esc(t.id) + '">' +
       '<div class="tc-detail-bar">' +
       '<button class="tc-toggle" type="button" aria-expanded="' + (open ? "true" : "false") + '">' +
       reportToggleIcon() + '<span class="tc-toggle-label">' +
@@ -732,9 +741,11 @@
       // AI 보고서는 **있는 카드에만** 단추가 뜬다. 없는 카드에 회색 단추를 두면
       // 눌러 보고서야 없다는 것을 알게 되고, 그런 단추가 대부분이다.
       (t.ai_report
-        ? '<button class="tc-ai-toggle" type="button" aria-expanded="false" ' +
+        ? '<button class="tc-ai-toggle" type="button" aria-expanded="' +
+          (aiOpen ? "true" : "false") + '" ' +
           'title="이 대화를 두 AI 가 따로 검증한 결과입니다">' +
-          aiToggleIcon() + '<span class="tc-ai-toggle-label">AI 보고서</span></button>'
+          aiToggleIcon() + '<span class="tc-ai-toggle-label">' +
+          (aiOpen ? "AI 보고서 접기" : "AI 보고서") + "</span></button>"
         : "") +
       '<button class="tc-dl" type="button" title="이 보고서를 .md 파일로 저장합니다">' +
       "⬇ .md</button></div>" +
@@ -768,7 +779,8 @@
       '<span class="tc-ai-badge">AI 검증</span>' +
       (meta.length ? '<span class="tc-ai-meta">' + meta.join(" · ") + "</span>" : "") +
       "</div>" +
-      '<div class="tc-ai-body md">' + renderMarkdown(t.ai_report) + "</div>" +
+      '<div class="tc-ai-body md">' +
+      highlightText(renderMarkdown(t.ai_report), state.q) + "</div>" +
       '<p class="tc-ai-foot">사람이 쓴 위 보고서를 두 AI 가 따로 검토해 ' +
       '<strong>합의한 것만</strong> 적었습니다. 기계의 말이니 그대로 인용하기 전에 ' +
       '원 출처를 한 번 확인해 주세요.</p></section>';
@@ -804,11 +816,18 @@
    * 145장을 한꺼번에 채우면 검색어를 한 글자 칠 때마다 멈추므로, 화면에
    * 다가온 것부터 채운다. */
   var reportObserver = null;
+
+  /* 펴진 것을 채운다 — 사람 보고서든 AI 보고서든, 열려 있는 쪽만. */
+  function fillOpenPanels(box) {
+    if (box.classList.contains("on")) fillReport(box);
+    if (box.classList.contains("ai-on")) fillAiReport(box);
+  }
+
   function observeOpenReports(scope) {
-    var boxes = scope.querySelectorAll(".tc-detail.on");
+    var boxes = scope.querySelectorAll(".tc-detail.on, .tc-detail.ai-on");
     if (!boxes.length) return;
     if (!("IntersectionObserver" in window)) {
-      Array.prototype.forEach.call(boxes, fillReport);
+      Array.prototype.forEach.call(boxes, fillOpenPanels);
       return;
     }
     if (!reportObserver) {
@@ -816,7 +835,7 @@
         entries.forEach(function (en) {
           if (!en.isIntersecting) return;
           reportObserver.unobserve(en.target);
-          fillReport(en.target);
+          fillOpenPanels(en.target);
         });
       }, { rootMargin: "400px" });
     }
@@ -824,7 +843,7 @@
     // 첫 화면이 빈 채로 한 박자 늦게 나타나면 고장으로 보인다.
     var reach = window.innerHeight * 1.5;
     Array.prototype.forEach.call(boxes, function (b) {
-      if (b.getBoundingClientRect().top < reach) fillReport(b);
+      if (b.getBoundingClientRect().top < reach) fillOpenPanels(b);
       else reportObserver.observe(b);
     });
   }
