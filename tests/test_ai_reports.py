@@ -170,6 +170,118 @@ class PromptContractTests(unittest.TestCase):
         self.assertIn("열린 주소: 없음", p)
 
 
+class RootUrlTests(unittest.TestCase):
+    """대문은 근거가 아니다.
+
+    '중계 주소 말고 직접 주소를 달라' 고 했더니 모델이 www.law.go.kr ·
+    www.snuh.org 처럼 **대문**을 대기 시작했다(실측 2026-08-27). 열리기는 열리므로
+    규칙을 형식적으로는 지키는데, 정작 그 조문·그 안내는 거기 없다.
+    """
+
+    def test_root_urls_are_recognised(self):
+        for u in ("https://www.law.go.kr", "https://www.law.go.kr/",
+                  "http://a.kr", "https://a.kr/?x=1"):
+            self.assertTrue(ar.is_root(u), u)
+
+    def test_deep_links_are_not_roots(self):
+        for u in ("https://ko.wikipedia.org/wiki/GS25",
+                  "https://www.snuh.org/board/B003/view.do?bbs_no=5898"):
+            self.assertFalse(ar.is_root(u), u)
+
+    def test_compose_prompt_puts_roots_in_their_own_tier(self):
+        """대문을 속페이지와 같이 두면 '열렸다' 만 보고 조문 번호를 거기 기댄다."""
+        links = [
+            {"url": "https://a.kr/deep", "final": "https://a.kr/deep",
+             "root": False, "ok": True, "status": 200, "note": ""},
+            {"url": "https://b.kr", "final": "https://b.kr",
+             "root": True, "ok": True, "status": 200, "note": ""},
+        ]
+        p = ar.build_compose_prompt({"id": "t-1", "title": "제목"}, "보고서",
+                                    "찾은 것", links)
+        good = p.index("열린 주소(단정의 근거로 써도 되는 것):")
+        weak = p.index("대문만 열린 주소")
+        self.assertLess(good, weak)
+        self.assertIn("https://a.kr/deep", p[good:weak])
+        self.assertIn("https://b.kr", p[weak:])
+        self.assertIn("구체적인 주장의 근거로는 쓸 수 없다", p)
+
+    def test_search_prompt_forbids_homepage_roots(self):
+        p = ar.build_search_prompt({"id": "t-1", "title": "제목"}, "보고서")
+        self.assertIn("홈페이지 대문도 안 된다", p)
+        self.assertIn("대문으로", p)
+
+
+class RecoverTests(unittest.TestCase):
+    """죽은 근거 주소를 한 번 되짚는다.
+
+    agy 의 검색 근거는 일회성 중계 주소로 온다. 이미 죽었으면 원 출처에 닿을 길이
+    없어, 사실인 것까지 '확인하지 못한 것' 으로 밀려난다(실측 2026-08-27:
+    국립소방병원의 서울대병원 위·수탁 운영이 그렇게 밀려났다).
+    """
+
+    DEAD = {"url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/X",
+            "final": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/X",
+            "ok": False, "status": 404, "note": "HTTP 404"}
+
+    def test_prompt_shows_which_urls_died_and_why(self):
+        p = ar.build_recover_prompt("찾은 것", [self.DEAD])
+        self.assertIn("grounding-api-redirect/X", p)
+        self.assertIn("HTTP 404", p)
+        self.assertIn("찾은 것", p)
+
+    def test_prompt_demands_direct_urls_and_forbids_redirectors(self):
+        """되짚어 온 것이 또 중계 주소면 되짚은 뜻이 없다."""
+        p = ar.build_recover_prompt("찾은 것", [self.DEAD])
+        self.assertIn("그 내용이 실린 페이지", p)
+        self.assertIn("홈페이지 대문(경로 없는 주소)은", p)
+        self.assertIn("중계·리다이렉트 주소는 절대 적지 마라", p)
+        # 되짚기 프롬프트가 스스로 모순되면 안 된다 — 대문을 금지해 놓고
+        # 다음 줄에서 "공식 홈페이지를 찾아라" 라고 하면 대문이 다시 돌아온다.
+        self.assertNotIn("**그 기관의 공식 홈페이지**를 우선", p)
+        self.assertIn("지어내지 마라", p)
+
+    def test_nothing_failed_means_no_extra_call(self):
+        """멀쩡한 편에까지 agy 를 한 번 더 부르면 값과 시간이 곱절이 된다."""
+        called = []
+        old, ar.call_agy = ar.call_agy, lambda *a, **k: called.append(1)
+        try:
+            self.assertEqual(ar.recover_links("x", [], set()), [])
+            self.assertEqual(called, [])
+        finally:
+            ar.call_agy = old
+
+    def test_urls_we_already_tried_are_not_tried_again(self):
+        """같은 주소를 다시 열어 보는 것은 시간만 쓴다."""
+        seen = "https://a.kr"
+        opened = []
+        old_agy, ar.call_agy = ar.call_agy, lambda *a, **k: "근거: " + seen
+        old_open, ar.open_url = ar.open_url, lambda u, **k: opened.append(u)
+        try:
+            self.assertEqual(ar.recover_links("x", [self.DEAD], {seen}), [])
+            self.assertEqual(opened, [])
+        finally:
+            ar.call_agy, ar.open_url = old_agy, old_open
+
+    def test_only_the_ones_that_open_come_back(self):
+        """되짚어 왔어도 안 열리면 근거가 아니다 — 규칙은 그대로다."""
+        old_agy, ar.call_agy = ar.call_agy, lambda *a, **k: "https://live.kr https://dead.kr"
+        old_open = ar.open_url
+        ar.open_url = lambda u, **k: {"url": u, "final": u, "status": 200,
+                                      "ok": u == "https://live.kr", "note": ""}
+        try:
+            got = ar.recover_links("x", [self.DEAD], set())
+            self.assertEqual([l["url"] for l in got], ["https://live.kr"])
+        finally:
+            ar.call_agy, ar.open_url = old_agy, old_open
+
+    def test_a_dead_agy_does_not_break_the_report(self):
+        old, ar.call_agy = ar.call_agy, lambda *a, **k: None
+        try:
+            self.assertEqual(ar.recover_links("x", [self.DEAD], set()), [])
+        finally:
+            ar.call_agy = old
+
+
 class WriteTests(unittest.TestCase):
     def test_frontmatter_is_written_so_the_loader_can_read_it(self):
         d = Path(tempfile.mkdtemp())

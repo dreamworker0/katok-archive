@@ -169,6 +169,24 @@ def extract_urls(text: str, limit: int = MAX_LINKS_PER_REPORT) -> list[str]:
     return out
 
 
+def is_root(url: str) -> bool:
+    """홈페이지 대문인가(경로가 없는 주소인가).
+
+    이것을 가리는 이유: '중계 주소 말고 직접 주소를 달라' 고 했더니 모델이
+    `www.law.go.kr` `www.snuh.org` 처럼 **대문**을 대기 시작했다(실측 2026-08-27).
+    열리기는 열리므로 규칙을 형식적으로는 지키는데, 정작 그 조문·그 안내는 거기
+    없다. 열린다는 것과 그 내용이 거기 있다는 것은 다른 말이다.
+
+    대문은 '이 기관이 실재한다' 까지만 뒷받침한다. 조문 번호·병상 수·지정 사실
+    같은 구체적인 주장의 근거로는 쓸 수 없다.
+    """
+    try:
+        path = urllib.parse.urlsplit(url).path or ""
+    except Exception:
+        return False
+    return path.strip("/") == ""
+
+
 def open_url(url: str, timeout: int = FETCH_TIMEOUT_SEC) -> dict:
     """주소를 실제로 열어 본다. **이 함수가 이 모듈의 요점이다.**
 
@@ -210,13 +228,14 @@ def open_url(url: str, timeout: int = FETCH_TIMEOUT_SEC) -> dict:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             code = getattr(r, "status", 200)
             r.read(2048)          # 연결이 실제로 열리는지까지 본다
-            return {"url": url, "final": r.geturl() or url,
+            final = r.geturl() or url
+            return {"url": url, "final": final, "root": is_root(final),
                     "ok": 200 <= code < 400, "status": code, "note": ""}
     except urllib.error.HTTPError as e:
-        return {"url": url, "final": url, "ok": False, "status": e.code,
+        return {"url": url, "final": url, "root": False, "ok": False, "status": e.code,
                 "note": "HTTP %d" % e.code}
     except Exception as e:                       # 인증서·DNS·타임아웃 전부
-        return {"url": url, "final": url, "ok": False, "status": 0,
+        return {"url": url, "final": url, "root": False, "ok": False, "status": 0,
                 "note": type(e).__name__ + ": " + str(e)[:120]}
 
 
@@ -237,6 +256,15 @@ def build_search_prompt(thread: dict, report: str) -> str:
         "3. 검증할 사실 주장이 거의 없는 대화(인사·가입·안부·소감)라면 "
         "억지로 채우지 말고 첫 줄에 정확히 `검증대상없음` 이라고만 적어라.\n\n"
         "**주장마다 근거 URL 을 함께 적어라.** 주소 없는 주장은 쓰지 마라.\n"
+        "**그 내용이 실제로 실려 있는 페이지의 주소를 적어라.**\n"
+        "- 검색 도구가 만들어 주는 중계·리다이렉트 주소는 안 된다 — 남에게 건넬\n"
+        "  수 없고 금세 죽는다.\n"
+        "- **홈페이지 대문도 안 된다**(www.law.go.kr, www.snuh.org 처럼 경로가\n"
+        "  없는 주소). 대문은 그 기관이 있다는 것까지만 말해 줄 뿐, 네가 말한\n"
+        "  조문·수치·지정 사실은 거기 없다. 그 조문이 실린 화면, 그 안내가 실린\n"
+        "  글의 주소를 적어라.\n"
+        "- 그런 주소를 못 찾으면 그 주장은 \"확인 불가\" 라고 적어라. 대문으로\n"
+        "  때우지 마라.\n"
         "개인의 경력·신원은 캐지 마라 — 기관·제도·제품처럼 공개된 것만.\n"
         "확인 못 한 것은 \"확인 불가\"라고 분명히 적어라. 지어내지 마라.\n"
         "서론 인사말 없이 항목 번호대로."
@@ -244,10 +272,64 @@ def build_search_prompt(thread: dict, report: str) -> str:
     )
 
 
+def build_recover_prompt(findings: str, failed: list[dict]) -> str:
+    """열리지 않은 주소를 **원 사이트 주소로 되짚어 달라**고 묻는 말."""
+    dead = "\n".join("  - %s  (%s)" % (l["url"], l["note"] or l["status"])
+                     for l in failed)
+    return "\n".join([
+        "search_web 도구만 사용하라. run_command 와 read_url_content 는 쓰지 마라.",
+        "",
+        "네가 방금 준 근거 주소 중 아래 것들이 **열리지 않았다.**",
+        dead,
+        "",
+        "이 주소들이 뒷받침하려던 주장이 무엇이었는지는 아래 네 답에 있다.",
+        "--- 네가 준 답 ---",
+        (findings or "").strip(),
+        "---",
+        "",
+        "각 주장에 대해 **원 사이트의 직접 주소**를 다시 찾아라. 규칙:",
+        "- **그 내용이 실린 페이지**의 주소를 적어라. 홈페이지 대문(경로 없는 주소)은",
+        "  안 된다 — 그 조문·그 안내는 대문에 없다.",
+        "- 검색 중계·리다이렉트 주소는 절대 적지 마라. 그래서 지금 못 여는 것이다.",
+        "- 기관·제품·제도라면 그 기관 사이트 **안의 해당 안내 페이지**를 찾아라",
+        "  (대문 말고, 그 내용이 적힌 글).",
+        "- 못 찾으면 그 주장에 대해 \"확인 불가\" 라고만 적어라. 지어내지 마라.",
+        "",
+        "형식: 주장 한 줄 + 주소 한 줄. 서론 없이.",
+    ])
+
+
+def recover_links(findings: str, failed: list[dict],
+                  already: set[str]) -> list[dict]:
+    """열리지 않은 주소를 한 번 되짚는다. 새로 열린 것만 돌려준다.
+
+    왜 필요한가: agy 의 검색 근거는 `vertexaisearch.../grounding-api-redirect/…`
+    형태의 **일회성 주소**로 온다. 살아 있을 때 열면 끝 주소를 붙잡을 수 있지만
+    이미 죽었으면 원 출처에 닿을 방법이 없다. 그러면 사실인 것까지 '확인하지
+    못한 것' 으로 밀려난다 — 실측 2026-08-27: 국립소방병원의 서울대병원 위·수탁
+    운영이 그렇게 밀려났다. 사람이 손으로 할 때는 검색으로 확인했던 사실이다.
+
+    **한 번만 되짚는다.** 되풀이하면 모델이 아무 주소나 대기 시작하고, 그것을
+    거르는 일이 다시 우리 몫이 된다. 한 번 물어 못 찾으면 못 찾은 것이다.
+    """
+    if not failed:
+        return []
+    again = call_agy(build_recover_prompt(findings, failed))
+    if not again:
+        return []
+    fresh = [u for u in extract_urls(again) if u not in already]
+    if not fresh:
+        return []
+    return [l for l in (open_url(u) for u in fresh) if l["ok"]]
+
+
 def build_compose_prompt(thread: dict, report: str, findings: str,
                          links: list[dict]) -> str:
     """claude 에게 줄 말. 열린 주소와 안 열린 주소를 **갈라서** 준다."""
-    opened = [l for l in links if l["ok"]]
+    # 세 등급으로 가른다. 대문을 속페이지와 같이 두면 '열렸다' 는 사실만 보고
+    # 조문 번호·병상 수 같은 구체적인 주장을 거기 기대 적게 된다.
+    opened = [l for l in links if l["ok"] and not l.get("root")]
+    roots = [l for l in links if l["ok"] and l.get("root")]
     failed = [l for l in links if not l["ok"]]
     lines = []
     if opened:
@@ -256,6 +338,11 @@ def build_compose_prompt(thread: dict, report: str, findings: str,
         lines += ["  - %s" % (l.get("final") or l["url"]) for l in opened]
     else:
         lines.append("열린 주소: 없음")
+    if roots:
+        lines.append("대문만 열린 주소(그 기관이 실재한다는 것까지만 뒷받침한다 —"
+                     " 조문 번호·수치·지정 사실 같은 구체적인 주장의 근거로는"
+                     " 쓸 수 없다):")
+        lines += ["  - %s" % (l.get("final") or l["url"]) for l in roots]
     if failed:
         lines.append("열리지 않은 주소(근거로 쓸 수 없다):")
         lines += ["  - %s  (%s)" % (l["url"], l["note"] or l["status"])
@@ -349,6 +436,18 @@ def run_one(thread: dict, report: str, today: str, model: str,
     links = [open_url(u) for u in urls]
     ok = sum(1 for l in links if l["ok"])
     print("    주소 %d개 중 %d개 열림" % (len(links), ok))
+
+    # 죽은 주소를 한 번 되짚는다. 검색 중계 주소는 일회성이라, 사실인 것까지
+    # '확인하지 못한 것' 으로 밀려나는 일이 실제로 있었다.
+    failed = [l for l in links if not l["ok"]]
+    if failed:
+        found = recover_links(findings, failed, {l["url"] for l in links})
+        if found:
+            print("    되짚어 %d개를 더 열었습니다" % len(found))
+            links += found
+            ok += len(found)
+        else:
+            print("    되짚었으나 더 열지 못했습니다")
 
     body = llm.call_claude(
         build_compose_prompt(thread, report, findings, links),
