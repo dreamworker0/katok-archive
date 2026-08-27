@@ -29,6 +29,7 @@ class CheckTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.out = Path(self.tmp.name)
         (self.out / "reports").mkdir()
+        (self.out / "ai-reports").mkdir()
         patches = [
             mock.patch.object(publish_state, "OUTPUT", self.out),
             mock.patch.object(publish_state, "UPLOAD_STATE",
@@ -82,6 +83,19 @@ class CheckTests(unittest.TestCase):
         stale, line = publish_state.check()
         self.assertTrue(stale)
         self.assertIn("reports/*.md", line)
+
+    def test_an_ai_report_alone_is_stale(self):
+        """AI 검증 주석만 새로 생긴 밤이 실제로 있다.
+
+        새 대화가 없어도 밤마다 몇 편씩 쓴다. 여기서 안 잡히면 그날 발행이
+        건너뛰어지고 쓴 글이 사이트에 영영 안 올라간다.
+        """
+        now = datetime.now(timezone.utc)
+        self.uploaded_at(now - timedelta(hours=2))
+        self.touch("ai-reports/t-252.md", now - timedelta(minutes=1))
+        stale, line = publish_state.check()
+        self.assertTrue(stale)
+        self.assertIn("ai-reports/*.md", line)
 
     def test_an_old_report_does_not_make_it_stale(self):
         now = datetime.now(timezone.utc)

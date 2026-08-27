@@ -56,7 +56,12 @@ WATCHED = (
     "image_pii.json",
 )
 # 보고서는 파일이 300개가 넘는다. 가장 최근 것 하나만 보면 된다.
-REPORTS = "reports"
+#
+# AI 검증 주석도 함께 본다. 이것만 새로 생긴 밤이 실제로 있다 — 새 대화가 없어도
+# 밤마다 몇 편씩 쓰기 때문이다. 여기서 빠뜨리면 그날 발행이 건너뛰어지고, 쓴 글이
+# 사이트에 영영 안 올라간다(파이프라인의 다른 자리와 같은 종류의 사고다).
+REPORT_DIRS = ("reports", "ai-reports")
+REPORTS = "reports"          # 예전 이름 — 검사가 이 이름을 쓴다
 
 
 def last_upload_at() -> datetime | None:
@@ -85,11 +90,13 @@ def newer_inputs(since: datetime) -> list[tuple[str, datetime]]:
         if p.exists() and _mtime(p) > since:
             out.append((name, _mtime(p)))
 
-    reports = OUTPUT / REPORTS
-    if reports.is_dir():
-        newest = max((_mtime(p) for p in reports.glob("*.md")), default=None)
+    for name in REPORT_DIRS:
+        d = OUTPUT / name
+        if not d.is_dir():
+            continue
+        newest = max((_mtime(p) for p in d.glob("*.md")), default=None)
         if newest is not None and newest > since:
-            out.append((REPORTS + "/*.md", newest))
+            out.append((name + "/*.md", newest))
 
     return sorted(out, key=lambda x: x[1], reverse=True)
 

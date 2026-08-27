@@ -312,6 +312,28 @@ if ($null -ne $classifyCode -and $classifyCode -ne 0) {
     }
 }
 
+# 5b-2) AI 검증 주석 (agy 검색 + 주소 열기 + LLM 작성)
+#
+#     사람 보고서 옆에 붙는 기계의 주석이다. 사람 보고서가 쓰인 **뒤**에 돌아야
+#     한다 — 그 글을 재료로 삼는다.
+#
+#     Invoke-Step 을 쓰지 않는다. 이것이 실패해도 갱신은 굴러가야 한다. 곁딸린
+#     글 하나 때문에 그날 타임라인·통계가 통째로 날아가서는 안 된다.
+#
+#     하룻밤에 몇 편만 쓴다(기본 5편, 편당 약 $0.3~0.5). 한 번에 많이 쓰면
+#     잘못된 틀이 여러 편에 한꺼번에 박히고, 사람이 눈으로 보고 고칠 여지가
+#     사라진다. 남은 것은 다음 밤에 이어서 쓴다.
+Say "--- AI 검증 주석 (LLM) ---"
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try { $aiOut = & { python -m scripts.ai_reports } 2>&1 }
+finally { $ErrorActionPreference = $prevEap }
+$aiCode = $LASTEXITCODE
+foreach ($l in $aiOut) { Say "    $l" }
+if ($null -ne $aiCode -and $aiCode -ne 0) {
+    Say "AI 검증 주석이 실패했습니다 (exit $aiCode) — 없이 계속합니다." 'WARN'
+}
+
 # 5c) 네 번째 발행 사유 — 발행본이 로컬보다 뒤처졌나(지난 실행이 남긴 빚)
 #
 #     앞의 사유 셋은 모두 '이번 실행에서 새로 생긴 것' 을 본다. 그래서 지난 실행이
