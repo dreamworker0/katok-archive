@@ -282,6 +282,43 @@ class RecoverTests(unittest.TestCase):
             ar.call_agy = old
 
 
+class ConcurrentRunTests(unittest.TestCase):
+    """긴 묶음을 돌리는 중에 밤 23:40 갱신이 끼어들 수 있다.
+
+    둘 다 시작할 때 대장을 읽고 끝날 때 쓴다. 통째로 덮어쓰면 나중에 끝난 쪽이
+    상대의 기록을 지우고, 지워진 만큼 다음 밤에 같은 대화를 다시 물어 돈을 쓴다.
+    """
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+        self._led, ar.SKIP_LEDGER = ar.SKIP_LEDGER, self.d / "skips.json"
+
+    def tearDown(self):
+        ar.SKIP_LEDGER = self._led
+
+    def test_saving_merges_instead_of_clobbering(self):
+        ar.save_skips({"t-001": {"why": "먼저"}})
+        ar.save_skips({"t-002": {"why": "나중"}})       # 다른 실행이 쓴 것처럼
+        got = ar.load_skips()
+        self.assertEqual(sorted(got), ["t-001", "t-002"])
+
+    def test_same_id_is_updated_not_duplicated(self):
+        ar.save_skips({"t-001": {"why": "처음"}})
+        ar.save_skips({"t-001": {"why": "고침"}})
+        self.assertEqual(ar.load_skips()["t-001"]["why"], "고침")
+
+    def test_report_file_never_exists_half_written(self):
+        """반쯤 쓰인 파일을 발행이 읽으면 잘린 보고서가 사이트에 올라간다."""
+        old, ar.AI_REPORTS_DIR = ar.AI_REPORTS_DIR, self.d
+        try:
+            p = ar.write_report("t-001", "## 제목", "a", "2026-08-27", "m")
+            self.assertTrue(p.exists())
+            # 갈아 끼운 뒤 임시 파일이 남아 있으면 발행이 그것까지 읽는다.
+            self.assertEqual(list(self.d.glob("*.tmp")), [])
+        finally:
+            ar.AI_REPORTS_DIR = old
+
+
 class WriteTests(unittest.TestCase):
     def test_frontmatter_is_written_so_the_loader_can_read_it(self):
         d = Path(tempfile.mkdtemp())

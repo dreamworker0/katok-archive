@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -93,11 +94,33 @@ def load_skips() -> dict:
         return {}
 
 
+def _atomic_write(path: Path, text: str) -> None:
+    """옆에 쓰고 갈아 끼운다.
+
+    그냥 쓰면 파일이 잠깐 **반쯤 쓰인 상태**로 존재한다. 그때 발행 단계가 읽으면
+    잘린 보고서가 그대로 사이트에 올라간다 — 사람이 긴 묶음을 돌리는 중에 밤
+    23:40 갱신이 끼어들면 실제로 생길 수 있는 일이다. os.replace 는 같은
+    볼륨에서 원자적이다.
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def save_skips(skips: dict) -> None:
+    """대장에 **덧붙인다.** 통째로 덮어쓰지 않는다.
+
+    두 실행이 겹칠 수 있다 — 사람이 손으로 긴 묶음을 돌리는 중에 밤 갱신이
+    끼어든다. 둘 다 시작할 때 대장을 읽고 끝날 때 쓰므로, 통째로 덮어쓰면 나중에
+    끝난 쪽이 상대의 기록을 지운다. 지워진 만큼 다음 밤에 같은 대화를 다시 물어
+    돈을 쓴다.
+    """
     SKIP_LEDGER.parent.mkdir(parents=True, exist_ok=True)
-    SKIP_LEDGER.write_text(
-        json.dumps(skips, ensure_ascii=False, indent=2, sort_keys=True),
-        encoding="utf-8")
+    merged = load_skips()
+    merged.update(skips)
+    _atomic_write(SKIP_LEDGER,
+                  json.dumps(merged, ensure_ascii=False, indent=2,
+                             sort_keys=True))
 
 
 def pick_targets(threads: list[dict], limit: int,
@@ -380,10 +403,8 @@ def write_report(tid: str, body: str, models: str, checked: str,
     """프론트매터를 붙여 파일로 남긴다."""
     AI_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     p = AI_REPORTS_DIR / ("%s.md" % tid)
-    p.write_text(
-        "---\nchecked: %s\nmodels: %s\nmethod: %s\n---\n\n%s\n"
-        % (checked, models, method, body.strip()),
-        encoding="utf-8")
+    _atomic_write(p, "---\nchecked: %s\nmodels: %s\nmethod: %s\n---\n\n%s\n"
+                  % (checked, models, method, body.strip()))
     return p
 
 
