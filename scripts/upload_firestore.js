@@ -154,6 +154,37 @@ function staleState(state, now, days) {
 }
 
 /** 무엇을 쓰고 무엇을 지울지 미리 셈한다. prev 가 없으면 전부 쓴다. */
+// 한 문서에 담을 상한. Firestore 한도는 1MiB 지만 여유를 크게 둔다 — 편 하나가
+// 유난히 길어도 넘지 않아야 하고, 넘으면 그날 적재가 통째로 실패한다.
+const CHUNK_BYTES = 600 * 1024;
+
+/** 항목을 크기 기준으로 나눠 문서 목록으로 만든다. id 는 000, 001, … 이다.
+ *
+ * 개수가 아니라 **바이트**로 나눈다. 편마다 길이가 제각각이라 개수로 자르면
+ * 어떤 묶음은 텅 비고 어떤 묶음은 한도를 넘는다.
+ *
+ * 항목이 없으면 빈 문서 하나를 남긴다 — 컬렉션이 통째로 사라지면 화면이 '아직
+ * 적재되지 않았다' 와 '검증 주석이 없다' 를 구분하지 못한다.
+ */
+function chunkDocs(items, maxBytes) {
+  const cap = maxBytes || CHUNK_BYTES;
+  const docs = [];
+  let cur = [];
+  let size = 2;                       // "[]"
+  for (const it of items) {
+    const n = Buffer.byteLength(JSON.stringify(it), "utf8") + 1;
+    if (cur.length && size + n > cap) {
+      docs.push(cur);
+      cur = [];
+      size = 2;
+    }
+    cur.push(it);
+    size += n;
+  }
+  docs.push(cur);
+  return docs.map((items, i) => ({ id: String(i).padStart(3, "0"), items }));
+}
+
 function planWrites(prev, docs) {
   const next = {};
   const writes = [];
@@ -348,6 +379,10 @@ async function main() {
   const mine = readPayload("my-messages.json");
   const threads = readPayload("threads.json");
   const aiReports = readPayload("ai-reports.json");
+  // AI 검증 주석은 계속 늘어난다. 한 문서에 다 담으면 Firestore 1MiB 한도에
+  // 닿는다(실측 2026-08-27: 363편을 더 쓰면 1,129KB). 화면(boot.js)은 이미
+  // 컬렉션 전체를 훑어 이어 붙이므로 나눠 담아도 손댈 것이 없다.
+  const aiDocs = chunkDocs(aiReports);
   const digests = readPayload("digests.json");
   const graph = readPayload("graph.json");
   const source = readPayload("messages-source.json");
@@ -367,7 +402,7 @@ async function main() {
 
   const docCount = 1 + 1 + 1 + 1 + digestDocs.length + 2;   // meta·threads·aiReports·media·digests·graph
   console.log("적재 계획 (문서 수)");
-  console.log(`  meta 1 / threads 1 (${threads.length}건 묶음) / aiReports 1 (${aiReports.length}편) / media 1 (${media.length}건 묶음)`);
+  console.log(`  meta 1 / threads 1 (${threads.length}건 묶음) / aiReports ${aiDocs.length}문서 (${aiReports.length}편) / media 1 (${media.length}건 묶음)`);
   console.log(`  digests ${digestDocs.length} / graph 2`);
   console.log(`  members ${members.length}명 — 적재하지 않음 (Firestore 가 주인)`);
   console.log(`  myMessages ${mineDocs.length}명분 (본인만 읽음)`);
@@ -382,7 +417,7 @@ async function main() {
     // 대장과 견줘 실제로 몇 건이 바뀌는지 미리 알려 준다 (dry-run 의 값어치)
     const changed =
       planWrites(prevState.collections.threads, [{ id: "all", items: threads }]).writes.length +
-      planWrites(prevState.collections.aiReports, [{ id: "all", items: aiReports }]).writes.length +
+      planWrites(prevState.collections.aiReports, aiDocs).writes.length +
       planWrites(prevState.collections.media, [{ id: "all", items: media }]).writes.length +
       planWrites(prevState.collections.myMessages, mineDocs).writes.length +
       planWrites(prevState.collections.digests, digestDocs).writes.length +
@@ -418,7 +453,7 @@ async function main() {
   // 스레드 요약이 멤버가 보는 본문이다. 165건이지만 합쳐 83KB뿐이라 한 문서로
   // 발행한다 — 개별 문서로 두면 전체 로드에 165회 읽기가 추가된다.
   await sync("threads", [{ id: "all", items: threads }]);
-  await sync("aiReports", [{ id: "all", items: aiReports }]);
+  await sync("aiReports", aiDocs);
   await sync("media", [{ id: "all", items: media }]);
   await sync("myMessages", mineDocs);
   // chunks 는 더 이상 발행하지 않는다. 예전 적재분을 지운다.
