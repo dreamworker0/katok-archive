@@ -80,6 +80,8 @@
     confirmSubmit: document.getElementById("confirmSubmit"),
   };
   var state = { view: "summary", q: "", nick: "", graph: null, session: null,
+                // 요지 화면에서 골라 온 주제(주소의 ?cat=)
+                cat: "",
                 mine: null, admin: null, gview: "grid", tsort: "desc", pick: null,
                 // 태그 화면에서 고른 태그(최대 TAG_PICK_MAX 개)
                 tagPick: [],
@@ -143,8 +145,10 @@
     CATS.forEach(function (c) {
       var d = DIGESTS[c.id]; if (!d) return;
       digestCount++;
-      html.push('<button data-goto="doc-' + c.id + '"><span class="swatch" style="background:' +
-        colorFor(c.id) + '"></span>' + esc(c.label) + " · " + (d.message_count || 0) + "</button>");
+      html.push('<a class="cat-nav-item" href="/summary?cat=' + encodeURIComponent(c.id) +
+        '" data-goto="doc-' + c.id + '" data-cat="' + esc(c.id) + '">' +
+        '<span class="swatch" style="background:' + colorFor(c.id) + '"></span>' +
+        esc(c.label) + " · " + (d.message_count || 0) + "</a>");
     });
     html.push("</div>");
     if (!digestCount) {
@@ -157,15 +161,42 @@
     });
     el.view.innerHTML = html.join("");
     Array.prototype.forEach.call(el.view.querySelectorAll("[data-goto]"), function (b) {
-      b.onclick = function () {
+      b.onclick = function (ev) {
+        // 새 탭·다른 창으로 여는 몸짓은 가로채지 않는다 — 링크로 둔 뜻이 없어진다.
+        if (ev && (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button === 1)) return;
+        if (ev && ev.preventDefault) ev.preventDefault();
         var t = document.getElementById(b.getAttribute("data-goto"));
         if (!t) return;
+        state.cat = b.getAttribute("data-cat") || "";
+        writeHash();
         // 모바일에서는 카드가 접혀 있다. 찾아간 주제를 닫힌 채로 두면 "눌렀는데
         // 아무것도 없네"가 된다 — 골라서 온 것이니 열어 준다.
         setDocOpen(t, true);
         t.scrollIntoView({ behavior: "smooth", block: "start" });
       };
     });
+    // 주제 제목 링크 — 위쪽 단추와 같은 일을 한다.
+    Array.prototype.forEach.call(el.view.querySelectorAll(".doc-link"), function (a) {
+      a.onclick = function (ev) {
+        if (ev && (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button === 1)) return;
+        if (ev && ev.preventDefault) ev.preventDefault();
+        var cid = a.getAttribute("data-cat");
+        state.cat = cid;
+        writeHash();
+        var t = document.getElementById("doc-" + cid);
+        if (!t) return;
+        setDocOpen(t, true);
+        t.scrollIntoView({ behavior: "smooth", block: "start" });
+      };
+    });
+    // 주소에 cat 이 실려 들어온 경우 — 그 주제를 펴고 그 자리로 데려간다.
+    if (state.cat) {
+      var target = document.getElementById("doc-" + state.cat);
+      if (target) {
+        setDocOpen(target, true);
+        target.scrollIntoView({ block: "start" });
+      }
+    }
     bindDocActions(el.view);
   }
 
@@ -278,7 +309,11 @@
 
     return '<article class="doc" id="doc-' + cid + '" style="--c:' + col + '">' +
       '<div class="doc-head"><span class="doc-bar"></span>' +
-      '<h2 class="doc-title">' + esc(d.label) + "</h2>" +
+      // a 로 두어야 오른쪽 단추의 '링크 주소 복사'·새 탭 열기가 먹는다.
+      // 화면 안에서는 기본 동작을 막고 상태만 바꾼다(새로고침이 아니다).
+      '<h2 class="doc-title"><a class="doc-link" href="/summary?cat=' +
+      encodeURIComponent(cid) + '" data-cat="' + esc(cid) + '">' +
+      esc(d.label) + "</a></h2>" +
       '<span class="doc-meta">' + (d.message_count || 0) + "개 메시지 · " + (d.threads || []).length + "개 주제</span></div>" +
       (d.headline ? '<p class="doc-headline">' + esc(d.headline) + "</p>" : "") +
       '<p class="doc-overview">' + esc(d.overview || "") + "</p>" +
@@ -3059,6 +3094,11 @@
       // 어려워진다 — 사람에게 건네는 링크이므로 눈으로 읽히는 편이 낫다.
       q.push("t=" + state.tagPick.map(encodeURIComponent).join(","));
     }
+    // 요지 화면은 주제별로 건넬 주소가 있어야 한다 — "프로젝트·결과물 부분 봐"
+    // 라고 말하려면 링크가 있어야지, 들어가서 찾아 내려가라고 할 수는 없다.
+    if (state.view === "summary" && state.cat) {
+      q.push("cat=" + encodeURIComponent(state.cat));
+    }
     if (state.q) q.push("q=" + encodeURIComponent(state.q));
     if (state.nick) q.push("nick=" + encodeURIComponent(state.nick));
     return "/" + state.view + (q.length ? "?" + q.join("&") : "");
@@ -3082,6 +3122,7 @@
       var k = decodeURIComponent(eq < 0 ? pair : pair.slice(0, eq));
       var v = eq < 0 ? "" : decodeURIComponent(pair.slice(eq + 1).replace(/\+/g, " "));
       if (k === "q") out.q = v;
+      else if (k === "cat") out.cat = v;
       else if (k === "nick") out.nick = v;
       else if (k === "t") out.tags = v.split(",").filter(Boolean);
     });
@@ -3089,7 +3130,7 @@
   }
 
   function parseHash() {
-    var out = { view: "", q: "", nick: "", tags: [] };
+    var out = { view: "", q: "", nick: "", cat: "", tags: [] };
     // 옛 링크: #/tags?t=... — 새 주소로 넘겨준다(아래 applyHash 가 replaceState).
     var hash = (location.hash || "").replace(/^#\/?/, "");
     if (hash) {
@@ -3112,6 +3153,7 @@
     if (!document.querySelector('[data-view="' + r.view + '"]')) return false;
     state.view = r.view;
     state.q = r.q; state.nick = r.nick;
+    state.cat = r.cat || "";
     state.pick = null;
     state.tagPick = r.tags.slice(0, TAG_PICK_MAX);
     if (el.search) el.search.value = state.q;
@@ -3129,6 +3171,7 @@
     // 관리 화면을 떠나면 갱신 상태 구독을 끊는다. 안 끊으면 다른 탭을 보는 동안에도
     // 리스너가 살아 있고, 관리 화면에 다시 들어올 때마다 하나씩 더 붙는다.
     if (v !== "admin") unwatchRefresh();
+    if (v !== "summary") state.cat = "";
     state.view = v;
     setNavigationState(v);
     setMobileMore(false);

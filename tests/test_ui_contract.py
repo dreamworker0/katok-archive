@@ -687,9 +687,23 @@ class MobileDensityContractTests(unittest.TestCase):
         주제로 가는 유일한 길이라, 숨기면 접힌 카드를 열 방법이 사라진다.
         """
         self.assertIn(".cat-nav { flex-wrap: nowrap; overflow-x: auto;", self.mobile)
-        self.assertIn(".cat-nav button { flex: 0 0 auto;", self.mobile)
+        # 칩은 button 이었다가 a(.cat-nav-item)가 됐다 — 주제별로 건넬 주소가
+        # 있어야 해서다(2026-08-27). 이름이 무엇이든 **줄지 않아야** 한다.
+        self.assertIn(".cat-nav button, .cat-nav-item { flex: 0 0 auto;", self.mobile)
         # 숨기지 않았는지.
         self.assertNotIn(".cat-nav { display: none", self.mobile)
+
+    def test_category_chips_are_real_links(self):
+        """골라가기 칩과 주제 제목은 주소를 가진 링크다.
+
+        예전에는 페이지 안에서 자리를 옮기기만 해서 "저 주제 봐"라고 건넬 주소가
+        없었다. 눌러서 가는 것과 링크로 건네는 것은 다른 일이다.
+        """
+        self.assertIn('href="/summary?cat=', self.app)
+        self.assertIn("cat-nav-item", self.css)
+        self.assertIn(".doc-title .doc-link", self.css)
+        # 제목이 링크 색으로 물들면 문서가 아니라 목록처럼 읽힌다.
+        self.assertIn(".doc-title .doc-link { color: inherit;", self.css)
 
     def test_hero_art_steps_aside_on_mobile_only(self):
         # 장식이라 alt 가 비어 있다 — 빼도 읽는 데 잃는 것이 없다. 데스크톱은 그대로.
