@@ -109,8 +109,12 @@ function millisOf(value) {
  * run_daily.ps1 을 돌리고 결과를 요약한다.
  *
  * 출력을 전부 붙들지 않는다 — 하루치 로그는 수백 줄이고 Firestore 문서에 넣을
- * 것도 아니다. 화면에 필요한 것은 세 가지뿐이다: 성공했는가, 새 글이 몇 건인가,
- * 실패했다면 어느 단계에서인가. 전체 로그는 logs\daily-*.log 에 이미 남는다.
+ * 것도 아니다. 화면에 필요한 것은 넷뿐이다: 성공했는가, 새 글이 몇 건인가,
+ * 그중 주제 분류가 몇 건 됐고 미분류가 몇 개 남았는가, 실패했다면 어느 단계에서인가.
+ * 전체 로그는 logs\daily-*.log 에 이미 남는다.
+ *
+ * 숫자는 전부 ASCII 표식으로 받는다(NEW_MESSAGES / CLASSIFIED / UNSORTED). 한글
+ * 로그는 콘솔 코드페이지에 따라 깨지고, 깨진 글자는 절대 매칭되지 않는다.
  */
 function runDaily() {
   return new Promise((resolve) => {
@@ -128,6 +132,8 @@ function runDaily() {
     });
 
     let newMessages = null;
+    let classified = null;
+    let unsorted = null;
     let lastStep = null;
     let lastError = null;
     let buffered = "";
@@ -142,6 +148,10 @@ function runDaily() {
         // (같은 이유로 run_daily.ps1 도 이 표식을 쓴다).
         const n = line.match(/NEW_MESSAGES=(\d+)/);
         if (n) newMessages = parseInt(n[1], 10);
+        const c = line.match(/CLASSIFIED=(\d+)/);
+        if (c) classified = parseInt(c[1], 10);
+        const u = line.match(/UNSORTED=(\d+)/);
+        if (u) unsorted = parseInt(u[1], 10);
         const step = line.match(/--- (.+?) ---/);
         if (step) lastStep = step[1];
         if (/ ERROR /.test(line)) lastError = line.replace(/^\[[^\]]*\]\s*/, "");
@@ -157,11 +167,39 @@ function runDaily() {
       resolve({
         code,
         newMessages,
+        classified,
+        unsorted,
         lastStep,
         error: lastError || (buffered.trim() ? buffered.trim().slice(0, 300) : null),
       });
     });
   });
+}
+
+/**
+ * 끝난 갱신을 화면에 뭐라고 말할 것인가.
+ *
+ * 예전에는 새 글이 있으면 무조건 "주제 분류는 '미분류'로 들어갑니다" 라고 했다.
+ * 사람이 주 1회 재분류하던 시절의 문장이다. 지금은 run_daily 5단계가 그 자리에서
+ * 분류하고 보고서까지 쓰므로, 대개 그 말은 **사실이 아니다** — 버튼을 누른 사람은
+ * 화면이 시킨 대로 미분류를 찾으러 갔다가 아무것도 없는 것을 본다.
+ * (run_daily 의 로그 줄은 2026-08-04 에 같은 이유로 이미 고쳤는데, 버튼 경로만
+ *  옛 문장을 그대로 들고 있었다.)
+ *
+ * 그래서 세어 보고 말한다. 못 읽은 값에 대해서는 **아무 말도 하지 않는다** —
+ * 모르는 것을 0 이나 '남았다' 로 지어내면 화면이 다시 거짓말을 한다.
+ */
+function doneMessage(n, classified, unsorted) {
+  if (n === null) return "갱신을 마쳤습니다.";
+  const parts = [n > 0
+    ? `새 메시지 ${n} 건을 반영했습니다.`
+    : "새 메시지가 없었습니다. 이미 최신입니다."];
+  if (classified > 0) parts.push(`주제 분류 ${classified} 건.`);
+  if (unsorted > 0) {
+    parts.push(`아직 '미분류' 스레드 ${unsorted} 개가 남아 있습니다 — ` +
+      "다음 갱신에서 이어 정리합니다.");
+  }
+  return parts.join(" ");
 }
 
 /** 요청을 잡는다. queued 이고 아직 안 잡은 것일 때만 running 으로 바꾼다.
@@ -227,11 +265,9 @@ async function handle(ref, data) {
       status: "done",
       exitCode: 0,
       newMessages: n,
-      message: n === null
-        ? "갱신을 마쳤습니다."
-        : (n > 0
-            ? `새 메시지 ${n} 건을 반영했습니다. 주제 분류는 '미분류'로 들어갑니다.`
-            : "새 메시지가 없었습니다. 이미 최신입니다."),
+      classified: r.classified,
+      unsorted: r.unsorted,
+      message: doneMessage(n, r.classified, r.unsorted),
     });
     return;
   }

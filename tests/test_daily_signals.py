@@ -95,6 +95,51 @@ class UnsortedIsCountedNotAssumedTests(unittest.TestCase):
                         body.index("scripts.count_unsorted"))
 
 
+class ButtonPathSaysWhatActuallyHappenedTests(unittest.TestCase):
+    """'지금 갱신' 버튼이 끝난 뒤 화면에 남기는 말도 세어 보고 해야 한다.
+
+    로그 줄은 2026-08-04 에 고쳤는데(위 클래스) 버튼 경로는 옛 문장을 그대로
+    들고 있었다 — 새 글이 있으면 무조건 "주제 분류는 '미분류'로 들어갑니다".
+    실측 2026-08-31: 새 글 14건이 그 자리에서 전부 분류됐고 미분류는 0개인데도
+    그 문장이 떴다. 화면이 시키는 대로 미분류를 찾으러 가면 아무것도 없다.
+    """
+
+    WATCHER = (ROOT / "scripts" / "refresh_watcher.js").read_text(encoding="utf-8")
+    APP = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+
+    def test_runner_emits_the_unsorted_marker_even_when_zero(self):
+        # 0 과 '못 읽었다' 를 구분할 수 있어야 부르는 쪽이 말을 고를 수 있다.
+        block = DAILY[DAILY.index("$unsorted = $null"):]
+        marker = block.index('Say "    UNSORTED=$unsorted"')
+        guard = block.index("if ($unsorted -gt 0) {")
+        self.assertLess(marker, guard, "표식은 남아 있을 때만이 아니라 언제나 낸다")
+
+    def test_watcher_reads_both_numbers(self):
+        self.assertIn("CLASSIFIED=(\\d+)", self.WATCHER)
+        self.assertIn("UNSORTED=(\\d+)", self.WATCHER)
+
+    def done_message_body(self) -> str:
+        """화면에 남길 말을 짓는 함수의 **본문**만. 주석은 뺀다 — 옛 문장을
+        '이제 이렇게 말하지 않는다' 고 적어 두는 것은 코드가 아니다."""
+        body = self.WATCHER[self.WATCHER.index("function doneMessage("):]
+        return body[:body.index(chr(10) + "}")]
+
+    def test_watcher_no_longer_asserts_unsorted(self):
+        self.assertNotIn("주제 분류는 '미분류'로 들어갑니다", self.done_message_body())
+
+    def test_watcher_stays_silent_about_numbers_it_could_not_read(self):
+        body = self.done_message_body()
+        # 못 읽으면 null 이다. `> 0` 은 null 에서 거짓이므로 아무 말도 하지 않는다 —
+        # 모르는 것을 '0 건' 이나 '남았다' 로 지어내면 화면이 다시 거짓말을 한다.
+        self.assertIn("classified > 0", body)
+        self.assertIn("unsorted > 0", body)
+
+    def test_card_no_longer_says_a_human_must_classify(self):
+        idx = self.APP.index("카톡에서 대화를 내보내 새 글")
+        blurb = self.APP[idx:idx + 400]
+        self.assertNotIn("사람이 정리해야", blurb)
+
+
 class FailSafeDirectionTests(unittest.TestCase):
     """표식을 못 읽었을 때 어느 쪽으로 기우는지."""
 

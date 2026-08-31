@@ -501,9 +501,18 @@ foreach ($l in $unsortedOut) {
 }
 if ($null -eq $unsorted) {
     Say "미분류 스레드 수를 세지 못했습니다 (UNSORTED 표식 없음)." 'WARN'
-} elseif ($unsorted -gt 0) {
-    foreach ($l in $unsortedOut) { Say "    $l" }
-    Say "주제 분류가 필요한 '미분류' 스레드 $unsorted 개가 남아 있습니다 — 확인해 정리하세요."
+} else {
+    # 0개인 날에도 표식은 흘려보낸다.
+    #
+    # 이 줄을 읽는 쪽이 하나 더 있다 — '지금 갱신' 버튼의 감시 스크립트다. 화면에
+    # "미분류가 몇 개 남았다"를 말하려면 '0' 과 '못 읽었다' 를 구분할 수 있어야
+    # 하는데, 표식을 남을 때만 찍으면 그 둘이 똑같이 보인다. 사람이 읽을 목록은
+    # 여전히 남아 있을 때만 찍는다 — 없는 날 매일 찍히면 진짜 경고가 묻힌다.
+    Say "    UNSORTED=$unsorted"
+    if ($unsorted -gt 0) {
+        foreach ($l in $unsortedOut) { if ($l -notmatch 'UNSORTED=') { Say "    $l" } }
+        Say "주제 분류가 필요한 '미분류' 스레드 $unsorted 개가 남아 있습니다 — 확인해 정리하세요."
+    }
 }
 
 # $lock 을 명시적으로 닫지 않는다. 위쪽 exit 경로가 여럿이라 한 군데서 닫아도
