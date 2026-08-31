@@ -79,6 +79,15 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# 자식 프로세스(파이썬) 출력을 UTF-8 로 읽는다.
+#
+# run_daily.ps1 은 맨 위에서 이것을 하지만, 이 스크립트를 손으로 돌리면 콘솔
+# 코드페이지가 cp949 라 격자 판독 줄이 로그에서 통째로 깨진다(실측 2026-08-31:
+# '행 3개 / 카드 16개' 가 '??3媛?...' 로 남았다). 진단하려고 남기는 줄이
+# 진단할 수 없는 모양으로 남으면 없느니만 못하다.
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+
 Add-Type -Name Dpi -Namespace W32 -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();'
 [void][W32.Dpi]::SetProcessDPIAware()
 Add-Type -AssemblyName System.Drawing
@@ -249,6 +258,11 @@ $SAVE_BTN   = @{ X = 1842; Y = 1060 }
 # 저장했다 — 결과는 같았지만(중복은 걸러진다) 헛일이었다. 가장자리를 스치지 않게
 # 중심을 적는다.
 $CLEAR_BTN  = @{ X = 413;  Y = 1061 }
+
+# 머리글(지금 보고 있는 방 이름)과 왼쪽 방 목록. 창 기준 좌표(실측 2026-08-31).
+$HEAD_BOX   = @{ X = 420; Y = 205; W = 820; H = 48 }
+$LIST_BOX   = @{ X = 0;   Y = 140; W = 370; H = 940 }
+$LIST_CLICK_X = 185
 
 function Open-DrawerWindow {
     <#
@@ -486,6 +500,149 @@ function Count-Saved {
     (Get-ChildItem $SaveDir -File -ErrorAction SilentlyContinue).Count
 }
 
+# ───────────────────── 어느 방의 서랍인가 ─────────────────────
+#
+# 서랍 창은 방마다 따로 열리지 않는다. **하나의 창**이 왼쪽 목록에서 고른 방을
+# 보여줄 뿐이다. 그래서 사람이 다른 방을 한 번 눌러 두면 그 뒤로는 매일 밤
+# 남의 방을 훑는다.
+#
+# 실측 2026-08-29~31: '제6선교회' 가 골라져 있어 사흘 내리 두 탭 모두 카드 0개를
+# 읽고 '=== 정상 종료 ===' 로 끝냈다. 로그도 화면도 조용했고, 그동안 첨부는
+# 14일 시계를 그냥 태웠다. 이 스크립트가 여태 확인하지 않던 단 하나의 전제다.
+#
+# 방 이름은 Win32 로 읽을 수 없다 — 서랍 창의 자식 5개가 전부 text='' 이다
+# (실측). 그래서 머리글을 OCR 로 읽는다. 방 창 ☰ 메뉴에서 '채팅방 나가기' 를
+# 피할 때 쓰는 것과 같은 수단이다.
+$script:OcrReady = $false
+try {
+    . (Join-Path $PSScriptRoot 'kakao_ocr.ps1')
+    $script:OcrReady = $true
+} catch {
+    Write-Log ("OCR 유틸을 못 읽었습니다: {0}" -f $_.Exception.Message) 'WARN'
+}
+
+function Get-BoxOcr {
+    <# PrintWindow 캡처의 한 구역만 잘라 OCR 한다. 좌표는 **창 기준**으로 돌려준다.
+
+       화면을 다시 찍지 않고 이미 있는 캡처를 자르는 이유: PrintWindow 는 가려진
+       창도 찍지만 CopyFromScreen 은 못 한다. 밤 자동 실행에서 서랍 위에 다른
+       창이 있어도 읽혀야 한다. #>
+    param([string]$shot, $box, [int]$scale = 2)
+    if (-not $script:OcrReady -or -not $shot) { return @() }
+    $src = [System.Drawing.Bitmap]::FromFile($shot)
+    $tmp = $null
+    try {
+        if (($box.X + $box.W) -gt $src.Width -or ($box.Y + $box.H) -gt $src.Height) {
+            Write-Log "  캡처가 기대보다 작습니다 — 구역을 읽지 않습니다" 'WARN'
+            return @()
+        }
+        $rect = New-Object System.Drawing.Rectangle $box.X, $box.Y, $box.W, $box.H
+        $crop = $src.Clone($rect, $src.PixelFormat)
+        try {
+            # OCR 은 작은 글자에 약하다. 2배로 키워 넘긴다(kakao_ocr.ps1 과 같은 배율).
+            $big = New-Object System.Drawing.Bitmap ($box.W * $scale), ($box.H * $scale)
+            try {
+                $g = [System.Drawing.Graphics]::FromImage($big)
+                $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+                $g.DrawImage($crop, 0, 0, $big.Width, $big.Height)
+                $g.Dispose()
+                $tmp = [System.IO.Path]::Combine($env:TEMP, "drawer-ocr-$([guid]::NewGuid().ToString('N')).png")
+                $big.Save($tmp, [System.Drawing.Imaging.ImageFormat]::Png)
+            } finally { $big.Dispose() }
+        } finally { $crop.Dispose() }
+        return Get-OcrLines -Path $tmp -OriginX $box.X -OriginY $box.Y -Scale $scale
+    } catch {
+        Write-Log ("  구역 OCR 실패: {0}" -f $_.Exception.Message) 'WARN'
+        return @()
+    } finally {
+        $src.Dispose()
+        if ($tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Get-RoomKey { param([string]$name)
+    <# 견줄 수 있는 모양으로 깎는다. OCR 은 띄어쓰기·쉼표·말줄임을 제 맘대로 낸다. #>
+    if (-not $name) { return '' }
+    return ($name -replace '[\s,\.·…\-_''"‘’“”]', '')
+}
+
+function Test-SameRoom { param([string]$seen, [string]$want)
+    <# 읽은 이름과 기대한 이름이 같은 방인가. 양쪽이 어긋나는 방식이 서로 달라서
+       한 가지 규칙으로는 안 된다.
+
+       머리글에는 이름 **뒤**에 화살표 단추가 붙어 함께 잡힌다 — 실측 2026-08-31:
+       '새벽기도팀 ?되'. 그러니 읽은 것이 기대한 이름으로 **시작하면** 같은 방이다.
+       기대한 이름은 우리가 적어 둔 것이라 길이를 따질 이유가 없다(처음에는 여기에도
+       6글자 문턱을 뒀다가 '새벽기도팀'(5글자)을 못 알아봤다).
+
+       목록에서는 반대로 이름이 **잘려서** 나온다('바이브코딩,업무자동…'). 이쪽은
+       조각이므로 6글자는 넘어야 남의 방과 우연히 맞지 않는다. #>
+    $a = Get-RoomKey $seen
+    $b = Get-RoomKey $want
+    if (-not $a -or -not $b) { return $false }
+    if ($a -eq $b) { return $true }
+    if ($a.StartsWith($b)) { return $true }
+    if ($a.Length -ge 6 -and $b.StartsWith($a)) { return $true }
+    return $false
+}
+
+function Get-DrawerRoomName {
+    <# 머리글에 적힌, 지금 보고 있는 방 이름. 못 읽으면 $null. #>
+    $shot = Save-Shot 'head'
+    $lines = Get-BoxOcr $shot $HEAD_BOX
+    if (-not $lines -or $lines.Count -eq 0) { return $null }
+    # 머리글은 한 줄이다. 여럿이 잡히면 가장 긴 것을 쓴다.
+    ($lines | Sort-Object { $_.text.Length } -Descending | Select-Object -First 1).text
+}
+
+function Select-DrawerRoom {
+    <# 왼쪽 목록에서 우리 방을 찾아 누른다. 목록 조작은 고르기뿐이라 되돌릴 수
+       없는 것이 없다 — 이 창의 하단 바에는 삭제 단추가 아예 없다. #>
+    $shot = Save-Shot 'list'
+    $lines = Get-BoxOcr $shot $LIST_BOX
+    if (-not $lines -or $lines.Count -eq 0) {
+        Write-Log '  왼쪽 목록을 읽지 못했습니다' 'WARN'
+        return $false
+    }
+    foreach ($l in $lines) {
+        # 목록 줄에는 안 읽은 수가 뒤에 붙는다('바이브코딩,업무자동… 47').
+        $name = ($l.text -replace '\s+\d+$', '')
+        if (-not (Test-SameRoom $name $Room)) { continue }
+        Write-Log ("  목록에서 '{0}' 을 찾았습니다 (y={1}) — 고릅니다" -f $l.text, $l.y)
+        if (-not (Invoke-Click $LIST_CLICK_X $l.y '방 고르기' -Always)) { return $false }
+        Start-Sleep -Milliseconds 1200
+        return $true
+    }
+    Write-Log ("  목록에 '{0}' 이 보이지 않습니다 (읽은 줄 {1}개)" -f $Room, $lines.Count) 'WARN'
+    return $false
+}
+
+function Assert-DrawerRoom {
+    <# 우리 방을 보고 있게 만든다. 못 만들면 $false — 부르는 쪽이 중단한다. #>
+    if (-not $script:OcrReady) {
+        Write-Log '  OCR 을 못 써서 방 이름을 확인하지 못합니다 — 카드 수로만 판단합니다' 'WARN'
+        return $true
+    }
+    $seen = Get-DrawerRoomName
+    if ($seen -and (Test-SameRoom $seen $Room)) {
+        Write-Log ("방 확인: '{0}'" -f $seen)
+        return $true
+    }
+    $shown = if ($seen) { $seen } else { '읽지 못함' }
+    Write-Log ("서랍이 다른 방을 보고 있습니다 — 머리글 '{0}', 기대 '{1}'" -f `
+        $shown, $Room) 'WARN'
+    if (-not (Select-DrawerRoom)) { return $false }
+
+    $seen2 = Get-DrawerRoomName
+    if ($seen2 -and (Test-SameRoom $seen2 $Room)) {
+        Write-Log ("방을 바로잡았습니다: '{0}'" -f $seen2)
+        return $true
+    }
+    $shown2 = if ($seen2) { $seen2 } else { '읽지 못함' }
+    Write-Log ("골랐는데도 머리글이 '{0}' 입니다" -f $shown2) 'WARN'
+    return $false
+}
+
 # ───────────────────────── 실행 ─────────────────────────
 Write-Log ("=== 서랍 첨부 수집 시작 (Discover={0}) ===" -f [bool]$Discover)
 $before = Count-Saved
@@ -497,7 +654,16 @@ Start-Sleep -Milliseconds 800
 Set-Origin
 Write-Log ("작업 자리로 옮김 (원점 {0},{1})" -f $script:WinX, $script:WinY)
 
+# 훑기 전에 **어느 방인지부터** 확인한다. 이 확인이 없어서 사흘을 날렸다.
+if (-not (Assert-DrawerRoom)) {
+    Write-Log ("'{0}' 의 서랍을 볼 수 없습니다 — 아무것도 받지 않고 물러납니다." -f $Room) 'ABORT'
+    Write-Log '  카카오톡 서랍 창 왼쪽 목록에서 그 방을 골라 두면 다음 실행이 이어갑니다.' 'ABORT'
+    Restore-Window
+    exit 4
+}
+
 $totalClicked = 0
+$totalCards = 0
 try {
     foreach ($tab in @('파일', '사진/동영상')) {
         # 한 탭이 넘어져도 다른 탭과 그날 갱신을 끌고 내려가지 않게 감싼다.
@@ -543,6 +709,7 @@ try {
                     break
                 }
                 Write-Log ("  {0}화면: 카드 {1}개" -f $screen, $grid.cards.Count)
+                $totalCards += $grid.cards.Count
 
                 if ($Discover) {
                     foreach ($c in $grid.cards) {
@@ -599,6 +766,21 @@ finally {
 $after = Count-Saved
 Write-Log ("받은 파일 {0}개 → {1}개 (새로 {2}개)" -f $before, $after, ($after - $before))
 Write-Log ("선택한 항목 누적 {0}개" -f $totalClicked)
+
+# 두 탭 모두 빈 것은 '오늘 새 첨부가 없다' 가 아니다.
+#
+# 서랍은 지난 것을 계속 보여준다 — 사진은 스물몇 장이 늘 남아 있다. 그래서 둘 다
+# 0개면 우리 방을 보고 있지 않거나 격자를 못 읽은 것이다. 위의 방 확인이 첫 번째
+# 그물이고 이것이 두 번째다. OCR 이 없는 PC 에서는 이쪽만 남는다.
+#
+# 받은 것은 이미 받았으므로 실패로 되돌리지 않는다. 조용히 끝내지 않을 뿐이다.
+if ($totalCards -eq 0) {
+    Write-Log '두 탭 모두 카드가 0개입니다 — 우리 방이 맞는지, 격자를 읽었는지 보세요.' 'WARN'
+    Write-Log ("  기대한 방: '{0}'. 캡처는 {1} 에 있습니다." -f $Room, $ShotDir) 'WARN'
+    Write-Log '=== 끝 (빈 수집) ==='
+    exit 5
+}
+
 Write-Log '다음: python -m scripts.collect_drawer'
 Write-Log '=== 정상 종료 ==='
 exit 0

@@ -156,6 +156,77 @@ class EveryDrawerClickIsGuardedTests(unittest.TestCase):
         self.assertIn("누르지 않습니다", block)
 
 
+class TheRoomIsCheckedBeforeAnythingIsReadTests(unittest.TestCase):
+    """어느 방의 서랍인지 먼저 확인한다.
+
+    서랍 창은 방마다 따로 열리지 않는다 — 하나의 창이 왼쪽 목록에서 고른 방을
+    비출 뿐이다. 그래서 사람이 다른 방을 한 번 눌러 두면 그 뒤로는 매일 밤 남의
+    방을 훑는다. 실측 2026-08-29~31: '제6선교회' 가 골라져 있어 사흘 내리 두 탭
+    모두 카드 0개를 읽고 '정상 종료' 로 끝냈다. 로그도 화면도 조용했고 첨부는
+    14일 시계를 그냥 태웠다.
+
+    이 스크립트가 여태 확인하지 않던 단 하나의 전제였다.
+    """
+
+    RUN = (ROOT / "scripts" / "run_daily.ps1").read_text(encoding="utf-8")
+
+    def test_the_check_runs_before_the_tabs(self):
+        check = DRAWER.index("Assert-DrawerRoom)")
+        tabs = DRAWER.index("foreach ($tab in @(")
+        self.assertLess(check, tabs, "탭을 훑기 전에 방을 확인해야 한다")
+
+    def test_a_wrong_room_stops_the_run(self):
+        body = DRAWER[DRAWER.index("if (-not (Assert-DrawerRoom))"):]
+        body = body[:body.index("$totalClicked")]
+        self.assertIn("exit 4", body)
+        self.assertIn("Restore-Window", body)   # 창을 옮겨 둔 채로 끝내지 않는다
+
+    def test_it_tries_to_fix_itself_before_giving_up(self):
+        # 밤 자동 실행이다. 사람이 알아채기를 기다리는 동안에도 14일 시계는 돈다.
+        body = DRAWER[DRAWER.index("function Assert-DrawerRoom"):]
+        body = body[:body.index(chr(10) + "}")]
+        self.assertIn("Select-DrawerRoom", body)
+        self.assertEqual(2, body.count("Get-DrawerRoomName"),
+                         "고르기 전후로 두 번 읽어야 바로잡혔는지 알 수 있다")
+
+    def test_choosing_a_room_is_the_only_thing_clicked_in_the_list(self):
+        body = DRAWER[DRAWER.index("function Select-DrawerRoom"):]
+        body = body[:body.index(chr(10) + "}")]
+        self.assertIn("Invoke-Click $LIST_CLICK_X", body)
+        # 목록 클릭도 다른 클릭과 같은 안전장치를 지난다(그 픽셀이 서랍 소속인가)
+        self.assertNotIn("mouse_event", body)
+
+    def test_an_empty_sweep_is_not_reported_as_success(self):
+        # 서랍은 지난 것을 계속 보여준다. 두 탭 모두 0개면 '오늘 새 첨부가 없다' 가
+        # 아니라 잘못 보고 있다는 뜻이다. OCR 이 없는 PC 에서는 이 그물만 남는다.
+        body = DRAWER[DRAWER.index("if ($totalCards -eq 0)"):]
+        self.assertIn("exit 5", body[:600])
+        self.assertLess(DRAWER.index("$totalCards += "), DRAWER.index("if ($totalCards -eq 0)"))
+
+    def test_missing_ocr_does_not_block_collection(self):
+        # OCR 이 없다고 그날 수집을 통째로 버리면 손해가 더 크다 — 카드 수 그물이 남는다.
+        body = DRAWER[DRAWER.index("function Assert-DrawerRoom"):]
+        body = body[:body.index(chr(10) + "}")]
+        head = body[:body.index("Get-DrawerRoomName")]
+        self.assertIn("OcrReady", head)
+        self.assertIn("return $true", head)
+
+    def test_the_daily_run_tells_the_screen_which_way_it_failed(self):
+        # 로그에만 남으면 아무도 모른다 — 그것이 이 사고의 본체였다.
+        self.assertIn("$drawerExit -eq 4", self.RUN)
+        self.assertIn("$drawerExit -eq 5", self.RUN)
+        block = self.RUN[self.RUN.index("$drawerExit -eq 4"):]
+        self.assertIn("drawerWarn", block[:900])
+
+    def test_a_trailing_chevron_does_not_look_like_another_room(self):
+        # 머리글은 이름 뒤 화살표 단추까지 함께 읽힌다('새벽기도팀 ?되').
+        # 기대한 이름으로 시작하면 같은 방이고, 여기에는 길이 문턱을 두지 않는다.
+        body = DRAWER[DRAWER.index("function Test-SameRoom"):]
+        body = body[:body.index(chr(10) + "}")]
+        line = next(l for l in body.splitlines() if "$a.StartsWith($b)" in l)
+        self.assertNotIn("-ge 6", line, "짧은 방 이름('새벽기도팀')을 못 알아본다")
+
+
 class TheOldBehaviourStaysReachableTests(unittest.TestCase):
     """자동으로 여는 것이 말썽이면 끌 수 있어야 한다."""
 

@@ -248,6 +248,18 @@ try {
         Say '    서랍 창이 없고 열지도 못했습니다 — 카카오톡이 트레이에 있거나 잠겨 있는지 보세요.' 'WARN'
         $script:drawerWarn = '서랍 첨부 못 받음(창 없음)'
     }
+    elseif ($drawerExit -eq 4) {
+        # 서랍 창은 방마다 따로 열리지 않는다 — 하나의 창이 왼쪽 목록에서 고른 방을
+        # 비출 뿐이다. 사람이 다른 방을 눌러 두면 매일 밤 남의 방을 훑는다
+        # (실측 2026-08-29~31: '제6선교회' 로 사흘, 로그는 '정상 종료' 였다).
+        Say '    서랍이 우리 방을 보고 있지 않습니다 — 아무것도 받지 않았습니다.' 'WARN'
+        Say '    카카오톡 서랍 창 왼쪽 목록에서 그 방을 고르면 다음 실행이 이어갑니다.' 'WARN'
+        $script:drawerWarn = '서랍이 다른 방을 보고 있음'
+    }
+    elseif ($drawerExit -eq 5) {
+        Say '    서랍에서 카드를 하나도 읽지 못했습니다(두 탭 모두 0개).' 'WARN'
+        $script:drawerWarn = '서랍 첨부 0개 — 방·격자 확인 필요'
+    }
     elseif ($drawerExit -ne 0) {
         Say "    서랍 수집 실패 (exit $drawerExit) — 갱신은 계속합니다." 'WARN'
         $script:drawerWarn = "서랍 첨부 못 받음(exit $drawerExit)"
