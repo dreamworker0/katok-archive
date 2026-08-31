@@ -145,3 +145,30 @@ class ImageManifestTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VideosShareTheSameLedgerTests(unittest.TestCase):
+    """동영상도 사진과 같은 대장에 오른다.
+
+    화면·작은 사진·발행이 모두 이 대장을 거친다. 여기서 사진만 받으면 동영상은
+    원본을 받아 놔도 붙일 자리가 없다 — 실측 2026-08-31, 파일은 inbox 에 남고
+    화면에는 영영 안 나왔다.
+    """
+
+    def records(self):
+        result = parse_chat(
+            """--------------- 2026년 8월 31일 일요일 ---------------
+[A] [오전 9:16] 동영상
+[A] [오전 9:20] 사진
+"""
+        )
+        return build_image_records(result.messages)
+
+    def test_a_video_message_gets_a_row(self):
+        kinds = [r["media_kind"] for r in self.records()]
+        self.assertEqual(kinds, ["video", "image"])
+
+    def test_every_row_still_carries_an_image_id(self):
+        # build_site 는 messages 의 image_id 로 이 대장을 찾아간다.
+        self.assertTrue(all(r["image_id"] for r in self.records()))
+

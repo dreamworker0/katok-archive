@@ -173,7 +173,12 @@ def to_record(msg, number: int) -> dict:
         "text": msg.text,
         "urls": list(msg.urls),
         "kind": msg.kind,
-        "image_id": ("img-%06d" % number) if msg.kind == "image" else None,
+        # 동영상도 사진과 같은 자리를 쓴다. 화면(build_site)도, 작은 사진 만들기도,
+        # 발행도 이미 kind=="video" 를 다루는데 **여기서만** 사진으로 좁혀 놓아
+        # 동영상은 image_id 가 없고 images.jsonl 에 기록도 안 생겼다. 그래서 원본을
+        # 받아 놔도 붙일 자리가 없었다(실측 2026-08-31: msg-003098).
+        # kakao_parser 도 같은 규칙을 쓴다 — 같은 사실을 두 곳에서 다르게 적고 있었다.
+        "image_id": ("img-%06d" % number) if msg.kind in ("image", "video") else None,
         "image_count": msg.image_count if msg.kind == "image" else None,
         "source_line": msg.source_line,
         "is_file_share": msg.kind == "file",
@@ -182,12 +187,19 @@ def to_record(msg, number: int) -> dict:
 
 
 def image_stub(rec: dict) -> dict:
-    """새 사진 메시지는 '수집 대기' 상태로 images.jsonl 에 넣는다."""
+    """새 사진·동영상 메시지는 '수집 대기' 상태로 images.jsonl 에 넣는다.
+
+    media_kind 를 적어 두는 이유: 뒤 단계가 사진과 동영상을 갈라 다뤄야 한다.
+    작은 사진은 프레임을 뽑아야 하고(Pillow 는 mp4 를 못 읽는다), 원본이 놓일
+    자리도 assets/images 가 아니라 assets/videos 다. 확장자로도 갈릴 수 있지만
+    그건 **원본을 받은 뒤에야** 알 수 있다 — 대기 상태에서는 파일이 없다.
+    """
     return {
         "image_id": rec["image_id"],
         "message_id": rec["id"],
         "timestamp": rec["timestamp"],
         "nickname": rec["nickname"],
+        "media_kind": rec["kind"],
         "image_sequence": 1,
         "expected_asset_count": rec.get("image_count") or 1,
         "status": "pending",
@@ -343,7 +355,7 @@ def ingest(paths: list[Path], dry_run: bool, force_room: bool = False) -> dict:
         new_records = [to_record(m, start_no + i) for i, m in enumerate(new_msgs)]
         messages.extend(new_records)
         for rec in new_records:
-            if rec["kind"] == "image":
+            if rec["kind"] in ("image", "video"):
                 images.append(image_stub(rec))
 
         date_label = new_records[0]["date"]

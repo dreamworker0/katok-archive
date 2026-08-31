@@ -294,3 +294,37 @@ class SameRoomGuardTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VideoMessagesGetALedgerRowTest(unittest.TestCase):
+    """증분 반영도 동영상에 자리를 준다.
+
+    parser 는 image/video 둘 다에 image_id 를 매기는데 `to_record` 만
+    `kind == "image"` 로 좁아 있었다. 같은 사실을 두 곳에서 다르게 적으면
+    반드시 어긋난다 — 실측 2026-08-31 msg-003098.
+    """
+
+    def messages(self):
+        txt = export_text([
+            ("2026-08-31", [
+                ("오전", "9:16", "김종원", "동영상"),
+                ("오전", "9:20", "김종원", "사진"),
+                ("오전", "9:22", "김종원", "그냥 글"),
+            ]),
+        ])
+        parsed = parse_chat(txt)
+        return [inc.to_record(m, i + 1) for i, m in enumerate(parsed.messages)]
+
+    def test_video_and_photo_both_get_an_image_id(self):
+        recs = self.messages()
+        by_kind = {r["kind"]: r for r in recs}
+        self.assertEqual(by_kind["video"]["image_id"], "img-000001")
+        self.assertEqual(by_kind["image"]["image_id"], "img-000002")
+        self.assertIsNone(by_kind["text"]["image_id"])
+
+    def test_the_stub_says_which_kind_it_is(self):
+        video = next(r for r in self.messages() if r["kind"] == "video")
+        stub = inc.image_stub(video)
+        self.assertEqual(stub["media_kind"], "video")
+        self.assertEqual(stub["status"], "pending")
+

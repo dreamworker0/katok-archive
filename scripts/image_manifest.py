@@ -22,7 +22,9 @@ def build_image_records(messages: Iterable[Message]) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
 
     for message in messages:
-        if message.kind != "image":
+        # 동영상도 같은 대장에 올린다 — kakao_parser 가 image_id 를 매기는 기준과
+        # 같다. 여기서만 사진으로 좁혀 두면 동영상은 원본을 받아도 붙일 자리가 없다.
+        if message.kind not in ("image", "video"):
             continue
         key = (message.nickname, message.timestamp)
         sequences[key] += 1
@@ -32,6 +34,7 @@ def build_image_records(messages: Iterable[Message]) -> list[dict[str, object]]:
                 "message_id": message.id,
                 "timestamp": message.timestamp,
                 "nickname": message.nickname,
+                "media_kind": message.kind,
                 "image_sequence": sequences[key],
                 "expected_asset_count": message.image_count,
                 "status": "pending",

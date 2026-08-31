@@ -20,6 +20,33 @@ KAKAO_IMAGE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# 동영상도 사진과 **같은 파일명 규칙**을 쓴다 — 서랍에서 받은 실물로 확인했다
+# (2026-08-31, KakaoTalk_20260831_091607135.mp4). 그래서 시각을 읽는 코드는
+# 그대로 두고 확장자만 갈라 준다.
+PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
+MEDIA_EXTENSIONS = PHOTO_EXTENSIONS | VIDEO_EXTENSIONS
+
+
+def _is_video_file(path: Path) -> bool:
+    return path.suffix.lower() in VIDEO_EXTENSIONS
+
+
+def _is_video_record(record: dict[str, object]) -> bool:
+    """대장의 한 줄이 동영상인가.
+
+    media_kind 가 먼저다. 옛 기록에는 그 칸이 없어서(백필로 들어온 것들) 이미
+    받아 둔 원본의 경로로 되짚는다. 둘 다 없으면 사진으로 본다 — 대장의 절대다수가
+    사진이고, 잘못 보아도 대기 상태의 짝짓기에서만 갈릴 뿐이다.
+    """
+    if record.get("media_kind"):
+        return str(record["media_kind"]) == "video"
+    for asset in record.get("assets") or []:
+        local = str(asset.get("local_path") or "")
+        if "assets/videos/" in local.replace("\\", "/"):
+            return True
+    return False
+
 
 @dataclass(frozen=True)
 class ImageMatch:
@@ -61,6 +88,32 @@ def _file_digest(path: Path) -> str:
 
 
 def match_image_files(
+    records: list[dict[str, object]],
+    files: list[Path],
+) -> tuple[list[ImageMatch], list[UnresolvedImage]]:
+    """사진은 사진끼리, 동영상은 동영상끼리 짝지운다.
+
+    한 덩어리로 두면 같은 분에 사진과 동영상이 함께 있을 때 서로 엇갈린다 —
+    '기록 수 = 파일 수' 라는 이유만으로 mp4 가 사진 기록에 붙을 수 있다. 그러면
+    화면이 그 자리를 <img> 로 그리려다 깨진다. 종류를 먼저 갈라 두면 그 경로가
+    아예 없어진다.
+    """
+    photo_records = [r for r in records if not _is_video_record(r)]
+    video_records = [r for r in records if _is_video_record(r)]
+    photo_files = [f for f in files if not _is_video_file(f)]
+    video_files = [f for f in files if _is_video_file(f)]
+    if video_records or video_files:
+        photo_matches, photo_left = _match_one_kind(photo_records, photo_files)
+        video_matches, video_left = _match_one_kind(video_records, video_files)
+        matches = photo_matches + video_matches
+        unresolved = photo_left + video_left
+        matches.sort(key=lambda match: (match.captured_at, match.path.name))
+        unresolved.sort(key=lambda item: item.path.name)
+        return matches, unresolved
+    return _match_one_kind(records, files)
+
+
+def _match_one_kind(
     records: list[dict[str, object]],
     files: list[Path],
 ) -> tuple[list[ImageMatch], list[UnresolvedImage]]:
@@ -146,11 +199,7 @@ def import_image_files(
     workspace_root: Path,
 ) -> dict[str, object]:
     records = _read_manifest(manifest_path)
-    image_files = [
-        path
-        for path in files
-        if path.suffix.lower() in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
-    ]
+    image_files = [path for path in files if path.suffix.lower() in MEDIA_EXTENSIONS]
     matches, unresolved = match_image_files(records, image_files)
     record_by_id = {str(record["image_id"]): record for record in records}
     imported = 0
@@ -183,9 +232,13 @@ def import_image_files(
             relative_path = str(existing["local_path"])
         else:
             index = len(existing_assets) + 1
+            # 동영상은 assets/videos 로 간다. 발행·적재·화면이 모두 그 갈래를
+            # 전제한다(build_site 는 videos 를 <img> 에 섞지 않고, 업로드는
+            # videos/ 를 따로 훑는다).
+            folder = "videos" if _is_video_file(match.path) else "images"
             relative_path = (
                 Path("assets")
-                / "images"
+                / folder
                 / match.captured_at.strftime("%Y-%m")
                 / f"{record['message_id']}-{index:02d}{match.path.suffix.lower()}"
             ).as_posix()

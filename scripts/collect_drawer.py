@@ -27,15 +27,22 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from scripts.import_images import import_image_files
+from scripts.import_images import (
+    PHOTO_EXTENSIONS,
+    VIDEO_EXTENSIONS,
+    import_image_files,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 FILES_DIR = ROOT / "assets" / "files"
 IMAGES_MANIFEST = ROOT / "output" / "images.jsonl"
 INBOX = ROOT / "inbox" / "drawer"
 
-IMAGE_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
-VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+# 목록은 import_images 한 곳에서 가져온다. 두 벌로 두면 갈라지고, 갈라지면
+# 여기서 '동영상' 으로 골라 넘긴 것을 저쪽이 조용히 버린다 — 파일은 사라지지
+# 않지만 붙지도 않고, 아무도 그 사실을 못 듣는다.
+IMAGE_EXT = PHOTO_EXTENSIONS
+VIDEO_EXT = VIDEO_EXTENSIONS
 
 
 def _digest(path: Path) -> str:
@@ -182,19 +189,20 @@ def main() -> int:
     if added or existing:
         print("  문서: assets/files/ 에 %d개 추가, %d개는 이미 있었음" % (added, existing))
 
+    # 사진과 동영상을 **한 번에** 넘긴다. 짝짓기는 import_images 가 종류를 갈라
+    # 하므로(같은 분에 둘이 섞여도 엇갈리지 않는다) 여기서 나눠 부를 이유가 없다.
     imgs = [p for p, _ in moved if p.suffix.lower() in IMAGE_EXT]
-    if imgs and not args.dry_run:
-        result = import_image_files(IMAGES_MANIFEST, imgs, ROOT)
-        print("  사진: %d장 중 %d장을 메시지에 연결" % (len(imgs), result["imported"]))
-        for item in result["unresolved"]:
-            # 오늘 찍힌 사진은 아직 대화 기록에 없다 — 내보내기가 돈 다음 실행에서 붙는다.
-            print("    · 못 붙임: %s (%s)" % (Path(item["path"]).name, item["reason"]))
-    elif imgs:
-        print("  사진 %d장 (--dry-run: 연결하지 않음)" % len(imgs))
-
     videos = [p for p, _ in moved if p.suffix.lower() in VIDEO_EXT]
-    if videos:
-        print("  동영상 %d개는 inbox 에 두었습니다 — 붙이는 경로가 아직 없습니다" % len(videos))
+    media = imgs + videos
+    if media and not args.dry_run:
+        result = import_image_files(IMAGES_MANIFEST, media, ROOT)
+        print("  사진 %d장·동영상 %d개 중 %d개를 메시지에 연결"
+              % (len(imgs), len(videos), result["imported"]))
+        for item in result["unresolved"]:
+            # 오늘 찍힌 것은 아직 대화 기록에 없다 — 내보내기가 돈 다음 실행에서 붙는다.
+            print("    · 못 붙임: %s (%s)" % (Path(item["path"]).name, item["reason"]))
+    elif media:
+        print("  사진 %d장·동영상 %d개 (--dry-run: 연결하지 않음)" % (len(imgs), len(videos)))
 
     if args.dry_run:
         print("\n--dry-run: 아무것도 옮기지 않았습니다.")
