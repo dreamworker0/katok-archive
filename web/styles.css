@@ -410,6 +410,16 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .imgs img { width: 120px; height: 120px; object-fit: cover; border-radius: 10px; cursor: zoom-in;
   background: var(--surface-2); border: 1px solid var(--line); }
 .imgs.single img { width: auto; max-width: 260px; height: auto; max-height: 280px; }
+/* 동영상 칸. 갤러리와 같은 모양이어야 같은 것으로 읽힌다 — 칸에는 포스터, 그
+   위에 재생 표시. 본문 사이(.imgs)와 내 글 목록(.mine-thumbs)이 같이 쓴다:
+   한쪽에만 표시가 있으면 다른 쪽에서는 포스터를 사진으로 읽는다. 표시는 클릭을
+   가로채지 않는다(아래 <img> 가 라이트박스를 연다). */
+.im-video { position: relative; display: inline-flex; line-height: 0; }
+.im-video .play {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font-size: 1.5rem; color: #fff; text-shadow: 0 1px 6px rgba(0,0,0,.6);
+  background: rgba(0,0,0,.18); border-radius: 10px; pointer-events: none;
+}
 .img-pending { display: inline-flex; align-items: center; gap: 6px; background: var(--surface-2);
   border: 1px dashed var(--line-strong); border-radius: 9px; padding: 9px 12px; color: var(--ink-faint); font-size: 13px; }
 /* 개인정보가 찍혀 발행에서 뺀 사진의 자리. 사진 칸과 같은 크기로 두어
@@ -743,9 +753,10 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .mine-list { max-height: 460px; overflow-y: auto; border: 1px solid var(--line);
   border-radius: 10px; }
 /* 사진·첨부 줄은 내용이 들어가 높이가 다르다 */
-.mine-row.mine-image, .mine-row.mine-file { align-items: center; }
+.mine-row.mine-image, .mine-row.mine-video, .mine-row.mine-file { align-items: center; }
 /* 이 줄에서는 잘라내지 않는다 — 무엇인지 보여야 지울지 정한다 */
-.mine-row.mine-image .mine-text, .mine-row.mine-file .mine-text {
+.mine-row.mine-image .mine-text, .mine-row.mine-video .mine-text,
+.mine-row.mine-file .mine-text {
   overflow: visible; white-space: normal; text-overflow: clip; }
 
 .mine-thumbs { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }

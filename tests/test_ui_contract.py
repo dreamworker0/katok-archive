@@ -618,6 +618,89 @@ class UiJavascriptContractTests(unittest.TestCase):
         self.assertNotIn("'<button class=\"icon-btn\" id=\"signOutTop\"", self.app)
 
 
+class InlineVideoContractTests(unittest.TestCase):
+    """본문 사이의 자리표는 동영상도 그려야 한다.
+
+    실측 2026-08-31 t-426: `mediaHtml` 이 `image` 와 `file` 만 그려서, 동영상
+    한 편짜리 주제는 "이 주제에서 함께 공유된 자료" 라는 제목만 뜨고 아래가
+    비었다. 갤러리는 같은 동영상을 잘 그리고 있었다 — 두 곳이 같은 자료를
+    다르게 알고 있던 것이다.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = front_end_js()
+        cls.css = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
+        start = cls.app.index("function mediaHtml(")
+        cls.fn = cls.app[start:cls.app.index("\n  }", start)]
+
+    def test_media_html_draws_videos(self):
+        self.assertIn('m.kind === "video"', self.fn,
+                      "본문 사이 자료 그리기가 동영상을 모릅니다")
+        self.assertIn("m.videos", self.fn)
+
+    def test_video_cell_opens_the_player_not_the_image_viewer(self):
+        # 라이트박스는 data-video 를 보고 <video> 로 연다. 이 표시가 없으면
+        # 16MB 짜리 mp4 를 <img> 에 넣으려다 빈 칸이 된다.
+        self.assertIn('data-video="1"', self.fn)
+
+    def test_video_poster_is_not_the_original(self):
+        # 목록을 훑기만 해도 원본이 내려오면 안 된다 — 칸에는 포스터,
+        # 원본은 눌렀을 때(data-full).
+        self.assertIn("m.thumbs", self.fn)
+
+    def test_play_badge_has_a_style_of_its_own(self):
+        self.assertIn(".im-video {", self.css,
+                      "재생 표시에 자리가 없으면 포스터 위에 얹히지 않습니다")
+        self.assertIn("pointer-events: none", self.css)
+
+
+class MyVideoContractTests(unittest.TestCase):
+    """내 동영상도 골라서 내릴 수 있어야 한다.
+
+    `mineKind` 가 동영상을 몰라 '글' 로 떨어졌고, 내 동영상은 "동영상" 이라는
+    글 한 줄로 보였다. 무엇을 지울지 고르려면 봐야 하는데 볼 것이 없었다.
+    통계 쪽은 더 나빴다 — 동영상을 **첨부로** 세어 '올린 파일' 칸이 있지도
+    않은 파일을 셌다.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = front_end_js()
+        cls.css = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
+
+    def test_mine_kind_knows_video(self):
+        block = self.app[self.app.index("function mineKind("):]
+        block = block[:block.index("\n  }")]
+        self.assertIn('m.kind === "video"', block)
+        self.assertIn('return "video"', block)
+
+    def test_my_video_row_shows_a_poster_that_plays(self):
+        block = self.app[self.app.index("function mineRow("):]
+        block = block[:block.index("\n  }\n\n  function renderMine")]
+        self.assertIn('kind === "video"', block)
+        self.assertIn("m.videos", block)
+        # .mine-thumb 에 걸린 클릭이 라이트박스를 연다 — data-video 가 있어야
+        # <img> 가 아니라 <video> 로 열린다.
+        self.assertIn("mine-thumb", block)
+        self.assertIn('data-video="1"', block)
+
+    def test_the_kind_tally_has_a_slot_for_video(self):
+        # 없으면 counts[mineKind(m)]++ 가 NaN 이 되어 머리글의 숫자가 사라진다.
+        self.assertIn("{ text: 0, image: 0, video: 0, file: 0 }", self.app)
+
+    def test_footprint_does_not_count_videos_as_files(self):
+        block = self.app[self.app.index("function myFootprint("):]
+        block = block[:block.index("\n  }")]
+        self.assertIn('m.kind === "video"', block,
+                      "'올린 파일' 칸이 동영상을 파일로 셉니다")
+
+    def test_play_badge_is_shared_by_both_views(self):
+        # 한쪽에만 표시가 있으면 다른 쪽에서는 포스터를 사진으로 읽는다.
+        self.assertIn(".im-video .play", self.css)
+        self.assertNotIn(".imgs .im-video", self.css)
+
+
 class MobileDensityContractTests(unittest.TestCase):
     """모바일에서 첫 화면이 읽을 만한 길이로 유지되는지.
 

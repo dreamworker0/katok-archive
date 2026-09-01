@@ -221,6 +221,14 @@ def tag_rules(vocabulary: list[str] | None = None, kinds: int | None = None,
 {words}""")
 
 
+# 자리표를 받을 수 있는 메시지 종류. 동영상이 빠져 있던 동안, 본문이 짚어 둔
+# 동영상 자리표는 `sanitize_anchors` 가 '이 대화에 없는 자료' 로 보아 지웠고
+# `_is_media_message` 는 대신 놓아 주지도 않았다 — 화면에는 "이 주제에서 함께
+# 공유된 자료" 라는 제목만 남고 아래가 비었다(2026-08-31 t-426 실측).
+# 한 곳에 적는다. 두 곳에 적으면 갈라지고, 갈라진 것이 이 고장이었다.
+MEDIA_KINDS = frozenset({"image", "video", "file"})
+
+
 def sanitize_anchors(body: str, messages: list[dict]) -> tuple[str, list[str]]:
     """본문의 자리표를 검증한다. (고친 본문, 버린 자리표 목록)
 
@@ -236,7 +244,7 @@ def sanitize_anchors(body: str, messages: list[dict]) -> tuple[str, list[str]]:
         mid = str(m.get("id") or "")
         if not mid:
             continue
-        if (m.get("kind") in {"image", "file"} or m.get("images")
+        if (m.get("kind") in MEDIA_KINDS or m.get("images") or m.get("videos")
                 or m.get("file") or m.get("is_file_share")):
             media_ok.add(mid)
         if m.get("urls"):
@@ -489,9 +497,10 @@ def _best_context_block(text: str, blocks: list[dict]) -> tuple[int, float] | No
 def _is_media_message(message: dict) -> bool:
     return bool(
         message.get("images")
+        or message.get("videos")
         or message.get("file")
         or message.get("is_file_share")
-        or message.get("kind") in {"image", "file"}
+        or message.get("kind") in MEDIA_KINDS
     )
 
 

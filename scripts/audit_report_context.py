@@ -96,6 +96,7 @@ def audit_exit_code(result: dict) -> int:
 
 def _load_archive() -> tuple[list[dict], list[dict], set[str]]:
     from scripts import build_site
+    from scripts.topic_reports import MEDIA_KINDS
 
     root = Path(__file__).resolve().parent.parent
     output = root / "output"
@@ -117,7 +118,7 @@ def _load_archive() -> tuple[list[dict], list[dict], set[str]]:
         message["id"]
         for message in data["messages"]
         if (
-            message.get("kind") in {"image", "file"}
+            message.get("kind") in MEDIA_KINDS
             or message.get("file")
             or message.get("is_file_share")
         )

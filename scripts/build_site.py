@@ -24,6 +24,7 @@ from scripts import ontology
 from scripts import pii
 from scripts import tags as taglib
 from scripts.topic_reports import (
+    MEDIA_KINDS,
     apply_ai_reports,
     apply_reports,
     content_chars,
@@ -369,7 +370,9 @@ def enrich_threads(threads: list[dict], messages: list[dict]) -> list[dict]:
                         "date": m["date"],
                         "time": m.get("time") or "",
                     })
-            if m.get("images") or m.get("file"):
+            # 동영상도 이 주제가 가진 자료다. 빼고 세면 카드의 자료 수가 0이라
+            # 말하면서 아래에는 동영상이 붙는, 서로 어긋난 화면이 된다.
+            if m.get("images") or m.get("videos") or m.get("file"):
                 media += 1
         nt = {k: v for k, v in t.items() if k != "message_ids"}
         if nt.get("report"):
@@ -570,6 +573,7 @@ def build_data(
             "last_timestamp": p.get("last_timestamp"),
             "text": 0,
             "image": 0,
+            "video": 0,
             "file": 0,
         }
     month_counter: Counter[str] = Counter()
@@ -582,9 +586,12 @@ def build_data(
             row = per_nick.setdefault(
                 m["nickname"],
                 {"nickname": m["nickname"], "message_count": 0, "first_timestamp": None,
-                 "last_timestamp": None, "text": 0, "image": 0, "file": 0},
+                 "last_timestamp": None, "text": 0, "image": 0, "video": 0, "file": 0},
             )
-        if m["kind"] in ("text", "image", "file"):
+        # 종류별 합이 message_count 와 맞아야 한다. 동영상이 빠져 있던 동안
+        # 사람별 합계가 남긴 글 수보다 조용히 적었다 — 어디로 샜는지 알 수 없는
+        # 종류의 어긋남이다.
+        if m["kind"] in ("text", "image", "video", "file"):
             row[m["kind"]] += 1
 
     participant_stats = sorted(
@@ -727,7 +734,7 @@ def build_data(
         if not tid:
             continue
         msgs_by_thread[tid].append(m)
-        if m.get("kind") in ("image", "file") or m.get("is_file_share"):
+        if m.get("kind") in MEDIA_KINDS or m.get("is_file_share"):
             asset_count[tid] += 1
         asset_count[tid] += len(m.get("urls") or [])
     gaps = structure_gaps([

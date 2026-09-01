@@ -417,5 +417,38 @@ class FileShareExpiryTest(unittest.TestCase):
         self.assertFalse(out["msg-2"]["file_expired"])
 
 
+class VideoCountsAsThreadMaterialTests(unittest.TestCase):
+    """스레드의 자료 수가 동영상을 세지 않으면 화면이 스스로 어긋난다.
+
+    실측 2026-08-31 t-426: 동영상 한 편이 붙은 주제인데 `media_count` 가 0으로
+    발행됐다. 자료가 0이라고 말하면서 아래에는 자료 상자를 여는 화면이 된다.
+    """
+
+    def test_video_message_raises_media_count(self):
+        threads = [{"id": "t-1", "report": ""}]
+        messages = [{"id": "msg-1", "thread_id": "t-1", "nickname": "김종원",
+                     "date": "2026-08-31", "time": "09:16", "kind": "video",
+                     "videos": ["assets/videos/2026-08/msg-1-01.mp4"],
+                     "images": []}]
+        out = build_site.enrich_threads(threads, messages)
+        self.assertEqual(out[0]["media_count"], 1)
+
+
+class ParticipantKindTallyTests(unittest.TestCase):
+    """사람별 종류 합계는 남긴 글 수와 맞아야 한다."""
+
+    @needs_real_data
+    def test_kind_tally_matches_message_count(self):
+        data = build_site.build_data(*_load())
+        for p in data["stats"]["participants"]:
+            with self.subTest(nickname=p["nickname"]):
+                self.assertEqual(
+                    p["text"] + p["image"] + p["video"] + p["file"],
+                    p["message_count"],
+                    "종류별 합이 글 수와 다릅니다 — 어느 종류가 빠졌는지 "
+                    "화면에서는 보이지 않습니다",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

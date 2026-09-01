@@ -126,6 +126,35 @@ class ShortReportAssetTests(unittest.TestCase):
         self.assertEqual(out.count("![[msg-000004]]"), 1, out)
 
 
+class VideoIsMaterialTests(unittest.TestCase):
+    """동영상도 사진·첨부와 똑같은 '자료' 다.
+
+    실측 2026-08-31 t-426: 동영상 하나가 붙은 주제에서 화면에 "이 주제에서 함께
+    공유된 자료" 라는 제목만 뜨고 아래가 비었다. 자료 판정이 `{"image","file"}`
+    로 되어 있어 (1) 자리표를 자동으로 놓지 않았고 (2) 본문이 짚어 둔 자리표는
+    `sanitize_anchors` 가 '이 대화에 없는 자료' 로 보아 지웠다. 두 곳이 같은
+    기준을 따로 적고 있었다.
+    """
+
+    def test_video_message_gets_an_anchor(self):
+        body = "김종원이 상담 보조 도구를 영상으로 공유했다."
+        msgs = [{"id": "msg-003098", "kind": "video", "text": "동영상",
+                 "nickname": "김종원"}]
+        self.assertIn("![[msg-003098]]", tr.place_context_anchors(body, msgs))
+
+    def test_hand_written_video_anchor_survives(self):
+        body = "영상으로 공유했다.\n\n![[msg-003098]]\n\n반응이 좋았다."
+        msgs = [{"id": "msg-003098", "kind": "video", "text": "동영상",
+                 "nickname": "김종원"}]
+        out, dropped = tr.sanitize_anchors(body, msgs)
+        self.assertIn("![[msg-003098]]", out)
+        self.assertEqual(dropped, [])
+
+    def test_one_place_says_what_counts_as_material(self):
+        # 종류 목록이 두 벌이 되면 다시 갈라진다. 갈라진 것이 이 고장이었다.
+        self.assertEqual(tr.MEDIA_KINDS, frozenset({"image", "video", "file"}))
+
+
 class StructureCheckTests(unittest.TestCase):
     def test_long_prose_without_quote_or_section_is_caught(self):
         gaps = tr.structure_gaps([

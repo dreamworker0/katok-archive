@@ -892,7 +892,18 @@
   function mediaHtml(rows, inline) {
     var imgs = [], files = [];
     rows.forEach(function (m) {
-      if (m.kind === "image" && m.images) {
+      /* 동영상. 칸에는 포스터만 걸고 원본은 눌러서 받는다 — 보고서를 펼치기만
+       * 해도 16MB 가 내려오면 안 된다. 라이트박스가 data-video 를 보고 <video>
+       * 로 연다(갤러리와 같은 길). 이 가지가 없던 동안 동영상은 자리표를 채우지
+       * 못해 제목만 남고 아래가 비었다(2026-08-31 t-426). */
+      if (m.kind === "video" && m.videos) {
+        var vth = m.thumbs || [];
+        m.videos.forEach(function (src, i) {
+          imgs.push('<span class="im-video"><img data-img="' + esc(vth[i] || src) +
+            '" data-full="' + esc(src) + '" data-video="1" alt="" title="' +
+            esc(m.nickname + " · " + m.date) + '" /><span class="play">▶</span></span>');
+        });
+      } else if (m.kind === "image" && m.images) {
         var th = m.thumbs || m.images;
         m.images.forEach(function (src, i) {
           // 칸에는 작은 사진, 누르면 원본(data-full)
@@ -924,8 +935,11 @@
     var cap = "";
     if (inline && imgs.length) {
       var m0 = rows[0];
-      cap = '<div class="mi-cap">🖼 ' + esc(m0.nickname) + " · " + esc(m0.date) +
-        " " + esc(m0.time || "") + (imgs.length > 1 ? " · " + imgs.length + "장" : "") + "</div>";
+      // 동영상을 '사진 1장' 이라고 적으면 글이 화면과 다른 말을 한다.
+      var vid = m0.kind === "video";
+      cap = '<div class="mi-cap">' + (vid ? "🎬 " : "🖼 ") + esc(m0.nickname) + " · " +
+        esc(m0.date) + " " + esc(m0.time || "") +
+        (imgs.length > 1 ? " · " + imgs.length + (vid ? "편" : "장") : "") + "</div>";
     }
     return (imgs.length ? '<div class="imgs' + (inline && imgs.length === 1 ? " single" : "") + '">' +
         imgs.join("") + "</div>" + cap : "") +
@@ -1393,10 +1407,13 @@
     THREADS.forEach(function (t) {
       (t.links || []).forEach(function (l) { if (mine(l.nickname)) links++; });
     });
-    var photos = 0, files = 0;
+    /* 동영상을 파일로 세면 안 된다 — '올린 파일' 칸이 있지도 않은 첨부를
+     * 세고 '올린 사진' 은 실제보다 적어진다. 셋을 갈라 센다. */
+    var photos = 0, videos = 0, files = 0;
     MEDIA.forEach(function (m) {
       if (!mine(m.nickname)) return;
       if (m.kind === "image") photos += (m.images ? m.images.length : m.count || 1);
+      else if (m.kind === "video") videos += (m.videos ? m.videos.length : m.count || 1);
       else files++;
     });
 
@@ -1407,7 +1424,8 @@
 
     return { names: names, msgs: msgs, joined: joined.length, total: THREADS.length,
              cats: cats, mates: Object.keys(mates).length,
-             links: links, photos: photos, files: files, first: first, last: last };
+             links: links, photos: photos, videos: videos, files: files,
+             first: first, last: last };
   }
 
   /** 숫자에서 읽히는 것만 적는다. 근거 없는 칭찬은 넣지 않는다. */
@@ -1430,8 +1448,8 @@
       out.push("자료 링크를 <b>" + f.links + "건</b> 나누셨습니다. 혼자 찾은 것을 " +
         "그때그때 꺼내 놓으신 기록입니다.");
     }
-    if (f.photos + f.files >= 10) {
-      out.push("사진과 파일을 <b>" + (f.photos + f.files) + "개</b> 올리셨습니다. " +
+    if (f.photos + f.videos + f.files >= 10) {
+      out.push("사진과 파일을 <b>" + (f.photos + f.videos + f.files) + "개</b> 올리셨습니다. " +
         "말로만 하지 않고 결과물을 보여 주셨습니다.");
     }
     if (f.mates >= 10) {
@@ -1459,6 +1477,9 @@
       numCell(f.msgs, "남긴 메시지") +
       numCell(f.links, "나눈 링크") +
       numCell(f.photos, "올린 사진") +
+      // 동영상 칸은 올린 사람에게만 뜬다. 대부분 0인 칸을 모두에게 두면
+      // 숫자가 아니라 빈자리를 늘어놓는 것이 된다.
+      (f.videos ? numCell(f.videos, "올린 동영상") : "") +
       numCell(f.files, "올린 파일") +
       numCell(f.mates, "함께한 사람") +
       "</div>" +
@@ -1550,7 +1571,7 @@
 
   function myTraits(items) {
     var t = {
-      total: items.length, text: 0, image: 0, file: 0, urls: 0, chars: 0, shots: 0,
+      total: items.length, text: 0, image: 0, video: 0, file: 0, urls: 0, chars: 0, shots: 0,
       long: 0, ask: 0, warm: 0, praise: 0, laugh: 0, guide: 0, mention: 0,
       weekend: 0, slots: [], months: {}, days: {}, cats: {}, terms: [],
       opened: 0, myIds: {},
@@ -2023,9 +2044,13 @@
     return !!(state.session && state.session.requests && myNicknames().length);
   }
 
-  /** 항목 종류 — 사진·첨부를 글과 섞어 두면 찾기 어렵다. */
+  /** 항목 종류 — 사진·동영상·첨부를 글과 섞어 두면 찾기 어렵다.
+   *
+   * 동영상이 없던 동안 내 동영상은 "동영상" 이라는 **글 한 줄**로 보였다.
+   * 무엇을 지울지 고르려면 봐야 하는데, 볼 것이 없으니 고를 수가 없었다. */
   function mineKind(m) {
     if (m.kind === "image") return "image";
+    if (m.kind === "video") return "video";
     if (m.is_file_share) return "file";
     return "text";
   }
@@ -2054,6 +2079,21 @@
           " (개인정보가 있어 발행하지 않았습니다)</span>"
         : '<span class="mine-muted">🖼 사진' +
           (m.image_count > 1 ? " " + m.image_count + "장" : "") +
+          // 유실은 기다려도 오지 않는다. 대기라고 쓰면 언젠가 채워질 것처럼 읽힌다.
+          (m.image_lost ? " (원본 없음)" : " (수집 대기)") + "</span>";
+    } else if (kind === "video") {
+      // 사진과 같은 자리·같은 조작. 칸에는 포스터를 걸고 누르면 재생한다
+      // (openLightbox 가 data-video 를 보고 <video> 로 연다).
+      body = m.videos && m.videos.length
+        ? '<span class="mine-thumbs">' +
+          m.videos.map(function (src, i) {
+            var th = (m.thumbs || [])[i] || src;
+            return '<span class="im-video"><img class="mine-thumb" data-img="' + esc(th) +
+              '" data-full="' + esc(src) + '" data-video="1"' +
+              ' alt="" title="클릭하면 재생합니다" /><span class="play">▶</span></span>';
+          }).join("") +
+          '<span class="mine-zoom">클릭하면 재생</span></span>'
+        : '<span class="mine-muted">🎬 동영상' +
           // 유실은 기다려도 오지 않는다. 대기라고 쓰면 언젠가 채워질 것처럼 읽힌다.
           (m.image_lost ? " (원본 없음)" : " (수집 대기)") + "</span>";
     } else if (kind === "file") {
@@ -2112,7 +2152,7 @@
 
     var names = myNicknames();
     var all = myMessages();
-    var counts = { text: 0, image: 0, file: 0 };
+    var counts = { text: 0, image: 0, video: 0, file: 0 };
     all.forEach(function (m) { counts[mineKind(m)]++; });
     var filter = state.mineKind || "all";
     var rows = filter === "all"
@@ -2136,7 +2176,9 @@
       '<section class="mine">' +
       '<h2 class="mine-title">내 글 관리</h2>' +
       '<p class="mine-sub">대화방 표시명 <b>' + esc(names.join(", ")) + "</b> 으로 남긴 " +
-      "글 " + counts.text + " · 사진 " + counts.image + " · 첨부 " + counts.file + "개입니다." +
+      "글 " + counts.text + " · 사진 " + counts.image +
+      (counts.video ? " · 동영상 " + counts.video : "") +
+      " · 첨부 " + counts.file + "개입니다." +
       (names.length > 1 ? " (이름을 바꾸신 이력이 있어 여러 개가 묶여 있습니다.)" : "") +
       "</p>" +
 
@@ -2185,8 +2227,12 @@
           "고를 수 있습니다. 사진은 눌러서 크게 보고, 첨부는 열어본 뒤 정하세요. " +
           "발행본에서 빠지며, 되돌리려면 관리자에게 요청해야 합니다.</p>") +
       '<div class="mine-tabs">' +
+      // 동영상 탭은 올린 사람에게만 뜬다. 늘 0인 탭을 모두에게 두면 눌러 보고서야
+      // 없다는 것을 알게 되고, 그런 탭이 대부분이다.
       [["all", "전체", all.length], ["text", "글", counts.text],
-       ["image", "사진", counts.image], ["file", "첨부", counts.file]]
+       ["image", "사진", counts.image]]
+        .concat(counts.video ? [["video", "동영상", counts.video]] : [])
+        .concat([["file", "첨부", counts.file]])
         .map(function (k) {
           return '<button class="mine-tab' + (filter === k[0] ? " on" : "") +
             '" data-kind="' + k[0] + '">' + k[1] + " " + k[2] + "</button>";
