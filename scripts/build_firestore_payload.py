@@ -153,6 +153,9 @@ MY_MESSAGES_LIMIT = 700_000   # Firestore 문서 1MiB 한도 아래로 여유
 # 그때 원인을 찾기 어려우므로 미리 알린다. 요약을 서술형으로 늘리면서
 # 스레드 문서가 한 번에 10배 가까이 커진 적이 있다.
 BUNDLE_LIMIT = 700_000
+# 업로더가 나눠 담을 때 자르는 크기(upload_firestore.js CHUNK_BYTES). 여기서는
+# '몇 문서가 되는지' 를 알려 주는 데만 쓴다.
+CHUNK_BYTES = 600 * 1024
 
 
 def build_my_messages(messages: list[dict], members: list[dict]) -> dict[str, list[dict]]:
@@ -517,14 +520,20 @@ def main() -> None:
     if payload["my_messages"]:
         print("내 글 문서 %d명분 (최대 %dKB)"
               % (len(big), max(s for _, s in big) // 1024))
-    for name in ("threads", "media"):
-        size = len(json.dumps({"items": payload[name]},
-                              ensure_ascii=False).encode("utf-8"))
-        if size > BUNDLE_LIMIT:
-            print("[주의] %s/all 문서가 %dKB — Firestore 1MiB 한도에 근접합니다. "
-                  "나눠 담아야 합니다." % (name, size // 1024))
-        else:
-            print("%s/all %dKB" % (name, size // 1024))
+    # threads 는 나눠 담는다(2026-09-02). 총량이 한도를 넘는 것은 이제 고장이
+    # 아니므로 '나눠 담아야 한다' 고 말하지 않는다 — 이미 그러고 있다. 대신 몇
+    # 문서로 갈라지는지 적는다. 문서 수가 곧 모두의 첫 화면 읽기 수다.
+    size = len(json.dumps({"items": payload["threads"]},
+                          ensure_ascii=False).encode("utf-8"))
+    print("threads %dKB (%d문서로 나눠 담김)"
+          % (size // 1024, -(-size // CHUNK_BYTES)))
+    size = len(json.dumps({"items": payload["media"]},
+                          ensure_ascii=False).encode("utf-8"))
+    if size > BUNDLE_LIMIT:
+        print("[주의] media/all 문서가 %dKB — Firestore 1MiB 한도에 근접합니다. "
+              "나눠 담아야 합니다." % (size // 1024))
+    else:
+        print("media/all %dKB" % (size // 1024))
     hidden_shots = sum(m.get("pii_hidden") or 0 for m in payload["media"])
     if hidden_shots:
         print("개인정보가 찍힌 사진 %d장 발행 제외 (업로드 목록에서도 뺐습니다)"

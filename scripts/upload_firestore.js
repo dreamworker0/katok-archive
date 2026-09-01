@@ -378,6 +378,13 @@ async function main() {
   const media = readPayload("media.json");
   const mine = readPayload("my-messages.json");
   const threads = readPayload("threads.json");
+  /* 스레드 요약이 멤버가 보는 본문이다. 한 문서(threads/all)로 발행하다가
+   * 2026-09-01 밤 갱신이 여기서 멈췄다 — 주제가 396→400 개로 늘며 702,851 바이트가
+   * 되어 안전선(700KB)을 2,851 바이트 넘었다. 절반 이상이 보고서 본문이고, 주제는
+   * 줄어들 리 없으므로 고쳐도 다시 닿는다. AI 검증 주석과 같은 길로 보낸다 —
+   * 크기로 나눠 담는다. 화면(boot.js)은 이미 컬렉션 전체를 훑어 이어 붙이고 id 로
+   * 정렬하므로 손댈 것이 없다. 읽기는 문서 수만큼 는다(1→2). */
+  const threadDocs = chunkDocs(threads);
   const aiReports = readPayload("ai-reports.json");
   // AI 검증 주석은 계속 늘어난다. 한 문서에 다 담으면 Firestore 1MiB 한도에
   // 닿는다(실측 2026-08-27: 363편을 더 쓰면 1,129KB). 화면(boot.js)은 이미
@@ -400,9 +407,11 @@ async function main() {
     : !prevState ? "대장 없음·읽을 수 없음"
     : "마지막 전량 동기화가 " + FULL_EVERY_DAYS + "일 지남";
 
-  const docCount = 1 + 1 + 1 + 1 + digestDocs.length + 2;   // meta·threads·aiReports·media·digests·graph
+  // 나눠 담은 컬렉션은 문서 수를 그대로 센다 — '읽기 N회' 가 실제와 달라지면
+  // 이 줄을 보고 판단할 수가 없다.
+  const docCount = 1 + threadDocs.length + aiDocs.length + 1 + digestDocs.length + 2;
   console.log("적재 계획 (문서 수)");
-  console.log(`  meta 1 / threads 1 (${threads.length}건 묶음) / aiReports ${aiDocs.length}문서 (${aiReports.length}편) / media 1 (${media.length}건 묶음)`);
+  console.log(`  meta 1 / threads ${threadDocs.length}문서 (${threads.length}건) / aiReports ${aiDocs.length}문서 (${aiReports.length}편) / media 1 (${media.length}건 묶음)`);
   console.log(`  digests ${digestDocs.length} / graph 2`);
   console.log(`  members ${members.length}명 — 적재하지 않음 (Firestore 가 주인)`);
   console.log(`  myMessages ${mineDocs.length}명분 (본인만 읽음)`);
@@ -416,7 +425,7 @@ async function main() {
   } else {
     // 대장과 견줘 실제로 몇 건이 바뀌는지 미리 알려 준다 (dry-run 의 값어치)
     const changed =
-      planWrites(prevState.collections.threads, [{ id: "all", items: threads }]).writes.length +
+      planWrites(prevState.collections.threads, threadDocs).writes.length +
       planWrites(prevState.collections.aiReports, aiDocs).writes.length +
       planWrites(prevState.collections.media, [{ id: "all", items: media }]).writes.length +
       planWrites(prevState.collections.myMessages, mineDocs).writes.length +
@@ -450,9 +459,10 @@ async function main() {
 
   // meta 의 updatedAt 은 매번 달라진다. 마지막 발행 시각을 남기는 자리라 그대로 둔다 (1건).
   await sync("meta", [{ id: "archive", ...meta, updatedAt: new Date().toISOString() }]);
-  // 스레드 요약이 멤버가 보는 본문이다. 165건이지만 합쳐 83KB뿐이라 한 문서로
-  // 발행한다 — 개별 문서로 두면 전체 로드에 165회 읽기가 추가된다.
-  await sync("threads", [{ id: "all", items: threads }]);
+  // 주제 하나에 문서 하나씩 두지는 않는다 — 그러면 전체 로드에 400회 읽기가
+  // 붙는다. 한 문서도 더는 안 된다(위 threadDocs 참고). 그 사이가 여기다.
+  // 예전 threads/all 문서는 sync 가 '새 목록에 없는 문서' 로 보고 지운다.
+  await sync("threads", threadDocs);
   await sync("aiReports", aiDocs);
   await sync("media", [{ id: "all", items: media }]);
   await sync("myMessages", mineDocs);

@@ -48,8 +48,11 @@ class PayloadShapeTest(unittest.TestCase):
             self.assertNotIn(text, published, "원문이 발행본에 남았다: " + text[:40])
 
     def test_published_docs_are_well_under_firestore_limit(self):
-        """스레드·미디어는 한 문서로 묶어 발행한다. 1MiB 한도를 지켜야 한다."""
-        for name in ("threads", "media"):
+        """미디어는 한 문서로 묶어 발행한다. 1MiB 한도를 지켜야 한다.
+
+        스레드는 2026-09-02 부터 나눠 담는다 — 아래 분할 검사가 맡는다.
+        """
+        for name in ("media",):
             size = len(json.dumps({"items": self.payload[name]},
                                   ensure_ascii=False).encode("utf-8"))
             self.assertLess(size, 700_000, "%s 가 너무 큼: %d bytes" % (name, size))
@@ -97,17 +100,44 @@ class PayloadShapeTest(unittest.TestCase):
     def test_bulk_docs_fit_in_one_document(self):
         """스레드·그래프는 한 문서로 묶어 발행한다(읽기 절약). 1MiB 한도 확인."""
         for name, obj in (
-            ("threads/all", {"items": self.payload["threads"]}),
-            # aiReports 는 크기 기준으로 나눠 담긴다(upload_firestore.chunkDocs).
-            # 여기서는 payload 전체가 한 문서에 들어갈 만한지가 아니라, **나눠
-            # 담기 전 원본이 터무니없이 크지 않은지**만 본다. 실제 문서 크기는
-            # 업로더가 600KB 로 잘라 보장한다.
+            # threads·aiReports 는 크기 기준으로 나눠 담긴다
+            # (upload_firestore.chunkDocs). 실제 문서 크기는 업로더가 600KB 로
+            # 잘라 보장하므로, 여기서 원본 전체를 재면 늘 때마다 거짓으로 걸린다
+            # — 2026-09-01 밤 갱신이 정확히 그렇게 멈췄다. 대신 아래
+            # `test_chunked_collections_split_into_documents_that_fit` 가 본다.
             ("media/all", {"items": self.payload["media"]}),
             ("graph/nodes", {"items": self.payload["graph"]["nodes"]}),
             ("graph/edges", {"items": self.payload["graph"]["edges"]}),
         ):
             size = len(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
             self.assertLess(size, 700_000, "%s 가 너무 큼: %d bytes" % (name, size))
+
+    # 업로더의 자르는 크기(upload_firestore.js CHUNK_BYTES). 두 벌로 적으면
+    # 갈라지므로 값이 바뀌면 이 검사가 먼저 틀려야 한다.
+    CHUNK_BYTES = 600 * 1024
+
+    def test_chunked_collections_split_into_documents_that_fit(self):
+        """나눠 담는 컬렉션은 **항목 하나**가 한도를 넘지 않아야 한다.
+
+        전체가 커지는 것은 나눠 담기가 해결한다. 나눠 담기가 못 푸는 경우는 하나뿐
+        이다 — 항목 하나가 통째로 한 문서보다 클 때. 그때는 잘라도 그 문서가 한도를
+        넘으므로 적재가 실패한다. 총량이 아니라 그것을 본다.
+        """
+        for name, items in (("threads", self.payload["threads"]),
+                            ("aiReports", self.payload["ai_reports"])):
+            docs, size = 1, 2
+            for it in items:
+                n = len(json.dumps(it, ensure_ascii=False).encode("utf-8")) + 1
+                self.assertLess(
+                    n + 2, self.CHUNK_BYTES,
+                    "%s 의 항목 하나가 문서보다 큽니다(%s, %d bytes) — "
+                    "나눠 담아도 안 들어갑니다" % (name, it.get("id"), n))
+                if size + n > self.CHUNK_BYTES:
+                    docs += 1
+                    size = 2
+                size += n
+            # 문서가 늘면 모두의 첫 화면 읽기가 늘어난다. 조용히 늘지 않게 묶는다.
+            self.assertLessEqual(docs, 6, "%s 가 %d문서로 갈라집니다" % (name, docs))
 
     def test_full_load_read_count_stays_small(self):
         """멤버 1명의 전체 로드 읽기 횟수 상한을 고정한다.
@@ -117,8 +147,8 @@ class PayloadShapeTest(unittest.TestCase):
         """
         reads = (
             1                                   # meta/archive
-            + 1                                 # threads/all
-            + 2                                 # aiReports (크기 기준 분할, 넉넉히)
+            + 6                                 # threads (크기 기준 분할, 넉넉히)
+            + 6                                 # aiReports (크기 기준 분할, 넉넉히)
             + 1                                 # media/all
             + len(self.payload["digests"])      # 요지(주제별 편집 단위라 개별 유지)
             + 2                                 # graph/nodes, graph/edges

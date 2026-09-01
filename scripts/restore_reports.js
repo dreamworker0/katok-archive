@@ -62,12 +62,18 @@ function toMarkdown(t) {
 
 async function main() {
   init();
-  const snap = await admin.firestore().collection("threads").doc("all").get();
-  if (!snap.exists) {
-    console.error("threads/all 문서가 없습니다 — 아직 발행하지 않았거나 프로젝트가 다릅니다.");
+  /* 컬렉션 전체를 훑는다. `threads/all` 한 문서를 콕 집어 읽던 동안에는, 발행이
+   * 나눠 담기로 바뀌면(2026-09-02) 이 복구 도구가 **아무것도 못 찾는다** — 없는
+   * 문서를 보고 "아직 발행하지 않았다" 고 말한다. 되살리는 도구가 조용히 절반만
+   * 되살리는 것은 더 나쁘다. 화면(boot.js)이 이미 이렇게 읽는다. */
+  const snap = await admin.firestore().collection("threads").get();
+  if (snap.empty) {
+    console.error("threads 컬렉션이 비어 있습니다 — 아직 발행하지 않았거나 프로젝트가 다릅니다.");
     process.exit(1);
   }
-  const items = (snap.data().items || []).filter((t) => t.report && String(t.report).trim());
+  const all = [];
+  snap.forEach((d) => { (d.data().items || []).forEach((t) => all.push(t)); });
+  const items = all.filter((t) => t.report && String(t.report).trim());
   console.log(`발행본에서 보고서 ${items.length}개를 찾았습니다.`);
   if (!items.length) process.exit(1);
 
