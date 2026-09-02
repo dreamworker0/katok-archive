@@ -21,6 +21,8 @@ FILES = [
     ("styles.css", "styles.css"),
     ("app.js", "app.js"),
     ("text.js", "text.js"),
+    ("stats.js", "stats.js"),
+    ("mine.js", "mine.js"),
     ("admin.js", "admin.js"),
     ("graph.js", "graph.js"),
     ("images.js", "images.js"),

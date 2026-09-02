@@ -39,6 +39,8 @@
     "images.js",
     "graph.js",
     "text.js",
+    "stats.js",
+    "mine.js",
     "admin.js",
     "app.js",
     "boot.js",

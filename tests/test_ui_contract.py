@@ -38,7 +38,7 @@ REQUIRED_IDS = {
 
 
 def front_end_js() -> str:
-    """app.js + text.js + admin.js 를 이어 읽는다.
+    """app.js 와 거기서 떼어낸 화면 조각(text·stats·mine·admin)을 이어 읽는다.
 
     이 검사들이 묻는 것은 "프런트가 이렇게 하는가" 이고, 그 답은 두 파일에 걸쳐
     있다. 글자·마크다운 다루기는 `web/text.js` 로 떼어냈다(app.js 안에 있는 동안
@@ -51,8 +51,41 @@ def front_end_js() -> str:
     동작 자체는 `tests/text.test.js` 가 실제로 함수를 불러서 본다.
     """
     parts = [(ROOT / "web" / name).read_text(encoding="utf-8")
-             for name in ("app.js", "text.js", "admin.js")]
+             for name in ("app.js", "text.js", "stats.js", "mine.js", "admin.js")]
     return "".join(parts)
+
+
+def fn_body(src: str, name: str) -> str:
+    """`function name(` 의 본문 — 들여쓰기와 무관하게 중괄호를 맞춰 자른다.
+
+    화면 조각을 stats.js·mine.js·admin.js 로 떼어낸 뒤(2026-09-02) 같은 이름이 두 번
+    나온다 — app.js 의 한 줄 위임 스텁과 조각 파일의 진짜 본문. 줄 앞 공백 수로
+    자르던 검사는 스텁을 잡거나 파일 끝까지 먹었다. 가장 긴 본문이 진짜다.
+    """
+    best = ""
+    start = 0
+    while True:
+        i = src.find("function %s(" % name, start)
+        if i < 0:
+            break
+        j = src.index("{", i)
+        depth, k = 0, j
+        while k < len(src):
+            c = src[k]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            k += 1
+        body = src[i:k + 1]
+        if len(body) > len(best):
+            best = body
+        start = i + 1
+    if not best:
+        raise ValueError("function %s 을 찾지 못했다" % name)
+    return best
 
 
 class Markup(HTMLParser):
@@ -670,14 +703,12 @@ class MyVideoContractTests(unittest.TestCase):
         cls.css = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
 
     def test_mine_kind_knows_video(self):
-        block = self.app[self.app.index("function mineKind("):]
-        block = block[:block.index("\n  }")]
+        block = fn_body(self.app, "mineKind")
         self.assertIn('m.kind === "video"', block)
         self.assertIn('return "video"', block)
 
     def test_my_video_row_shows_a_poster_that_plays(self):
-        block = self.app[self.app.index("function mineRow("):]
-        block = block[:block.index("\n  }\n\n  function renderMine")]
+        block = fn_body(self.app, "mineRow")
         self.assertIn('kind === "video"', block)
         self.assertIn("m.videos", block)
         # .mine-thumb 에 걸린 클릭이 라이트박스를 연다 — data-video 가 있어야
@@ -690,8 +721,7 @@ class MyVideoContractTests(unittest.TestCase):
         self.assertIn("{ text: 0, image: 0, video: 0, file: 0 }", self.app)
 
     def test_footprint_does_not_count_videos_as_files(self):
-        block = self.app[self.app.index("function myFootprint("):]
-        block = block[:block.index("\n  }")]
+        block = fn_body(self.app, "myFootprint")
         self.assertIn('m.kind === "video"', block,
                       "'올린 파일' 칸이 동영상을 파일로 셉니다")
 
