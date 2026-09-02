@@ -27,7 +27,7 @@ import shutil
 from collections import Counter
 from pathlib import Path
 
-from scripts import build_site, member_requests, ontology, pii, scan_image_pii
+from scripts import build_site, member_requests, ontology, pii, scan_image_pii, warnlog
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
@@ -633,6 +633,8 @@ def write_payload(payload: dict) -> None:
 def main() -> None:
     payload = build_payload()
     write_payload(payload)
+    # 발행 진입점에서만 경고 상태를 남긴다 — 검사가 build_payload 를 불러도 안 바뀐다.
+    warnlog.save()
     r = payload["exclusion_report"]
     m = payload["meta"]
     print(

@@ -127,7 +127,7 @@ try {
 }
 
 function Invoke-Step {
-    param([string]$name, [scriptblock]$body)
+    param([string]$name, [scriptblock]$body, [int]$TailOnSuccess = 0)
     Say "--- $name ---"
 
     # 네이티브 명령의 stderr 를 오류로 승격시키지 않는다.
@@ -147,7 +147,16 @@ function Invoke-Step {
     $ErrorActionPreference = 'Continue'
     try { $out = & $body 2>&1 } finally { $ErrorActionPreference = $prevEap }
     $code = $LASTEXITCODE
-    foreach ($l in $out) { Say "    $l" }
+    # 성공한 검사의 출력은 꼬리만 남긴다. 검사가 build_data 를 여러 번 부르며 발행
+    # 경고를 그때마다 찍어, 일일 로그에 같은 [주의] 묶음이 열한 번 들어갔다(실측
+    # 2026-09-01: 350줄 중 200줄). 실패하면 전부 남긴다 — 그때는 그것이 단서다.
+    $ok = ($null -eq $code -or $code -eq 0)
+    if ($ok -and $TailOnSuccess -gt 0 -and @($out).Count -gt $TailOnSuccess) {
+        Say ("    (출력 {0}줄 중 마지막 {1}줄만 — 실패하면 전부 남긴다)" -f @($out).Count, $TailOnSuccess)
+        foreach ($l in @($out)[-$TailOnSuccess..-1]) { Say "    $l" }
+    } else {
+        foreach ($l in $out) { Say "    $l" }
+    }
     if ($null -ne $code -and $code -ne 0) {
         Say "$name 실패 (exit $code) — 중단합니다." 'ERROR'
         # 어느 단계에서 멈췄는지까지 남긴다. 로그를 열지 않고도 관리 탭에서 보인다.
@@ -436,8 +445,8 @@ Invoke-Step '발행본 생성' { python -m scripts.build_firestore_payload } | O
 #    막지 못한다 — 이미 올라간 뒤에 "틀렸다"고 말하는 셈이다(2026-07-27 사람 노드
 #    누락이 정확히 그 꼴이었다). Invoke-Step 이므로 실패하면 여기서 멈추고, 그날의
 #    발행은 건너뛴다. 원본은 그대로 남으므로 고친 뒤 다시 돌리면 된다.
-Invoke-Step '테스트' { python -m unittest discover -s tests } | Out-Null
-Invoke-Step '테스트(적재)' { npm test --silent } | Out-Null
+Invoke-Step '테스트' { python -m unittest discover -s tests } -TailOnSuccess 3 | Out-Null
+Invoke-Step '테스트(적재)' { npm test --silent } -TailOnSuccess 4 | Out-Null
 
 #    인용이 실제 발언인지 원문과 대조한다. 원문을 발행하지 않는 아카이브에서 보고서는
 #    유일한 기록이고, 인용은 '이 사람이 이렇게 말했다'는 가장 강한 주장이다. 지어낸

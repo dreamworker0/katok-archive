@@ -23,6 +23,7 @@ from scripts import jsonio
 from scripts import ontology
 from scripts import pii
 from scripts import tags as taglib
+from scripts import warnlog
 from scripts.topic_reports import (
     MEDIA_KINDS,
     apply_ai_reports,
@@ -681,9 +682,9 @@ def build_data(
     # 주제인 '장애인복지관'·'거주시설' 까지 사라진다.
     places, not_places = taglib.load_places()
     cands = taglib.place_candidates(threads_meta, places, not_places)
-    if cands:
-        print("[태그] 지명·조직 이름 후보 %d개 — config/tag_places.json 에 넣을지 보세요 "
-              "(앞 5개: %s)" % (len(cands), ", ".join(t for t, _ in cands[:5])))
+    warnlog.note("place_candidates", [t for t, _ in cands],
+                 "[태그] 지명·조직 이름 후보",
+                 advice="config/tag_places.json 에 넣을지 보세요", sample=5)
     # 부모를 못 얻은 고립 태그를 **승격 전에** 센다. 승격한 뒤에는 무엇이 고립이었는지
     # 알 수 없다. 지명은 빼고 본다 — 그것은 tag_places.json 이 맡을 일이다.
     broader = taglib.load_broader()
@@ -697,10 +698,9 @@ def build_data(
     if rolled:
         print("[태그] 넓은 태그 %d건 승격 (앞 5개: %s)"
               % (len(rolled), ", ".join("%s←%s" % r for r in rolled[:5])))
-    if orphans:
-        print("[태그] 부모도 없고 한 번만 쓰인 태그 %d개 — 검색 말고는 입구가 없습니다. "
-              "config/tag_broader.json 에 넣을지 보세요 (앞 8개: %s)"
-              % (len(orphans), ", ".join(t for t, _ in orphans[:8])))
+    warnlog.note("orphan_tags", [t for t, _ in orphans],
+                 "[태그] 부모도 없고 한 번만 쓰인 태그",
+                 advice="검색 말고는 입구가 없습니다. config/tag_broader.json 에 넣을지 보세요")
     # 보조 분류 — 한 주제를 여러 분류에서 찾게 하는 곁길. 주 분류는 그대로 하나다.
     cat_ids = {c["id"] for c in topics["categories"]}
     for tmeta in threads_meta:
@@ -716,9 +716,9 @@ def build_data(
         for t in topics["threads"]
     }
     thin = thin_reports(threads_meta, raw_chars)
-    if thin:
-        print("[주의] 대화량에 비해 보고서가 얇은 주제 %d개 (앞 5개): %s"
-              % (len(thin), ", ".join("%s(%d건 %d자<%d)" % x for x in thin[:5])))
+    warnlog.note("thin_reports", ["%s(%d건 %d자<%d)" % x for x in thin],
+                 "[주의] 대화량에 비해 보고서가 얇은 주제",
+                 advice="`python -m scripts.classify_unsorted --rewrite-thin N`", sample=5)
     # 길게만 쓴 한 덩어리 산문을 잡는다. 분량 검사로는 안 걸리는 종류의 문제다.
     # 자료(사진·첨부·링크) 수를 함께 넘겨, 자료가 있는데 본문이 그 자리를 안 짚은
     # 보고서도 걸리게 한다 — 그것이 '자료가 하단에만 있어 읽기 불편한' 꼴이다.
@@ -744,11 +744,10 @@ def build_data(
                                          msgs_by_thread.get(t["id"], []))}
         for t in threads_meta
     ])
-    if gaps:
-        print("[주의] 구조 규칙을 어긴 보고서 %d개 — 고치려면 "
-              "`python -m scripts.classify_unsorted --rewrite-unstructured N` "
-              "(앞 5개: %s)"
-              % (len(gaps), ", ".join("%s(%d건 %s없음)" % g for g in gaps[:5])))
+    warnlog.note("structure_gaps", ["%s(%d건 %s없음)" % g for g in gaps],
+                 "[주의] 구조 규칙을 어긴 보고서",
+                 advice="고치려면 `python -m scripts.classify_unsorted --rewrite-unstructured N`",
+                 sample=5)
 
     knowledge = knowledge or {"nodes": [], "edges": []}
     # 화면의 걸러내기 단추와 노드 패널이 종류 이름을 이 표에서 읽는다. 원장이 없는
@@ -756,19 +755,15 @@ def build_data(
     ontology.sync_types(knowledge)
     # 관계망 노드 크기를 실제 언급량으로 다시 매긴다
     stale = weigh_knowledge(knowledge, out_messages)
-    if stale:
-        print("[관계망] 원문에 한 번도 안 나오는 노드 %d개: %s"
-              % (len(stale), ", ".join(stale[:12])))
+    warnlog.note("stale_nodes", stale, "[관계망] 원문에 한 번도 안 나오는 노드", sample=12)
     # 관계망 노드와 태그를 짝지어 둔 표. 없으면 예전처럼 이름 글자로만 잇는다.
     node_tags = ontology.load_node_tags()
     node_cands = ontology.node_tag_candidates(
         knowledge.get("nodes", []), threads_meta, node_tags,
         ontology.load_settled_nodes())
-    if node_cands:
-        print("[관계망] 이름으로 주제를 못 찾는 노드 %d개 — config/node_tags.json 에 "
-              "짝지어 주세요 (앞 4개: %s)"
-              % (len(node_cands),
-                 "; ".join("%s←%s" % (nid, "|".join(c)) for nid, _, c in node_cands[:4])))
+    warnlog.note("unlinked_nodes", ["%s←%s" % (nid, "|".join(c)) for nid, _, c in node_cands],
+                 "[관계망] 이름으로 주제를 못 찾는 노드",
+                 advice="config/node_tags.json 에 짝지어 주세요", sample=4)
     digests = build_digests(
         out_messages, threads_meta, topics, knowledge, digest_prose or {}, node_tags
     )
@@ -961,6 +956,7 @@ def main() -> None:
         print("개인정보 %d건 가림 (%s)"
               % (len([h for h in hits if h.grade == "certain"]), pii.summarize(hits)))
     write_site(data)
+    warnlog.save()
 
     t = data["stats"]["totals"]
     print(
