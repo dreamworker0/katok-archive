@@ -16,16 +16,25 @@ const SRC = fs.readFileSync(path.join(__dirname, "..", "web", "boot.js"), "utf8"
 const plain = (x) => JSON.parse(JSON.stringify(x));
 
 /* ── 가짜 IndexedDB. 이벤트 순서만 진짜와 같게 — get 의 result 가 채워진 뒤 tx 가 끝난다. ── */
-function fakeIndexedDB() {
+function fakeIndexedDB(opts) {
   const stores = {};
-  return {
+  // exists: DB 자체는 있다. storeless: 그런데 그 안에 bundles 스토어가 없다 —
+  // 버전이 같아 onupgradeneeded 가 다시 불리지 않는 상태(2026-09-02 실측).
+  const st = { exists: !!(opts && opts.storeless), storeless: !!(opts && opts.storeless),
+               opened: 0, closed: 0, deleted: 0 };
+  const api = {
     _stores: stores,
+    _state: st,
     open(name) {
       const req = {};
       setTimeout(() => {
+        st.opened += 1;
         const db = {
+          objectStoreNames: { contains: (s) => (opts && opts.vanish ? true : st.storeless ? false : !!stores[s]) },
           createObjectStore(s) { stores[s] = stores[s] || new Map(); },
           transaction(s, mode) {
+            // 진짜 IDB 처럼 스토어가 없으면 여기서 던진다.
+            if (st.storeless || !stores[s] || (opts && opts.vanish)) throw new Error("NotFoundError: " + s);
             const tx = {};
             const store = {
               // 진짜 IDB 처럼 success 전에 result 가 채워진다. 타이머로 늦추면 Windows 의
@@ -38,15 +47,29 @@ function fakeIndexedDB() {
             setTimeout(() => tx.oncomplete && tx.oncomplete(), 2);
             return tx;
           },
-          close() {},
+          close() { st.closed += 1; },
         };
         req.result = db;
-        if (!stores.bundles) req.onupgradeneeded && req.onupgradeneeded();
+        if (!st.exists) { st.exists = true; req.onupgradeneeded && req.onupgradeneeded(); }
+        req.onsuccess && req.onsuccess();
+      }, 0);
+      return req;
+    },
+    deleteDatabase(name) {
+      const req = {};
+      setTimeout(() => {
+        st.deleted += 1;
+        // stubborn: 삭제가 막히는 경우(다른 탭이 그 DB 를 붙들고 있을 때). 상태는 그대로다.
+        if (opts && opts.stubborn) { req.onblocked && req.onblocked(); return; }
+        st.exists = false;
+        st.storeless = false;
+        Object.keys(stores).forEach((k) => delete stores[k]);
         req.onsuccess && req.onsuccess();
       }, 0);
       return req;
     },
   };
+  return api;
 }
 
 /* ── 가짜 Firestore. 컬렉션·문서 읽기를 센다. ── */
@@ -186,6 +209,45 @@ test("로그아웃하면 캐시를 비운다 — 다음 사람은 서버에서 �
   assert.equal(idb._stores.bundles.size, 0);
   const again = await visit(idb, archiveData("h1"));
   assert.deepEqual(again.reads, { ...ALWAYS, ...CORE, ...REST });
+});
+
+/* ── 스토어 없는 DB (2026-09-02 실측) ──
+ *
+ * 배포본에서 실제로 겪었다. `archive-bundles` 가 버전 1 로 있는데 그 안에 `bundles`
+ * 스토어가 없으면, 열기는 성공하고 transaction 마다 NotFoundError 가 난다. 버전이
+ * 같아 onupgradeneeded 가 다시 불리지 않으니 스스로 낫지 못했다 — 그 브라우저는
+ * 매 방문 3.5MB 를 다시 받으면서 콘솔에만 "번들 캐시를 읽지 못했습니다" 를 쌓았다.
+ * 사람이 손으로 지우려 해도, 실패한 연결을 닫지 않아 삭제가 blocked 로 멈췄다.
+ */
+test("스토어 없는 옛 DB 는 지우고 다시 만든다 — 캐시가 되살아난다", async () => {
+  const idb = fakeIndexedDB({ storeless: true });
+  const first = await visit(idb, archiveData("h1"));
+  // 첫 방문은 어차피 서버에서 받는다. 중요한 것은 그 뒤에 캐시가 남았는가다.
+  assert.deepEqual(first.reads, { ...ALWAYS, ...CORE, ...REST });
+  assert.ok(idb._state.deleted >= 1, "망가진 DB 를 지웠어야 한다");
+  // 캐시 쓰기는 화면을 기다리지 않는다(fire-and-forget) — 도착할 틈을 준다.
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepEqual([...idb._stores.bundles.keys()].sort(), ["aiReports", "core", "digests"]);
+  const second = await visit(idb, archiveData("h1"));
+  assert.deepEqual(second.reads, ALWAYS, "재방문은 meta·members 만 읽어야 한다");
+  assert.equal(idb._state.opened, idb._state.closed, "연 만큼 닫아야 한다");
+});
+
+test("지우지도 못하면 서버에서 받아 화면은 뜬다 — 연결은 새지 않는다", async () => {
+  const idb = fakeIndexedDB({ storeless: true, stubborn: true });
+  const { reads, got } = await visit(idb, archiveData("h1"));
+  assert.deepEqual(reads, { ...ALWAYS, ...CORE, ...REST });
+  assert.equal(got.ai.length, 1, "캐시가 죽어도 화면은 채워져야 한다");
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(idb._state.opened, idb._state.closed, "연 만큼 닫아야 한다");
+});
+
+test("열고 나서 스토어가 사라져도 연결을 닫는다 — 삭제가 막히지 않는다", async () => {
+  const idb = fakeIndexedDB({ vanish: true });
+  const { reads } = await visit(idb, archiveData("h1"));
+  assert.deepEqual(reads, { ...ALWAYS, ...CORE, ...REST });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(idb._state.opened, idb._state.closed, "연 만큼 닫아야 한다");
 });
 
 test("AI 주석이 안 열려도 화면은 뜬다 — 빈 목록으로 건넨다", async () => {

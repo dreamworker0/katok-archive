@@ -190,12 +190,36 @@
    */
   var BUNDLE_DB = "archive-bundles", BUNDLE_STORE = "bundles";
 
-  function bundleDb() {
+  /* 스토어 없는 DB 를 스스로 고친다 (2026-09-02 실측).
+   *
+   * `archive-bundles` 가 버전 1 로 있는데 그 안에 `bundles` 스토어가 없는 상태가
+   * 실제로 만들어졌다(다른 스크립트가 같은 이름을 버전 1 로 먼저 열면 그렇게 된다).
+   * 그러면 열기는 성공하고 transaction 마다 NotFoundError 가 난다. 버전이 같아
+   * onupgradeneeded 가 다시 불리지 않으니 **그 브라우저에서는 캐시가 영구히 죽는다** —
+   * 매 방문 3.5MB 를 다시 받으면서 콘솔에만 경고가 쌓였다.
+   *
+   * 지우고 한 번만 다시 연다. 두 번째도 스토어가 없으면 포기하고 서버에서 받는다
+   * (캐시가 없던 때와 같게 돈다 — 캐시를 고치려다 화면이 늦어서는 안 된다).
+   */
+  function bundleDb(retried) {
     return new Promise(function (resolve, reject) {
       try {
         var req = indexedDB.open(BUNDLE_DB, 1);
         req.onupgradeneeded = function () { req.result.createObjectStore(BUNDLE_STORE); };
-        req.onsuccess = function () { resolve(req.result); };
+        req.onsuccess = function () {
+          var db = req.result;
+          if (db.objectStoreNames && !db.objectStoreNames.contains(BUNDLE_STORE)) {
+            // 열어 둔 연결을 먼저 닫는다 — 열려 있으면 삭제가 blocked 로 멈춘다.
+            db.close();
+            if (retried) { reject(new Error("no store")); return; }
+            var del = indexedDB.deleteDatabase(BUNDLE_DB);
+            del.onsuccess = del.onerror = del.onblocked = function () {
+              bundleDb(true).then(resolve, reject);
+            };
+            return;
+          }
+          resolve(db);
+        };
         req.onerror = function () { reject(req.error); };
         req.onblocked = function () { reject(new Error("blocked")); };
       } catch (e) { reject(e); }
@@ -205,8 +229,17 @@
   function bundleOp(mode, run) {
     return bundleDb().then(function (db) {
       return new Promise(function (resolve, reject) {
-        var tx = db.transaction(BUNDLE_STORE, mode);
-        var req = run(tx.objectStore(BUNDLE_STORE));
+        var tx, req;
+        try {
+          tx = db.transaction(BUNDLE_STORE, mode);
+          req = run(tx.objectStore(BUNDLE_STORE));
+        } catch (e) {
+          // 여기서 안 닫으면 연결이 새고, 새는 연결은 deleteDatabase 를 영구히
+          // blocked 로 만든다 — 사람이 손으로 지우려 해도 안 지워졌다.
+          db.close();
+          reject(e);
+          return;
+        }
         tx.oncomplete = function () { db.close(); resolve(req ? req.result : undefined); };
         tx.onerror = function () { db.close(); reject(tx.error); };
         tx.onabort = function () { db.close(); reject(tx.error || new Error("abort")); };
