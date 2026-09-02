@@ -161,3 +161,18 @@ test("전량 모드는 대장에 없는 원격 구문서까지 지운다", quiet
   await up.syncCollection(db, "digests", [{ id: "a", v: 1 }], { full: true });
   assert.deepEqual(db.log.deletes, ["digests/유령"]);
 }));
+
+/* ── 화면 캐시의 지문 (2026-09-02 실측) ──
+ *
+ * 캐시 코드를 배포한 날, 발행본은 그 코드보다 먼저 만들어져 meta 에 content_hash 가
+ * 없었다. boot.js 는 지문이 없으면 조용히 저장을 건너뛴다 — 캐시가 꺼진 채 반나절을
+ * 돌았고 화면도 로그도 아무 말을 하지 않았다. 발행 사유는 데이터 변화만 보므로
+ * 스스로 낫지도 않는다. 적재가 말해 주는 것이 유일한 신호다.
+ */
+test("발행본에 지문이 없으면 적재가 말한다", () => {
+  assert.ok(up.cacheHashWarning({ thread_count: 400 }), "없으면 경고");
+  assert.ok(up.cacheHashWarning({ content_hash: "" }), "빈 문자열도 없는 것");
+  assert.ok(up.cacheHashWarning(null), "meta 자체가 없어도 경고");
+  assert.match(up.cacheHashWarning({}), /build_firestore_payload/, "고치는 법을 적는다");
+  assert.equal(up.cacheHashWarning({ content_hash: "36d0772617dabab5" }), null, "있으면 조용히");
+});

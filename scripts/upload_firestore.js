@@ -373,6 +373,28 @@ async function uploadImages(bucket, images, remoteSize) {
     "(비공개 — 멤버만 접근)");
 }
 
+/* 화면 캐시의 지문 (2026-09-02)
+ *
+ * boot.js 는 meta.content_hash 로 IndexedDB 의 조각 셋이 낡았는지 판단한다. 지문이
+ * 없으면 **저장을 건너뛴다** — 캐시가 없던 때처럼 매 방문 3.5MB 를 다시 받는다.
+ *
+ * 실제로 그 상태로 반나절을 돌았다. 캐시 코드를 배포한 날, 발행본은 그 코드보다
+ * 먼저 만들어져 지문이 없었다. 화면도 로그도 조용했다 — boot.js 는 지문이 없으면
+ * 조용히 예전 길로 가고, 적재는 그것을 볼 이유가 없었기 때문이다.
+ *
+ * 더 나쁜 것은 스스로 낫지 않는다는 점이다. 발행 사유는 데이터 변화만 본다
+ * (publish_state.WATCHED) — 코드가 바뀌어도 새 메시지가 없는 날이면 발행을
+ * 건너뛰고, 지문은 다음 데이터 변화까지 안 올라간다.
+ *
+ * 그래서 적재가 말한다. 막지는 않는다 — 지문이 없어도 아카이브는 정상으로 돈다.
+ */
+function cacheHashWarning(meta) {
+  if (meta && typeof meta.content_hash === "string" && meta.content_hash) return null;
+  return "[주의] 발행본 meta 에 content_hash 가 없습니다 — 화면 캐시가 꺼진 채 " +
+    "돌아갑니다(매 방문 전량 다시 받음). python -m scripts.build_firestore_payload 로 " +
+    "발행본을 다시 만든 뒤 적재하세요.";
+}
+
 async function main() {
   const meta = readPayload("meta.json");
   const media = readPayload("media.json");
@@ -439,6 +461,9 @@ async function main() {
     console.log(`  방식: 변경분만 (대장 ${prevState.updated_at || "?"} 기준) — ` +
       `meta 1 + 그래프 최대 2 + 바뀐 문서 ${changed}건`);
   }
+
+  const hashWarn = cacheHashWarning(meta);
+  if (hashWarn) console.warn("\n" + hashWarn);
 
   if (!members.length) {
     // 거울이 비었을 뿐 Firestore 명부는 멀쩡할 수 있다. 닉네임 대조만 못 하게 된다.
@@ -530,7 +555,7 @@ async function main() {
 }
 
 module.exports = { stableStringify, docHash, planWrites, planUploads, loadState, staleState,
-                   syncCollection, STATE_VERSION, STATE_PATH };
+                   syncCollection, cacheHashWarning, STATE_VERSION, STATE_PATH };
 
 if (require.main === module) {
   main().catch((e) => {
