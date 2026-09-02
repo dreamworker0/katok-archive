@@ -113,21 +113,34 @@ async function main() {
     }
   }
 
-  console.log(`Firestore 멤버 ${members.length}명`);
-  for (const m of members) {
-    const isNew = !beforeSet.has(m.email);
-    console.log(
-      `  ${isNew ? "+" : " "} ${m.email}  ` +
-      `${m.nicknames.length ? m.nicknames.join(", ") : "(표시명 없음)"}  ${m.role}`
-    );
+  /* 명부 전체를 찍지 않는다 (2026-09-02).
+   *
+   * 예전에는 38명의 이메일과 실명을 매일 밤 일일 로그에 그대로 썼다. 로그는
+   * 90일 보관이니 어느 날이든 logs\ 에 명부 사본이 마흔 벌 있었다. 저장소에는
+   * 안 들어가지만, 개인정보를 가리느라 세 겹을 쌓은 파이프라인이 자기 로그에는
+   * 그것을 흘리고 있었다. 운영자가 알아야 하는 것은 '누가 늘고 줄었나' 뿐이다 —
+   * 그것만, 표시명으로 적는다. 이메일은 앞 두 글자만 남긴다.
+   */
+  const shortMail = (e) => {
+    const [local, domain] = String(e).split("@");
+    return (local || "").slice(0, 2) + "***@" + (domain || "");
+  };
+  const added = members.filter((m) => !beforeSet.has(m.email));
+  const removed = before
+    .map((m) => String(m.email || "").toLowerCase())
+    .filter((email) => email && !afterSet.has(email));
+  console.log(`Firestore 멤버 ${members.length}명 (관리자 ${members.filter((m) => m.role === "admin").length})`);
+  for (const m of added) {
+    console.log(`  + ${m.nicknames.length ? m.nicknames.join(", ") : "(표시명 없음)"}  ${m.role}  ${shortMail(m.email)}`);
   }
-  for (const m of before) {
-    const email = String(m.email || "").toLowerCase();
-    if (!afterSet.has(email)) console.log(`  - ${email} (Firestore 에 없어 거울에서 제거)`);
+  for (const email of removed) {
+    const old = before.find((m) => String(m.email || "").toLowerCase() === email) || {};
+    console.log(`  - ${old.nickname || "(표시명 없음)"}  ${shortMail(email)} (Firestore 에 없어 거울에서 제거)`);
   }
-  if (carried.length) console.log(`  (로컬 표시 유지: speaks=false ${carried.join(", ")})`);
+  if (!added.length && !removed.length) console.log("  변동 없음");
+  if (carried.length) console.log(`  (로컬 표시 유지: speaks=false ${carried.length}명)`);
   for (const email of localOnly.keys()) {
-    if (!afterSet.has(email)) console.log(`  [주의] speaks=false 표시가 있던 ${email} 이 Firestore 에 없습니다`);
+    if (!afterSet.has(email)) console.log(`  [주의] speaks=false 표시가 있던 ${shortMail(email)} 이 Firestore 에 없습니다`);
   }
 
   if (!members.length) {

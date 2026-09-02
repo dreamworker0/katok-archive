@@ -69,6 +69,13 @@ BACKUP_KEEP = 3
 # 절대 지우지 않는 것 — 도는 중인 실행이 쓰는 파일과 폴더.
 LOGS_NEVER = {"run_daily.lock", "drawer"}
 
+# 서랍 스크린샷 폴더. kakao_drawer.ps1 이 매일 서랍 격자를 PrintWindow 로 찍어 여기에
+# 둔다(-ShotDir 기본값). 폴더 자체는 LOGS_NEVER 에 있어 지우지 않지만, 안의 png 는
+# 카톡 창 스크린샷과 같은 성질이다 — 대화의 사진·파일 목록이 찍혀 있고, 진단에
+# 쓰이는 것은 어제 것뿐이다. 실측 2026-09-02: 322장 · 141MB 가 13일째 쌓여 있었고
+# 마름질은 폴더째 건너뛰어 "지울 것 없음" 이라고 말했다.
+DRAWER_SHOTS = "drawer"
+
 # 보관본. 여기 있는 것과 같은 파일만 중복으로 본다.
 ARCHIVE_DIRS = ("images", "videos", "files")
 
@@ -116,14 +123,21 @@ def plan_logs(today: date, shot_days: int = SHOT_DAYS,
     if not LOGS.is_dir():
         return []
     doomed = []
-    for p in sorted(LOGS.iterdir()):
+    entries = sorted(LOGS.iterdir())
+    drawer = LOGS / DRAWER_SHOTS
+    if drawer.is_dir():
+        # 폴더는 남기고 안의 스크린샷만 본다. 텍스트 로그는 여기에 없다.
+        entries += sorted(p for p in drawer.iterdir()
+                          if p.is_file() and p.suffix.lower() == ".png")
+    for p in entries:
         if p.name in LOGS_NEVER:
             continue
         d = _date_in_name(p.name)
         if d is None:
             continue          # 날짜를 못 읽으면 손대지 않는다
         if p.suffix.lower() == ".png":
-            limit, why = shot_days, "카톡 창 스크린샷"
+            limit, why = shot_days, ("서랍 스크린샷" if p.parent == drawer
+                                     else "카톡 창 스크린샷")
         elif p.is_file():
             limit, why = log_days, "로그"
         else:

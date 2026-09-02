@@ -68,6 +68,22 @@ class LogRetentionTest(unittest.TestCase):
         (self.logs / "drawer").mkdir()
         self.assertEqual(self.names(), [])
 
+    def test_old_drawer_screenshots_go_but_the_folder_stays(self):
+        """서랍 격자 스크린샷도 대화의 사진·파일 목록이다 — 창 스크린샷과 같은 기한.
+
+        실측 2026-09-02: 322장 · 141MB 가 폴더째 건너뛰어져 '지울 것 없음' 이었다.
+        """
+        d = self.logs / "drawer"
+        d.mkdir()
+        (d / "20260725-155003-파일-1.png").write_text("x")        # 28일
+        (d / "20260820-101010-사진동영상-1.png").write_text("x")  # 2일
+        (d / "note-20260725.txt").write_text("x")                  # png 아님 — 손대지 않음
+        names = self.names()
+        self.assertEqual(names, ["20260725-155003-파일-1.png"])
+        self.assertTrue(d.is_dir())
+        reasons = {p.name: why for p, why in pw.plan_logs(TODAY)}
+        self.assertIn("서랍 스크린샷", reasons["20260725-155003-파일-1.png"])
+
     def test_a_name_without_a_date_is_left_alone(self):
         """날짜를 못 읽으면 손대지 않는다 — 무엇인지 모르는 파일을 지우지 않는다."""
         self.touch("retag-2026-08-21-v2.log")   # YYYYMMDD 가 아니다

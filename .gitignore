@@ -30,6 +30,10 @@ serviceAccountKey.json
 # (예시는 config/pii_allow.example.json)
 /config/pii_allow.json
 
+# 실패 알림 웹훅 — 주소를 아는 사람은 누구나 그 채널에 글을 쓸 수 있다.
+# (예시는 config/notify.example.json)
+/config/notify.json
+
 # 태그 구름에서 뺄 지명·조직 이름 — 방에서 오간 특정 기관 목록이 된다.
 # (예시는 config/tag_places.example.json)
 /config/tag_places.json

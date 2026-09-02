@@ -1,0 +1,12 @@
+{
+  "_comment": [
+    "config/notify.json 으로 복사해 채운다. 그 파일은 .gitignore 에 있다 —",
+    "웹훅 주소는 아는 사람은 누구나 그 채널에 글을 쓸 수 있는 값이다.",
+    "discord_webhook: 디스코드 채널 설정 > 연동 > 웹후크 에서 만든 주소.",
+    "notify_on: 어느 결과를 보낼지. 기본은 failed 만 — 매일 성공이 오면 그 채널은",
+    "곧 읽지 않는 채널이 되고, 그러면 실패도 같이 묻힌다.",
+    "환경 변수 KATOK_NOTIFY_WEBHOOK 이 있으면 파일보다 앞선다."
+  ],
+  "discord_webhook": "https://discord.com/api/webhooks/000000000000000000/xxxxxxxx",
+  "notify_on": ["failed"]
+}
