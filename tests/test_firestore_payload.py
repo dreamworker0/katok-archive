@@ -47,15 +47,18 @@ class PayloadShapeTest(unittest.TestCase):
         for text in sample:
             self.assertNotIn(text, published, "원문이 발행본에 남았다: " + text[:40])
 
-    def test_published_docs_are_well_under_firestore_limit(self):
-        """미디어는 한 문서로 묶어 발행한다. 1MiB 한도를 지켜야 한다.
+    def test_every_published_document_fits(self):
+        """올라가는 문서 하나하나가 한도 아래여야 한다 — 총량이 아니라 문서다.
 
-        스레드는 2026-09-02 부터 나눠 담는다 — 아래 분할 검사가 맡는다.
+        예전에는 threads·media 전체를 한 덩어리로 재서 700KB 와 비교했다. 그러면
+        데이터가 늘기만 해도 깨진다 — 2026-09-01 밤 갱신이 주제 400개가 되며
+        정확히 그렇게 멈췄다. 이제 나눠 담는 컬렉션은 업로더가 자르므로, 검사도
+        업로더와 같은 규칙(plan_documents)으로 문서를 나눈 뒤 **각 문서**를 본다.
         """
-        for name in ("media",):
-            size = len(json.dumps({"items": self.payload[name]},
-                                  ensure_ascii=False).encode("utf-8"))
-            self.assertLess(size, 700_000, "%s 가 너무 큼: %d bytes" % (name, size))
+        for d in bfp.plan_documents(self.payload):
+            self.assertLess(d["bytes"], bfp.DOC_LIMIT,
+                            "%s/%s 가 너무 큼: %d bytes"
+                            % (d["collection"], d["id"], d["bytes"]))
 
     def test_meta_counts_match_payload(self):
         m = self.payload["meta"]
@@ -97,63 +100,44 @@ class PayloadShapeTest(unittest.TestCase):
         self.assertTrue(self.payload["graph"]["nodes"])
         self.assertTrue(self.payload["graph"]["edges"])
 
-    def test_bulk_docs_fit_in_one_document(self):
-        """스레드·그래프는 한 문서로 묶어 발행한다(읽기 절약). 1MiB 한도 확인."""
-        for name, obj in (
-            # threads·aiReports 는 크기 기준으로 나눠 담긴다
-            # (upload_firestore.chunkDocs). 실제 문서 크기는 업로더가 600KB 로
-            # 잘라 보장하므로, 여기서 원본 전체를 재면 늘 때마다 거짓으로 걸린다
-            # — 2026-09-01 밤 갱신이 정확히 그렇게 멈췄다. 대신 아래
-            # `test_chunked_collections_split_into_documents_that_fit` 가 본다.
-            ("media/all", {"items": self.payload["media"]}),
-            ("graph/nodes", {"items": self.payload["graph"]["nodes"]}),
-            ("graph/edges", {"items": self.payload["graph"]["edges"]}),
-        ):
-            size = len(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
-            self.assertLess(size, 700_000, "%s 가 너무 큼: %d bytes" % (name, size))
-
-    # 업로더의 자르는 크기(upload_firestore.js CHUNK_BYTES). 두 벌로 적으면
-    # 갈라지므로 값이 바뀌면 이 검사가 먼저 틀려야 한다.
-    CHUNK_BYTES = 600 * 1024
-
     def test_chunked_collections_split_into_documents_that_fit(self):
         """나눠 담는 컬렉션은 **항목 하나**가 한도를 넘지 않아야 한다.
 
         전체가 커지는 것은 나눠 담기가 해결한다. 나눠 담기가 못 푸는 경우는 하나뿐
         이다 — 항목 하나가 통째로 한 문서보다 클 때. 그때는 잘라도 그 문서가 한도를
-        넘으므로 적재가 실패한다. 총량이 아니라 그것을 본다.
+        넘으므로 적재가 실패한다. 총량이 아니라 그것을 본다. 문서 수도 묶는다 —
+        문서가 늘면 모두의 첫 화면 읽기가 늘어나므로 조용히 늘지 않게 한다.
         """
-        for name, items in (("threads", self.payload["threads"]),
-                            ("aiReports", self.payload["ai_reports"])):
-            docs, size = 1, 2
-            for it in items:
-                n = len(json.dumps(it, ensure_ascii=False).encode("utf-8")) + 1
-                self.assertLess(
-                    n + 2, self.CHUNK_BYTES,
-                    "%s 의 항목 하나가 문서보다 큽니다(%s, %d bytes) — "
-                    "나눠 담아도 안 들어갑니다" % (name, it.get("id"), n))
-                if size + n > self.CHUNK_BYTES:
-                    docs += 1
-                    size = 2
-                size += n
-            # 문서가 늘면 모두의 첫 화면 읽기가 늘어난다. 조용히 늘지 않게 묶는다.
-            self.assertLessEqual(docs, 6, "%s 가 %d문서로 갈라집니다" % (name, docs))
+        docs = bfp.plan_documents(self.payload)
+        for coll in ("threads", "aiReports", "media"):
+            ds = [d for d in docs if d["collection"] == coll]
+            self.assertTrue(ds and all(d["chunked"] for d in ds), coll)
+            for d in ds:
+                self.assertLess(d["largest_item"] + 3, bfp.CHUNK_BYTES,
+                                "%s 의 항목 하나가 문서보다 큽니다(%d bytes) — "
+                                "나눠 담아도 안 들어갑니다" % (coll, d["largest_item"]))
+            self.assertLessEqual(len(ds), bfp.CHUNK_DOCS_MAX,
+                                 "%s 가 %d문서로 갈라집니다" % (coll, len(ds)))
+
+    def test_size_warnings_are_quiet_today(self):
+        """80% 경고가 하나라도 있으면 사람이 봐야 한다.
+
+        경고는 발행 로그에 찍히지만 로그는 아침에 읽는다. 여기서도 걸리게 해서
+        '검사는 초록인데 로그에는 주의가 있다' 는 상태가 조용히 몇 주 가지 않게
+        한다. 걸리면 그 문서를 나눠 담을 길을 정하고, 정한 뒤 이 검사를 고친다.
+        """
+        self.assertEqual(bfp.size_warnings(bfp.plan_documents(self.payload)), [])
 
     def test_full_load_read_count_stays_small(self):
         """멤버 1명의 전체 로드 읽기 횟수 상한을 고정한다.
 
         메시지·스레드를 문서당 1건으로 두면 1,600회를 넘어 무료 한도를 위협한다.
-        묶음 발행이 깨지면 이 테스트가 잡아낸다.
+        묶음 발행이 깨지면 이 테스트가 잡아낸다. 어림값이 아니라 실제로 올라가는
+        문서 수(plan_documents)를 센다 — 본인 myMessages 와 members 문서 하나씩.
         """
-        reads = (
-            1                                   # meta/archive
-            + 6                                 # threads (크기 기준 분할, 넉넉히)
-            + 6                                 # aiReports (크기 기준 분할, 넉넉히)
-            + 1                                 # media/all
-            + len(self.payload["digests"])      # 요지(주제별 편집 단위라 개별 유지)
-            + 2                                 # graph/nodes, graph/edges
-            + 1                                 # 본인 members 문서
-        )
+        docs = bfp.plan_documents(self.payload)
+        reads = (sum(1 for d in docs if d["collection"] != "myMessages")
+                 + 1 + 1)
         self.assertLessEqual(reads, 30, "전체 로드 읽기가 너무 많음: %d회" % reads)
 
     def test_member_emails_are_lowercased_and_unique(self):
@@ -342,6 +326,60 @@ class ExclusionTest(unittest.TestCase):
         payload = self._payload_with(excl)
         self.assertEqual(payload["exclusion_report"]["kept_count"], len(self.messages))
         self.assertEqual(payload["exclusion_report"]["dropped_count"], 0)
+
+
+class DocumentPlanTest(unittest.TestCase):
+    """plan_documents · chunk_items · size_warnings — 지어낸 자료로, 어디서든 돈다."""
+
+    @staticmethod
+    def _payload(**over):
+        base = {
+            "meta": {"chat_room": "x"},
+            "threads": [{"id": "t-%03d" % i, "report": "가" * 100} for i in range(5)],
+            "ai_reports": [],
+            "media": [{"id": "m-1"}],
+            "digests": {"projects": {"body": "나"}},
+            "graph": {"nodes": [{"id": "n"}], "edges": []},
+            "my_messages": {"a@example.com": [{"id": "msg-1", "text": "안녕"}]},
+        }
+        base.update(over)
+        return base
+
+    def test_chunk_items_splits_by_bytes_not_count(self):
+        items = [{"s": "가" * 100}] * 10       # 항목 하나 ≈ 300 바이트
+        docs = bfp.chunk_items(items, cap=1000)
+        self.assertGreater(len(docs), 1)
+        self.assertEqual(sum(len(d) for d in docs), 10)
+        for d in docs:
+            self.assertLessEqual(bfp._nbytes(d), 1000)
+
+    def test_chunk_items_keeps_one_empty_doc(self):
+        self.assertEqual(bfp.chunk_items([]), [[]])
+
+    def test_plan_marks_chunked_collections(self):
+        docs = bfp.plan_documents(self._payload())
+        by = {(d["collection"], d["id"]): d for d in docs}
+        self.assertTrue(by[("threads", "000")]["chunked"])
+        self.assertTrue(by[("media", "000")]["chunked"])
+        self.assertTrue(by[("aiReports", "000")]["chunked"])   # 비어도 문서 하나
+        self.assertFalse(by[("graph", "nodes")]["chunked"])
+        self.assertFalse(by[("digests", "projects")]["chunked"])
+        self.assertFalse(by[("myMessages", "a@example.com")]["chunked"])
+
+    def test_warns_at_eighty_percent_for_unsplittable_docs(self):
+        big = [{"id": "n%d" % i, "label": "가" * 200} for i in range(1000)]  # ≈ 600KB
+        docs = bfp.plan_documents(self._payload(graph={"nodes": big, "edges": []}))
+        warns = bfp.size_warnings(docs)
+        self.assertTrue(any("graph/nodes" in w and "80%" in w for w in warns), warns)
+
+    def test_no_warning_when_small(self):
+        self.assertEqual(bfp.size_warnings(bfp.plan_documents(self._payload())), [])
+
+    def test_warns_when_a_single_item_nears_chunk_size(self):
+        huge = [{"id": "t-1", "report": "가" * 170_000}]   # ≈ 510KB > 600KB 의 80%
+        docs = bfp.plan_documents(self._payload(threads=huge))
+        warns = bfp.size_warnings(docs)
+        self.assertTrue(any(w.startswith("threads 의 항목 하나가") for w in warns), warns)
 
 
 if __name__ == "__main__":

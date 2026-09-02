@@ -146,16 +146,134 @@ def prune_knowledge(knowledge: dict, messages: list[dict], exclusions: dict) -> 
 
 # ────────────────────────── 페이로드 조립 ──────────────────────────
 
-MY_MESSAGES_LIMIT = 700_000   # Firestore 문서 1MiB 한도 아래로 여유
-
-# threads·media 는 항목 전체가 문서 한 장(threads/all, media/all)에 들어간다.
-# 매일 새 주제가 붙으므로 언젠가는 한도에 닿는다. 넘으면 업로드가 실패하는데
-# 그때 원인을 찾기 어려우므로 미리 알린다. 요약을 서술형으로 늘리면서
-# 스레드 문서가 한 번에 10배 가까이 커진 적이 있다.
-BUNDLE_LIMIT = 700_000
-# 업로더가 나눠 담을 때 자르는 크기(upload_firestore.js CHUNK_BYTES). 여기서는
-# '몇 문서가 되는지' 를 알려 주는 데만 쓴다.
+# ── 문서 크기 — 한 곳에서 정한다 ──
+#
+# Firestore 문서는 1MiB 가 한도다. 넘으면 적재가 실패하고, 그날 밤 갱신이 멈춘다.
+# 이 한도에 닿은 적이 세 번이다 — 요약을 서술형으로 늘리며 스레드 문서가 10배
+# 가까이 커진 날, AI 검증 주석이 늘어 따로 뺀 날(2026-08-27), 그리고 주제가
+# 400개가 되며 threads/all 이 안전선을 2,851 바이트 넘어 밤 갱신이 멈춘 날
+# (2026-09-01). 셋 다 "데이터가 늘었다" 는 이유였고, 셋 다 터진 뒤에 알았다.
+#
+# 그래서 규칙을 뒤집는다. **늘어나는 것은 나눠 담고, 나눌 수 없는 것은 80% 에서
+# 미리 말한다.**
+#
+#   나눠 담는 것    threads · aiReports · media — 항목 목록이라 크기로 자를 수 있다.
+#                   업로더(upload_firestore.js chunkDocs)가 CHUNK_BYTES 로 자르고,
+#                   화면(boot.js)은 컬렉션 전체를 이어 붙인다. 총량이 커지는 것은
+#                   더 이상 고장이 아니다. 남는 위험은 하나 — **항목 하나**가 문서
+#                   한 장보다 큰 경우. 그것만 검사한다.
+#   나눌 수 없는 것  meta/archive · graph/nodes · graph/edges · digests/{분류} ·
+#                   myMessages/{이메일} — 화면이 문서 하나를 이름으로 읽는다.
+#                   DOC_LIMIT 를 넘으면 검사가 막고, WARN_LIMIT(80%) 를 넘으면
+#                   발행 로그에 미리 적는다. 하루 몇 KB 씩 크는 것들이라 80% 에서
+#                   말하면 터지기 몇 주 전이다.
+#
+# `plan_documents` 가 위 규칙으로 "실제로 어떤 문서가 몇 바이트로 올라가는가" 를
+# 계산한다. 발행 로그의 경고와 tests/test_firestore_payload.py 의 검사가 같은
+# 함수를 읽는다 — 두 벌로 적으면 어긋난다.
+DOC_LIMIT = 700_000                 # 검사가 막는 선. 1MiB 아래로 여유를 둔다
+WARN_LIMIT = int(DOC_LIMIT * 0.8)   # 발행 로그가 미리 말하는 선
+# 업로더가 나눠 담을 때 자르는 크기(upload_firestore.js CHUNK_BYTES 와 같은 값).
 CHUNK_BYTES = 600 * 1024
+# 나눠 담는 컬렉션이 이 문서 수를 넘으면 검사가 막는다. 문서 수가 곧 모두의 첫
+# 화면 읽기 수라, 조용히 늘게 두지 않는다.
+CHUNK_DOCS_MAX = 6
+# 예전 이름 — 검사와 다른 모듈이 아직 부를 수 있다.
+MY_MESSAGES_LIMIT = DOC_LIMIT
+BUNDLE_LIMIT = DOC_LIMIT
+
+
+def _nbytes(obj) -> int:
+    return len(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+
+
+def chunk_items(items: list, cap: int = CHUNK_BYTES) -> list[list]:
+    """항목을 크기 기준으로 나눈다 — upload_firestore.js 의 chunkDocs 와 같은 규칙.
+
+    개수가 아니라 **바이트**로 나눈다. 편마다 길이가 제각각이라 개수로 자르면
+    어떤 묶음은 텅 비고 어떤 묶음은 한도를 넘는다. 항목이 없으면 빈 묶음 하나를
+    남긴다 — 컬렉션이 통째로 사라지면 화면이 '아직 적재되지 않았다' 와 '없다' 를
+    구분하지 못한다.
+
+    JS 쪽 JSON.stringify 와 파이썬 json.dumps 는 공백·이스케이프가 조금 다르다.
+    그래서 여기 수치는 정확히 같지 않고 몇 바이트 어긋날 수 있다 — 검사가 한도에
+    300KB 여유를 두는 이유다.
+    """
+    docs: list[list] = []
+    cur: list = []
+    size = 2                          # "[]"
+    for it in items:
+        n = _nbytes(it) + 1
+        if cur and size + n > cap:
+            docs.append(cur)
+            cur, size = [], 2
+        cur.append(it)
+        size += n
+    docs.append(cur)
+    return docs
+
+
+def plan_documents(payload: dict) -> list[dict]:
+    """발행본이 Firestore 에 어떤 문서로 올라가는지 — 이름·바이트·나눠 담는지.
+
+    upload_firestore.js 의 main() 과 같은 모양이어야 한다. 그쪽이 컬렉션을 하나
+    더 나누거나 합치면 여기도 따라 고친다 — 그래야 검사와 경고가 실제를 본다.
+    (관리자 전용인 messagesSource 와 명부 members 는 멤버의 첫 화면 읽기가 아니고
+    문서마다 작아서 세지 않는다.)
+    """
+    docs: list[dict] = []
+
+    def one(coll: str, doc_id: str, obj) -> None:
+        docs.append({"collection": coll, "id": doc_id, "bytes": _nbytes(obj),
+                     "chunked": False})
+
+    def many(coll: str, items: list) -> None:
+        for i, part in enumerate(chunk_items(items)):
+            docs.append({"collection": coll, "id": "%03d" % i,
+                         "bytes": _nbytes({"items": part}), "chunked": True,
+                         "largest_item": max((_nbytes(it) for it in part), default=0)})
+
+    one("meta", "archive", payload["meta"])
+    many("threads", payload["threads"])
+    many("aiReports", payload["ai_reports"])
+    many("media", payload["media"])
+    for cat, obj in payload["digests"].items():
+        one("digests", cat, obj)
+    one("graph", "nodes", {"items": payload["graph"]["nodes"]})
+    one("graph", "edges", {"items": payload["graph"]["edges"]})
+    for email, items in payload["my_messages"].items():
+        one("myMessages", email, {"items": items})
+    return docs
+
+
+def size_warnings(docs: list[dict]) -> list[str]:
+    """발행 로그에 적을 크기 경고. 비어 있으면 아무 문서도 80% 에 안 닿았다.
+
+    나눌 수 없는 문서는 WARN_LIMIT 에서, 나눠 담는 컬렉션은 항목 하나가
+    CHUNK_BYTES 의 80% 에 닿을 때와 문서 수가 상한에 다가갈 때 말한다.
+    """
+    out: list[str] = []
+    per_coll: dict[str, list[dict]] = {}
+    for d in docs:
+        per_coll.setdefault(d["collection"], []).append(d)
+    for coll, ds in per_coll.items():
+        if ds[0]["chunked"]:
+            biggest = max(d["largest_item"] for d in ds)
+            if biggest > CHUNK_BYTES * 0.8:
+                out.append("%s 의 항목 하나가 %dKB — 문서 한 장(%dKB)의 80%% 를 넘었습니다. "
+                           "나눠 담아도 그 항목은 안 들어가게 됩니다."
+                           % (coll, biggest // 1024, CHUNK_BYTES // 1024))
+            if len(ds) >= CHUNK_DOCS_MAX - 1:
+                out.append("%s 가 %d문서로 갈라집니다 — 상한 %d 에 가깝습니다. "
+                           "CHUNK_BYTES 나 상한을 다시 보세요."
+                           % (coll, len(ds), CHUNK_DOCS_MAX))
+            continue
+        for d in ds:
+            if d["bytes"] > WARN_LIMIT:
+                out.append("%s/%s 문서가 %dKB — 검사 한도(%dKB)의 80%% 를 넘었습니다. "
+                           "닿기 전에 나눠 담을 길을 정하세요."
+                           % (coll, d["id"], d["bytes"] // 1024, DOC_LIMIT // 1024))
+    return out
 
 
 def build_my_messages(messages: list[dict], members: list[dict]) -> dict[str, list[dict]]:
@@ -509,31 +627,21 @@ def main() -> None:
     if payload["files"]:
         print("첨부 파일 %d건 연결" % len(payload["files"]))
     print("멤버 %d명" % len(payload["members"]))
-    big = [
-        (email, len(json.dumps(items, ensure_ascii=False).encode("utf-8")))
-        for email, items in payload["my_messages"].items()
-    ]
-    for email, size in big:
-        if size > MY_MESSAGES_LIMIT:
-            print("[주의] %s 의 '내 글' 문서가 %dKB — Firestore 한도에 근접합니다."
-                  % (email, size // 1024))
-    if payload["my_messages"]:
-        print("내 글 문서 %d명분 (최대 %dKB)"
-              % (len(big), max(s for _, s in big) // 1024))
-    # threads 는 나눠 담는다(2026-09-02). 총량이 한도를 넘는 것은 이제 고장이
-    # 아니므로 '나눠 담아야 한다' 고 말하지 않는다 — 이미 그러고 있다. 대신 몇
-    # 문서로 갈라지는지 적는다. 문서 수가 곧 모두의 첫 화면 읽기 수다.
-    size = len(json.dumps({"items": payload["threads"]},
-                          ensure_ascii=False).encode("utf-8"))
-    print("threads %dKB (%d문서로 나눠 담김)"
-          % (size // 1024, -(-size // CHUNK_BYTES)))
-    size = len(json.dumps({"items": payload["media"]},
-                          ensure_ascii=False).encode("utf-8"))
-    if size > BUNDLE_LIMIT:
-        print("[주의] media/all 문서가 %dKB — Firestore 1MiB 한도에 근접합니다. "
-              "나눠 담아야 합니다." % (size // 1024))
-    else:
-        print("media/all %dKB" % (size // 1024))
+    # 문서 크기 — 무엇이 몇 문서로 올라가고, 어디가 한도에 다가가는지.
+    # 나눠 담는 컬렉션은 총량이 커도 고장이 아니므로 문서 수만 적는다(문서 수가
+    # 곧 모두의 첫 화면 읽기 수다). 나눌 수 없는 문서는 80% 에서 미리 말한다.
+    docs = plan_documents(payload)
+    summary = []
+    for coll in ("threads", "aiReports", "media"):
+        ds = [d for d in docs if d["collection"] == coll]
+        summary.append("%s %dKB→%d문서" % (coll, sum(d["bytes"] for d in ds) // 1024, len(ds)))
+    mine = [d for d in docs if d["collection"] == "myMessages"]
+    if mine:
+        summary.append("내 글 %d명분(최대 %dKB)"
+                       % (len(mine), max(d["bytes"] for d in mine) // 1024))
+    print("문서 %d개: %s" % (len(docs), " · ".join(summary)))
+    for w in size_warnings(docs):
+        print("[주의] " + w)
     hidden_shots = sum(m.get("pii_hidden") or 0 for m in payload["media"])
     if hidden_shots:
         print("개인정보가 찍힌 사진 %d장 발행 제외 (업로드 목록에서도 뺐습니다)"

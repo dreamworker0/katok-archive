@@ -376,6 +376,11 @@ async function uploadImages(bucket, images, remoteSize) {
 async function main() {
   const meta = readPayload("meta.json");
   const media = readPayload("media.json");
+  /* 미디어도 나눠 담는다(2026-09-02). 아직 97KB 라 한 문서로 충분하지만, threads 가
+   * 700KB 안전선에 닿아 밤 갱신이 멈춘 다음 날 규칙을 하나로 정했다 — 목록으로
+   * 늘어나는 것은 전부 크기로 나눠 담는다. 화면(boot.js)은 media 컬렉션 전체를
+   * 이어 붙이므로 손댈 것이 없고, 지금은 여전히 문서 하나(000)다. */
+  const mediaDocs = chunkDocs(media);
   const mine = readPayload("my-messages.json");
   const threads = readPayload("threads.json");
   /* 스레드 요약이 멤버가 보는 본문이다. 한 문서(threads/all)로 발행하다가
@@ -409,9 +414,9 @@ async function main() {
 
   // 나눠 담은 컬렉션은 문서 수를 그대로 센다 — '읽기 N회' 가 실제와 달라지면
   // 이 줄을 보고 판단할 수가 없다.
-  const docCount = 1 + threadDocs.length + aiDocs.length + 1 + digestDocs.length + 2;
+  const docCount = 1 + threadDocs.length + aiDocs.length + mediaDocs.length + digestDocs.length + 2;
   console.log("적재 계획 (문서 수)");
-  console.log(`  meta 1 / threads ${threadDocs.length}문서 (${threads.length}건) / aiReports ${aiDocs.length}문서 (${aiReports.length}편) / media 1 (${media.length}건 묶음)`);
+  console.log(`  meta 1 / threads ${threadDocs.length}문서 (${threads.length}건) / aiReports ${aiDocs.length}문서 (${aiReports.length}편) / media ${mediaDocs.length}문서 (${media.length}건)`);
   console.log(`  digests ${digestDocs.length} / graph 2`);
   console.log(`  members ${members.length}명 — 적재하지 않음 (Firestore 가 주인)`);
   console.log(`  myMessages ${mineDocs.length}명분 (본인만 읽음)`);
@@ -427,7 +432,7 @@ async function main() {
     const changed =
       planWrites(prevState.collections.threads, threadDocs).writes.length +
       planWrites(prevState.collections.aiReports, aiDocs).writes.length +
-      planWrites(prevState.collections.media, [{ id: "all", items: media }]).writes.length +
+      planWrites(prevState.collections.media, mediaDocs).writes.length +
       planWrites(prevState.collections.myMessages, mineDocs).writes.length +
       planWrites(prevState.collections.digests, digestDocs).writes.length +
       planWrites(prevState.collections.messagesSource, sourceDocs).writes.length;
@@ -464,7 +469,8 @@ async function main() {
   // 예전 threads/all 문서는 sync 가 '새 목록에 없는 문서' 로 보고 지운다.
   await sync("threads", threadDocs);
   await sync("aiReports", aiDocs);
-  await sync("media", [{ id: "all", items: media }]);
+  // 예전 media/all 문서는 sync 가 '새 목록에 없는 문서' 로 보고 지운다.
+  await sync("media", mediaDocs);
   await sync("myMessages", mineDocs);
   // chunks 는 더 이상 발행하지 않는다. 예전 적재분을 지운다.
   await sync("chunks", []);
