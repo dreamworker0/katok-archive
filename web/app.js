@@ -130,6 +130,13 @@
   // ---------- 주제별 지식(요약) ----------
   function renderSummary() {
     var totals = STATS.totals || {};
+    // 요지는 화면이 뜬 뒤에 온다(boot.js loadRest). 오기 전에 이 화면에 들어서면
+    // 비어 있다고 말하지 않고 기다린다 — attachDigests 가 오면 다시 그린다.
+    if (state.digestsPending) {
+      el.view.innerHTML = emptyState("archive", "요지를 불러오는 중…",
+        "주제별 요지 산문을 받고 있습니다. 잠시만 기다려 주세요.");
+      return;
+    }
     var html = [
       '<section class="archive-welcome">' +
       '<div class="archive-welcome__copy">' +
@@ -775,13 +782,7 @@
       (open ? "보고서 접기" : "보고서 읽기") + "</span></button>" +
       // AI 보고서는 **있는 카드에만** 단추가 뜬다. 없는 카드에 회색 단추를 두면
       // 눌러 보고서야 없다는 것을 알게 되고, 그런 단추가 대부분이다.
-      (t.ai_report
-        ? '<button class="tc-ai-toggle" type="button" aria-expanded="' +
-          (aiOpen ? "true" : "false") + '" ' +
-          'title="이 대화를 두 AI 가 따로 검증한 결과입니다">' +
-          aiToggleIcon() + '<span class="tc-ai-toggle-label">' +
-          (aiOpen ? "AI 보고서 접기" : "AI 보고서") + "</span></button>"
-        : "") +
+      (t.ai_report ? aiToggleButton(aiOpen) : "") +
       '<button class="tc-dl" type="button" title="이 보고서를 .md 파일로 저장합니다">' +
       "⬇ .md</button></div>" +
       // 본문은 비워 둔다 — 읽겠다고 누른 카드만 fillReport() 가 채운다.
@@ -804,6 +805,63 @@
    * 그 말을 기계 둘이 맞춰 본 결과다. 둘을 한 흐름으로 읽히게 두면 누가 한
    * 말인지 알 수 없어진다.
    */
+  function aiToggleButton(aiOpen) {
+    return '<button class="tc-ai-toggle" type="button" aria-expanded="' +
+      (aiOpen ? "true" : "false") + '" ' +
+      'title="이 대화를 두 AI 가 따로 검증한 결과입니다">' +
+      aiToggleIcon() + '<span class="tc-ai-toggle-label">' +
+      (aiOpen ? "AI 보고서 접기" : "AI 보고서") + "</span></button>";
+  }
+
+  function bindAiToggle(b) {
+    b.onclick = function () {
+      var box = b.parentNode.parentNode;
+      var on = box.classList.toggle("ai-on");
+      var label = b.querySelector(".tc-ai-toggle-label");
+      if (label) label.textContent = on ? "AI 보고서 접기" : "AI 보고서";
+      b.setAttribute("aria-expanded", on ? "true" : "false");
+      if (on) fillAiReport(box);
+    };
+  }
+
+  /* AI 검증 주석은 화면이 뜬 뒤에 온다(boot.js loadRest). 그때 이미 그려진 카드에
+   * 단추를 **끼워 넣는다** — 화면을 다시 그리면 사람이 읽던 자리와 펼친 카드가
+   * 날아간다. 단추가 없는 카드 중 주석이 생긴 것만 손댄다. */
+  function patchAiButtons(scope) {
+    Array.prototype.forEach.call(scope.querySelectorAll(".tc-detail[data-tid]"), function (box) {
+      if (box.querySelector(".tc-ai-toggle")) return;
+      var t = THREAD_BY_ID[box.getAttribute("data-tid")];
+      if (!t || !t.ai_report) return;
+      var toggle = box.querySelector(".tc-toggle");
+      if (!toggle) return;
+      toggle.insertAdjacentHTML("afterend", aiToggleButton(false));
+      var wrap = document.createElement("div");
+      wrap.className = "tc-ai-body-wrap";
+      box.appendChild(wrap);
+      bindAiToggle(box.querySelector(".tc-ai-toggle"));
+    });
+  }
+
+  /** boot.js 가 요지를 받아 오면 부른다. 요지 화면을 보고 있었으면 다시 그린다. */
+  function attachDigests(d) {
+    DIGESTS = d || {};
+    A.digests = DIGESTS;
+    state.digestsPending = false;
+    if (state.view === "summary") render();
+  }
+
+  /** boot.js 가 AI 검증 주석을 받아 오면 부른다. 스레드에 붙이고 보이는 카드에 단추를 끼운다. */
+  function attachAiReports(items) {
+    (items || []).forEach(function (r) {
+      var t = THREAD_BY_ID[r.id];
+      if (!t) return;
+      t.ai_report = r.ai_report;
+      t.ai_checked = r.ai_checked;
+      t.ai_models = r.ai_models;
+    });
+    if (state.view === "timeline" && el.view) patchAiButtons(el.view);
+  }
+
   function aiReportBlock(t) {
     if (!t.ai_report) return "";
     var meta = [];
@@ -1141,16 +1199,7 @@
     });
     // 사람 보고서와 **따로** 여닫는다. 둘을 묶으면 AI 보고서만 보려는 사람이
     // 원문 요약을 지나쳐 스크롤해야 한다.
-    Array.prototype.forEach.call(scope.querySelectorAll(".tc-ai-toggle"), function (b) {
-      b.onclick = function () {
-        var box = b.parentNode.parentNode;
-        var on = box.classList.toggle("ai-on");
-        var label = b.querySelector(".tc-ai-toggle-label");
-        if (label) label.textContent = on ? "AI 보고서 접기" : "AI 보고서";
-        b.setAttribute("aria-expanded", on ? "true" : "false");
-        if (on) fillAiReport(box);
-      };
-    });
+    Array.prototype.forEach.call(scope.querySelectorAll(".tc-ai-toggle"), bindAiToggle);
     Array.prototype.forEach.call(scope.querySelectorAll("[data-nick]"), function (b) {
       b.onclick = function () {
         el.filter.value = b.getAttribute("data-nick");
@@ -2736,6 +2785,8 @@
     CATS = A.categories || [];
     STATS = A.stats || {};
     DIGESTS = A.digests || {};
+    // 보호모드에서는 요지가 화면 뒤에 온다(A.lazy). 로컬 미리보기(data.js)에는 다 있다.
+    state.digestsPending = !!(A.lazy && A.lazy.digests);
     KNOW = A.knowledge || { nodes: [], edges: [] };
     TAGIDX = A.tag_index || { tags: [], total_tags: 0, hidden_tags: 0, min_count: 2 };
     // 파일 위쪽에서 만든 것은 보호모드에서 늘 비어 있다(그때는 ARCHIVE 가 없다).
@@ -2865,7 +2916,7 @@
 
   // 보호모드(hosting)에서는 boot.js 가 로그인·데이터 로드를 끝낸 뒤 start() 를 부른다.
   // 로컬 미리보기(site/)에서는 data.js 가 이미 window.ARCHIVE 를 채워두므로 바로 시작.
-  window.ArchiveApp = { start: init };
+  window.ArchiveApp = { start: init, attachDigests: attachDigests, attachAiReports: attachAiReports };
   // 원문(messages)은 더 이상 싣지 않는다. 스레드 요약이 있으면 데이터가 준비된 것이다.
   if (window.ARCHIVE && window.ARCHIVE.threads) init(null);
 })();

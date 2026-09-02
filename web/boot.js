@@ -5,8 +5,9 @@
  *   2) members/{내이메일} 문서 조회
  *        있음   → 3)
  *        없음   → claims/{내이메일} 조회 → 신청 폼 또는 "승인 대기 중" 화면
- *   3) meta/archive 를 읽고, 번들(threads·aiReports·media·digests·graph)은
- *      IndexedDB 에 둔 것이 같은 내용이면 거기서, 아니면 Firestore 에서 → window.ARCHIVE
+ *   3) meta/archive 를 읽고, 주제·사진·관계망은 IndexedDB 에 둔 것이 같은 내용이면
+ *      거기서, 아니면 Firestore 에서 → window.ARCHIVE → 앱 시작
+ *      요지와 AI 검증 주석은 화면이 뜬 뒤에 같은 방식으로 받아 앱에 건넨다
  *   4) 이미지 로더를 Storage 모드로 전환하고 앱 시작
  *
  * 데이터를 정적 파일(data.js)로 내려주지 않는 것이 이 단계의 핵심이다. 대화 전문은
@@ -187,7 +188,7 @@
    *
    * 로그아웃하면 지운다. 멤버 전용 내용이 공용 컴퓨터의 브라우저에 남으면 안 된다.
    */
-  var BUNDLE_DB = "archive-bundles", BUNDLE_STORE = "bundles", BUNDLE_KEY = "archive";
+  var BUNDLE_DB = "archive-bundles", BUNDLE_STORE = "bundles";
 
   function bundleDb() {
     return new Promise(function (resolve, reject) {
@@ -213,14 +214,16 @@
     });
   }
 
-  function readBundleCache() {
-    return bundleOp("readonly", function (store) { return store.get(BUNDLE_KEY); })
+  /* 조각 셋을 따로 둔다 — core(threads·media·graph) · digests · aiReports.
+     한 덩어리로 두면 지연 로드한 조각을 붙일 때마다 3.5MB 를 다시 써야 한다. */
+  function readPart(key) {
+    return bundleOp("readonly", function (store) { return store.get(key); })
       .then(function (v) { return v || null; })
       .catch(function (e) { console.warn("번들 캐시를 읽지 못했습니다 — 서버에서 받습니다.", e); return null; });
   }
 
-  function writeBundleCache(bundle) {
-    return bundleOp("readwrite", function (store) { return store.put(bundle, BUNDLE_KEY); })
+  function writePart(key, value) {
+    return bundleOp("readwrite", function (store) { return store.put(value, key); })
       .catch(function (e) { console.warn("번들 캐시를 쓰지 못했습니다 — 다음에도 서버에서 받습니다.", e); });
   }
 
@@ -229,115 +232,131 @@
       .catch(function () { /* 없으면 없는 것 */ });
   }
 
-  /** Firestore 에서 번들 다섯 가지를 받는다. 원본 배열만 — 조립은 assembleArchive 가. */
-  function fetchBundles(db) {
-    return Promise.all([
-      db.collection("threads").get(),   // 크기로 나눠 담긴 문서들(000, 001, …)
-      /* AI 검증 주석. **없어도 아카이브는 떠야 한다** — 곁딸린 글 하나 때문에
-         본문 전체가 안 보이는 것은 맞바꿀 만한 일이 아니다. Promise.all 은
-         하나만 깨져도 전부 깨지므로 여기서 삼킨다(규칙 전파가 늦거나 아직
-         적재 전인 환경도 있다). */
-      db.collection("aiReports").get().catch(function (e) {
-        console.warn("AI 보고서를 불러오지 못했습니다 — 없이 진행합니다.", e);
-        return null;
-      }),
-      db.collection("media").get(),     // 크기로 나눠 담긴 문서들
-      db.collection("digests").get(),
-      db.collection("graph").get(),     // graph/nodes, graph/edges
-    ]).then(function (res) {
-      var items = function (snap) {
-        var out = [];
-        if (snap) snap.forEach(function (d) {
-          var got = d.data().items;
-          if (got) out = out.concat(got);
-        });
-        return out;
-      };
-      var digests = {};
-      res[3].forEach(function (d) { digests[d.id] = d.data(); });
-      var graph = { nodes: [], edges: [] };
-      res[4].forEach(function (d) {
-        if (d.id === "nodes") graph.nodes = d.data().items || [];
-        if (d.id === "edges") graph.edges = d.data().items || [];
+  /** 지문이 같은 조각은 캐시에서, 아니면 fetcher 로 받아 캐시에 둔다. */
+  function cachedOrFetch(key, hash, fetcher) {
+    return readPart(key).then(function (c) {
+      if (hash && c && c.content_hash === hash && c.data) return c.data;
+      return fetcher().then(function (data) {
+        // put 은 그 시점의 값을 복제하므로 조립이 나중에 덧붙이는 것과 섞이지 않는다.
+        if (hash && data) writePart(key, { content_hash: hash, saved_at: new Date().toISOString(), data: data });
+        return data;
       });
-      return {
-        threads: items(res[0]),
-        aiReports: res[1] ? items(res[1]) : null,
-        media: items(res[2]),
-        digests: digests,
-        graph: graph,
-      };
     });
   }
 
-  /** meta + 번들 → window.ARCHIVE. 캐시에서 왔든 서버에서 왔든 같은 길이다. */
-  function assembleArchive(meta, b) {
-    var threads = b.threads.slice();
-    threads.sort(function (a, c) { return a.id < c.id ? -1 : a.id > c.id ? 1 : 0; });
-
-    /* AI 검증 주석은 따로 실려 온다(threads/all 이 1MiB 한도에 다가갔다).
-       화면은 스레드의 한 속성으로 읽으므로 여기서 도로 붙인다 — 갈라 담은
-       것은 저장의 사정이지 화면이 알 일이 아니다. */
-    var aiById = {};
-    (b.aiReports || []).forEach(function (r) { aiById[r.id] = r; });
-    threads.forEach(function (t) {
-      var r = aiById[t.id];
-      if (!r) return;
-      t.ai_report = r.ai_report;
-      t.ai_checked = r.ai_checked;
-      t.ai_models = r.ai_models;
+  /* 나눠 담긴 문서(000, 001, …)를 하나로 이어 붙인다. */
+  function itemsOf(snap) {
+    var out = [];
+    if (snap) snap.forEach(function (d) {
+      var got = d.data().items;
+      if (got) out = out.concat(got);
     });
+    return out;
+  }
 
+  /** 첫 화면에 꼭 필요한 것 — 주제 목록·사진·관계망. 약 0.9MB. */
+  function fetchCore(db) {
+    return Promise.all([
+      db.collection("threads").get(),
+      db.collection("media").get(),
+      db.collection("graph").get(),
+    ]).then(function (res) {
+      var graph = { nodes: [], edges: [] };
+      res[2].forEach(function (d) {
+        if (d.id === "nodes") graph.nodes = d.data().items || [];
+        if (d.id === "edges") graph.edges = d.data().items || [];
+      });
+      return { threads: itemsOf(res[0]), media: itemsOf(res[1]), graph: graph };
+    });
+  }
+
+  /** 요지 산문 12편, 약 1.7MB — 가장 무겁다. 요지 화면에 들어설 때만 필요하다. */
+  function fetchDigests(db) {
+    return db.collection("digests").get().then(function (snap) {
+      var digests = {};
+      snap.forEach(function (d) { digests[d.id] = d.data(); });
+      return digests;
+    });
+  }
+
+  /** AI 검증 주석 약 1MB — 카드의 단추를 눌러야 읽는다. **없어도 아카이브는 떠야 한다.** */
+  function fetchAiReports(db) {
+    return db.collection("aiReports").get().then(itemsOf).catch(function (e) {
+      console.warn("AI 보고서를 불러오지 못했습니다 — 없이 진행합니다.", e);
+      return null;
+    });
+  }
+
+  /** meta + core → window.ARCHIVE. 캐시에서 왔든 서버에서 왔든 같은 길이다. */
+  function assembleArchive(meta, core) {
+    var threads = core.threads.slice();
+    threads.sort(function (a, c) { return a.id < c.id ? -1 : a.id > c.id ? 1 : 0; });
     window.ARCHIVE = {
       chat_room: meta.chat_room,
       categories: meta.categories || [],
       stats: meta.stats || {},
       threads: threads,
-      media: b.media,
-      digests: b.digests,
+      media: core.media,
+      digests: {},
+      // 아래 둘은 화면이 뜬 뒤에 온다. app.js 가 이 표시를 보고 자리를 비워 둔다.
+      lazy: { digests: true, aiReports: true },
       tag_index: meta.tag_index || null,
       interests: meta.interests || null,
       knowledge: {
-        nodes: b.graph.nodes,
-        edges: b.graph.edges,
+        nodes: core.graph.nodes,
+        edges: core.graph.edges,
         node_types: meta.node_types || [],
         edge_types: meta.edge_types || [],
       },
     };
   }
 
-  /** Firestore 에서 아카이브를 조립한다. 번들은 지문이 같으면 캐시에서. */
+  /* ── 두 단계로 받는다 (2026-09-02) ──
+   *
+   * 첫 화면이 받던 번들이 약 3.5MB 였다. 그중 요지(digests) 1.7MB 와 AI 검증 주석
+   * (aiReports) 1MB 는 첫 화면이 그리지 않는다 — 요지는 요지 화면에 들어설 때,
+   * 주석은 카드의 단추를 눌러야 읽는다. 그래서 주제·사진·관계망(0.9MB)만 받아 화면을
+   * 띄우고, 나머지 둘은 뒤에서 받아 app.js 에 건넨다(attachDigests·attachAiReports).
+   *
+   * 조각마다 meta.content_hash 로 IndexedDB 에 둔다. 매일 밤 바뀌지만 하루에 한
+   * 번이라, 재방문은 meta 한 장(읽기 1회, 약 57KB)만 서버에서 받는다.
+   *
+   * localStorage 가 아니라 IndexedDB 인 이유: 3.5MB 는 localStorage 한도(대개
+   * 5MB, 도메인 전체)에 아슬아슬하고 문자열로만 넣는다. Firestore SDK 의 오프라인
+   * 지속성을 쓰지 않는 이유: get() 은 기본이 서버 우선이라 캐시가 있어도 받고,
+   * 캐시 우선으로 바꾸면 '언제 낡았는가' 를 따로 알아야 한다 — 그 답이 곧
+   * content_hash 이므로 그것만 있으면 저장은 단순한 쪽이 낫다.
+   *
+   * 실패는 전부 삼킨다. 캐시가 안 열리면(사생활 창·용량·막힘) 예전처럼 서버에서
+   * 받는다. 로그아웃하면 지운다 — 멤버 전용 내용이 공용 컴퓨터에 남으면 안 된다.
+   */
   function loadArchive(db) {
     gateLoading("아카이브를 불러오는 중…");
 
     return db.collection("meta").doc("archive").get().then(function (metaSnap) {
       if (!metaSnap.exists) throw new Error("아카이브가 아직 적재되지 않았습니다.");
       var meta = metaSnap.data();
-
-      return readBundleCache().then(function (cached) {
-        var fresh = !!(meta.content_hash && cached && cached.content_hash === meta.content_hash
-          && cached.threads && cached.media && cached.digests && cached.graph);
-        if (fresh) {
-          assembleArchive(meta, cached);
-          return meta;
-        }
-        return fetchBundles(db).then(function (b) {
-          // 조립이 threads 항목에 ai_report 를 덧붙이므로 **먼저** 저장한다 —
-          // put 은 그 시점의 값을 복제한다. 저장은 기다리지 않는다.
-          if (meta.content_hash) {
-            writeBundleCache({
-              content_hash: meta.content_hash, saved_at: new Date().toISOString(),
-              threads: b.threads, aiReports: b.aiReports, media: b.media,
-              digests: b.digests, graph: b.graph,
-            });
-          }
-          assembleArchive(meta, b);
+      return cachedOrFetch("core", meta.content_hash, function () { return fetchCore(db); })
+        .then(function (core) {
+          assembleArchive(meta, core);
           return meta;
         });
-      });
     });
   }
 
+  /** 화면이 뜬 뒤 나머지 둘을 받아 건넨다. 어느 쪽이 실패해도 화면은 이미 떠 있다. */
+  function loadRest(db, meta) {
+    var app = window.ArchiveApp || {};
+    cachedOrFetch("digests", meta.content_hash, function () { return fetchDigests(db); })
+      .then(function (d) { if (app.attachDigests) app.attachDigests(d || {}); },
+            function (e) {
+              console.warn("요지를 불러오지 못했습니다.", e);
+              if (app.attachDigests) app.attachDigests({});
+            });
+    cachedOrFetch("aiReports", meta.content_hash, function () { return fetchAiReports(db); })
+      .then(function (items) { if (app.attachAiReports) app.attachAiReports(items || []); },
+            function (e) { console.warn("AI 보고서를 불러오지 못했습니다.", e); });
+  }
 
   /** 앱에 넘길 요청 API.
    *
@@ -561,7 +580,7 @@
         var member = snap.data();
         // 이미지 권한(Custom Claims)을 먼저 확인한 뒤 아카이브를 연다
         ensureClaim(user).then(function () { return loadArchive(db); }).then(
-          function () { start(user, member); },
+          function (meta) { start(user, member); loadRest(db, meta); },
           function (e) {
             gateError("아카이브를 불러오지 못했습니다", escapeHtml(e.message || String(e)),
               { retry: true });

@@ -459,7 +459,8 @@ ArchiveImages.diagnose()   // {mode, total, loaded, failed, waiting, lastError}
   [AUTOMATION.md](AUTOMATION.md).
 - **P3** 온톨로지 v2 — 부분. 관계에 정의역·치역과 종류 표는 들어갔고(`scripts/ontology.py`),
   근거(어느 메시지가 이 관계를 말했나)는 아직 없다.
-- 첫 화면이 매번 Firestore 에서 약 3.5MB 를 다시 받는다 — 2026-09-02 부터
-  `meta.content_hash` 로 IndexedDB 에 두고 바뀐 날만 다시 받는다(`web/boot.js`).
-  aiReports·digests 를 화면에 들어갈 때 받는 것은 아직이다.
+- ~~첫 화면이 매번 Firestore 에서 약 3.5MB 를 다시 받는다~~ — 끝. 2026-09-02 부터
+  `meta.content_hash` 로 IndexedDB 에 두고 바뀐 날만 다시 받으며, 요지(1.7MB)와
+  AI 검증 주석(1MB)은 화면이 뜬 뒤에 받는다(`web/boot.js` loadRest). 첫 방문 읽기
+  7회 → 재방문 2회(`tests/boot_cache.test.js` 가 가짜 Firestore 로 실측).
 - ⚠️ **멤버 동의 정리 후 실제 공개** — 7/23 대화방 찬반 투표·개인정보 동의 참조
