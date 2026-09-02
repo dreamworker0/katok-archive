@@ -60,6 +60,11 @@ class PayloadShapeTest(unittest.TestCase):
                             "%s/%s 가 너무 큼: %d bytes"
                             % (d["collection"], d["id"], d["bytes"]))
 
+    def test_meta_carries_a_content_hash(self):
+        """화면이 번들을 다시 받을지 정하는 값. 없으면 매번 전부 받는다."""
+        h = self.payload["meta"].get("content_hash")
+        self.assertTrue(isinstance(h, str) and len(h) == 16, h)
+
     def test_meta_counts_match_payload(self):
         m = self.payload["meta"]
         self.assertEqual(m["thread_count"], len(self.payload["threads"]))
@@ -371,6 +376,12 @@ class DocumentPlanTest(unittest.TestCase):
         docs = bfp.plan_documents(self._payload(graph={"nodes": big, "edges": []}))
         warns = bfp.size_warnings(docs)
         self.assertTrue(any("graph/nodes" in w and "80%" in w for w in warns), warns)
+
+    def test_content_hash_follows_the_bundles(self):
+        a = bfp.content_hash([{"id": "t-1", "report": "가"}], [], [], {}, {})
+        b = bfp.content_hash([{"id": "t-1", "report": "나"}], [], [], {}, {})
+        self.assertNotEqual(a, b)
+        self.assertEqual(a, bfp.content_hash([{"id": "t-1", "report": "가"}], [], [], {}, {}))
 
     def test_no_warning_when_small(self):
         self.assertEqual(bfp.size_warnings(bfp.plan_documents(self._payload())), [])

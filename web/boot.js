@@ -5,7 +5,8 @@
  *   2) members/{내이메일} 문서 조회
  *        있음   → 3)
  *        없음   → claims/{내이메일} 조회 → 신청 폼 또는 "승인 대기 중" 화면
- *   3) meta/archive + chunks + threads + digests + graph 로드 → window.ARCHIVE 조립
+ *   3) meta/archive 를 읽고, 번들(threads·aiReports·media·digests·graph)은
+ *      IndexedDB 에 둔 것이 같은 내용이면 거기서, 아니면 Firestore 에서 → window.ARCHIVE
  *   4) 이미지 로더를 Storage 모드로 전환하고 앱 시작
  *
  * 데이터를 정적 파일(data.js)로 내려주지 않는 것이 이 단계의 핵심이다. 대화 전문은
@@ -167,7 +168,145 @@
     });
   }
 
-  /** Firestore 에서 아카이브를 조립한다. */
+  /* ── 번들 캐시 (2026-09-02) ──
+   *
+   * 첫 화면이 받는 번들이 약 3.5MB 다(threads 2문서 · aiReports 2문서 · media ·
+   * digests 12 · graph 2). 매일 밤 바뀌지만 **하루에 한 번** 바뀐다 — 그런데 방문
+   * 마다 전부 다시 받았다. 발행본은 meta.content_hash 에 번들의 지문을 싣는다.
+   * meta 한 장(약 57KB, 읽기 1회)을 읽어 지문이 IndexedDB 에 둔 것과 같으면
+   * 나머지는 받지 않는다.
+   *
+   * localStorage 가 아니라 IndexedDB 인 이유: 3.5MB 는 localStorage 한도(대개
+   * 5MB, 도메인 전체)에 아슬아슬하고 문자열로만 넣는다. Firestore SDK 의 오프라인
+   * 지속성을 쓰지 않는 이유: get() 은 기본이 서버 우선이라 캐시가 있어도 받고,
+   * 캐시 우선으로 바꾸면 '언제 낡았는가' 를 따로 알아야 한다 — 그 답이 곧
+   * content_hash 이므로 그것만 있으면 저장은 단순한 쪽이 낫다.
+   *
+   * 실패는 전부 삼킨다. 캐시가 안 열리면(사생활 창·용량·막힘) 예전처럼 서버에서
+   * 받는다. 캐시가 느려서 화면이 늦는 일은 없어야 한다.
+   *
+   * 로그아웃하면 지운다. 멤버 전용 내용이 공용 컴퓨터의 브라우저에 남으면 안 된다.
+   */
+  var BUNDLE_DB = "archive-bundles", BUNDLE_STORE = "bundles", BUNDLE_KEY = "archive";
+
+  function bundleDb() {
+    return new Promise(function (resolve, reject) {
+      try {
+        var req = indexedDB.open(BUNDLE_DB, 1);
+        req.onupgradeneeded = function () { req.result.createObjectStore(BUNDLE_STORE); };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { reject(req.error); };
+        req.onblocked = function () { reject(new Error("blocked")); };
+      } catch (e) { reject(e); }
+    });
+  }
+
+  function bundleOp(mode, run) {
+    return bundleDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(BUNDLE_STORE, mode);
+        var req = run(tx.objectStore(BUNDLE_STORE));
+        tx.oncomplete = function () { db.close(); resolve(req ? req.result : undefined); };
+        tx.onerror = function () { db.close(); reject(tx.error); };
+        tx.onabort = function () { db.close(); reject(tx.error || new Error("abort")); };
+      });
+    });
+  }
+
+  function readBundleCache() {
+    return bundleOp("readonly", function (store) { return store.get(BUNDLE_KEY); })
+      .then(function (v) { return v || null; })
+      .catch(function (e) { console.warn("번들 캐시를 읽지 못했습니다 — 서버에서 받습니다.", e); return null; });
+  }
+
+  function writeBundleCache(bundle) {
+    return bundleOp("readwrite", function (store) { return store.put(bundle, BUNDLE_KEY); })
+      .catch(function (e) { console.warn("번들 캐시를 쓰지 못했습니다 — 다음에도 서버에서 받습니다.", e); });
+  }
+
+  function clearBundleCache() {
+    return bundleOp("readwrite", function (store) { return store.clear(); })
+      .catch(function () { /* 없으면 없는 것 */ });
+  }
+
+  /** Firestore 에서 번들 다섯 가지를 받는다. 원본 배열만 — 조립은 assembleArchive 가. */
+  function fetchBundles(db) {
+    return Promise.all([
+      db.collection("threads").get(),   // 크기로 나눠 담긴 문서들(000, 001, …)
+      /* AI 검증 주석. **없어도 아카이브는 떠야 한다** — 곁딸린 글 하나 때문에
+         본문 전체가 안 보이는 것은 맞바꿀 만한 일이 아니다. Promise.all 은
+         하나만 깨져도 전부 깨지므로 여기서 삼킨다(규칙 전파가 늦거나 아직
+         적재 전인 환경도 있다). */
+      db.collection("aiReports").get().catch(function (e) {
+        console.warn("AI 보고서를 불러오지 못했습니다 — 없이 진행합니다.", e);
+        return null;
+      }),
+      db.collection("media").get(),     // 크기로 나눠 담긴 문서들
+      db.collection("digests").get(),
+      db.collection("graph").get(),     // graph/nodes, graph/edges
+    ]).then(function (res) {
+      var items = function (snap) {
+        var out = [];
+        if (snap) snap.forEach(function (d) {
+          var got = d.data().items;
+          if (got) out = out.concat(got);
+        });
+        return out;
+      };
+      var digests = {};
+      res[3].forEach(function (d) { digests[d.id] = d.data(); });
+      var graph = { nodes: [], edges: [] };
+      res[4].forEach(function (d) {
+        if (d.id === "nodes") graph.nodes = d.data().items || [];
+        if (d.id === "edges") graph.edges = d.data().items || [];
+      });
+      return {
+        threads: items(res[0]),
+        aiReports: res[1] ? items(res[1]) : null,
+        media: items(res[2]),
+        digests: digests,
+        graph: graph,
+      };
+    });
+  }
+
+  /** meta + 번들 → window.ARCHIVE. 캐시에서 왔든 서버에서 왔든 같은 길이다. */
+  function assembleArchive(meta, b) {
+    var threads = b.threads.slice();
+    threads.sort(function (a, c) { return a.id < c.id ? -1 : a.id > c.id ? 1 : 0; });
+
+    /* AI 검증 주석은 따로 실려 온다(threads/all 이 1MiB 한도에 다가갔다).
+       화면은 스레드의 한 속성으로 읽으므로 여기서 도로 붙인다 — 갈라 담은
+       것은 저장의 사정이지 화면이 알 일이 아니다. */
+    var aiById = {};
+    (b.aiReports || []).forEach(function (r) { aiById[r.id] = r; });
+    threads.forEach(function (t) {
+      var r = aiById[t.id];
+      if (!r) return;
+      t.ai_report = r.ai_report;
+      t.ai_checked = r.ai_checked;
+      t.ai_models = r.ai_models;
+    });
+
+    window.ARCHIVE = {
+      chat_room: meta.chat_room,
+      categories: meta.categories || [],
+      stats: meta.stats || {},
+      threads: threads,
+      media: b.media,
+      digests: b.digests,
+      tag_index: meta.tag_index || null,
+      interests: meta.interests || null,
+      knowledge: {
+        nodes: b.graph.nodes,
+        edges: b.graph.edges,
+        node_types: meta.node_types || [],
+        edge_types: meta.edge_types || [],
+      },
+    };
+  }
+
+  /** Firestore 에서 아카이브를 조립한다. 번들은 지문이 같으면 캐시에서. */
   function loadArchive(db) {
     gateLoading("아카이브를 불러오는 중…");
 
@@ -175,81 +314,30 @@
       if (!metaSnap.exists) throw new Error("아카이브가 아직 적재되지 않았습니다.");
       var meta = metaSnap.data();
 
-      return Promise.all([
-        db.collection("threads").get(),   // threads/all 1문서
-        /* AI 검증 주석. **없어도 아카이브는 떠야 한다** — 곁딸린 글 하나 때문에
-           본문 전체가 안 보이는 것은 맞바꿀 만한 일이 아니다. Promise.all 은
-           하나만 깨져도 전부 깨지므로 여기서 삼킨다(규칙 전파가 늦거나 아직
-           적재 전인 환경도 있다). */
-        db.collection("aiReports").get().catch(function (e) {
-          console.warn("AI 보고서를 불러오지 못했습니다 — 없이 진행합니다.", e);
-          return null;
-        }),
-        db.collection("media").get(),     // media/all 1문서
-        db.collection("digests").get(),
-        db.collection("graph").get(),     // graph/nodes, graph/edges
-      ]).then(function (res) {
-        var threadSnap = res[0], aiSnap = res[1], mediaSnap = res[2],
-            digestSnap = res[3], graphSnap = res[4];
-
-        // 스레드·미디어는 각각 한 문서에 묶여 있다(읽기 절약)
-        var threads = [];
-        threadSnap.forEach(function (d) {
-          var items = d.data().items;
-          if (items) threads = threads.concat(items);
+      return readBundleCache().then(function (cached) {
+        var fresh = !!(meta.content_hash && cached && cached.content_hash === meta.content_hash
+          && cached.threads && cached.media && cached.digests && cached.graph);
+        if (fresh) {
+          assembleArchive(meta, cached);
+          return meta;
+        }
+        return fetchBundles(db).then(function (b) {
+          // 조립이 threads 항목에 ai_report 를 덧붙이므로 **먼저** 저장한다 —
+          // put 은 그 시점의 값을 복제한다. 저장은 기다리지 않는다.
+          if (meta.content_hash) {
+            writeBundleCache({
+              content_hash: meta.content_hash, saved_at: new Date().toISOString(),
+              threads: b.threads, aiReports: b.aiReports, media: b.media,
+              digests: b.digests, graph: b.graph,
+            });
+          }
+          assembleArchive(meta, b);
+          return meta;
         });
-        threads.sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });
-
-        /* AI 검증 주석은 따로 실려 온다(threads/all 이 1MiB 한도에 다가갔다).
-           화면은 스레드의 한 속성으로 읽으므로 여기서 도로 붙인다 — 갈라 담은
-           것은 저장의 사정이지 화면이 알 일이 아니다. */
-        var aiById = {};
-        if (aiSnap) aiSnap.forEach(function (d) {
-          (d.data().items || []).forEach(function (r) { aiById[r.id] = r; });
-        });
-        threads.forEach(function (t) {
-          var r = aiById[t.id];
-          if (!r) return;
-          t.ai_report = r.ai_report;
-          t.ai_checked = r.ai_checked;
-          t.ai_models = r.ai_models;
-        });
-
-        var media = [];
-        mediaSnap.forEach(function (d) {
-          var items = d.data().items;
-          if (items) media = media.concat(items);
-        });
-
-        var digests = {};
-        digestSnap.forEach(function (d) { digests[d.id] = d.data(); });
-
-        var graph = { nodes: [], edges: [] };
-        graphSnap.forEach(function (d) {
-          if (d.id === "nodes") graph.nodes = d.data().items || [];
-          if (d.id === "edges") graph.edges = d.data().items || [];
-        });
-
-        window.ARCHIVE = {
-          chat_room: meta.chat_room,
-          categories: meta.categories || [],
-          stats: meta.stats || {},
-          threads: threads,
-          media: media,
-          digests: digests,
-          tag_index: meta.tag_index || null,
-          interests: meta.interests || null,
-          knowledge: {
-            nodes: graph.nodes,
-            edges: graph.edges,
-            node_types: meta.node_types || [],
-            edge_types: meta.edge_types || [],
-          },
-        };
-        return meta;
       });
     });
   }
+
 
   /** 앱에 넘길 요청 API.
    *
@@ -434,7 +522,10 @@
           : (member.nickname ? [member.nickname] : []),
       },
       role: member.role || "user",
-      signOut: function () { firebase.auth().signOut(); },
+      signOut: function () {
+        // 멤버 전용 내용이 이 브라우저에 남지 않게 먼저 지운다
+        clearBundleCache().then(function () { firebase.auth().signOut(); });
+      },
       requests: makeRequestApi(firebase.firestore(), user),
       admin: member.role === "admin"
         ? makeAdminApi(firebase.firestore(), user)
@@ -511,6 +602,7 @@
     firebase.auth().onAuthStateChanged(function (user) {
       if (user) onSignedIn(user);
       else {
+        clearBundleCache();
         el.app.classList.add("hidden");
         el.gate.classList.remove("hidden");
         gateSignIn();

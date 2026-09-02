@@ -21,6 +21,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from collections import Counter
@@ -185,6 +186,20 @@ BUNDLE_LIMIT = DOC_LIMIT
 
 def _nbytes(obj) -> int:
     return len(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+
+
+def content_hash(*parts) -> str:
+    """멤버가 첫 화면에 받는 번들(threads·aiReports·media·digests·graph)의 지문.
+
+    화면(boot.js)은 meta/archive 한 장을 읽고 이 값이 IndexedDB 에 둔 것과 같으면
+    나머지 번들을 다시 받지 않는다. 방문마다 약 3.5MB 를 다시 받던 것이 바뀐 날만
+    받게 된다. meta 자체는 늘 받으므로(1회 읽기) 여기 넣지 않는다.
+
+    가린 **뒤의** 값으로 만든다 — 가리기 규칙이 바뀌면 내용이 바뀐 것이고, 화면도
+    다시 받아야 한다.
+    """
+    raw = json.dumps(parts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
 def chunk_items(items: list, cap: int = CHUNK_BYTES) -> list[list]:
@@ -568,6 +583,7 @@ def build_payload() -> dict:
     graph, h4 = pii.mask_tree(graph, allow)
     meta, h5 = pii.mask_tree(meta, allow)
     pii_hits = h1 + h2 + h3 + h4 + h5
+    meta["content_hash"] = content_hash(threads_pub, ai_reports, media, digests_pub, graph)
 
     return {
         "meta": meta,
