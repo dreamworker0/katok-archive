@@ -67,7 +67,6 @@ from pathlib import Path
 from scripts import tags as taglib
 from scripts.llm import DEFAULT_MODEL, call_claude, parse_reply
 from scripts.topic_reports import (
-    REPORTS_DIR,
     TAG_COUNT_MAX,
     TAG_COUNT_MIN,
     load_reports,
@@ -76,8 +75,8 @@ from scripts.topic_reports import (
 from scripts.tag_surgery import (
     apply_keyword_changes,
     backup_dir,
-    replace_keywords_line,
     shown,
+    replace_keywords_line,  # noqa: F401 — 여기서 안 쓰지만 tests/test_retag_reports.py 가 이 모듈에서 가져간다
 )
 
 # `shown` 과 `replace_keywords_line` 은 scripts/tag_surgery.py 로 옮겼다. 네

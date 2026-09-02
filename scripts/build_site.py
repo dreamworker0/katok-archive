@@ -44,7 +44,7 @@ ASSETS_VIDEOS = ROOT / "assets" / "videos"
 WEB = ROOT / "web"
 SITE = ROOT / "site"
 
-STATIC_FILES = ("index.html", "app.js", "text.js", "styles.css", "graph.js",
+STATIC_FILES = ("index.html", "app.js", "text.js", "admin.js", "styles.css", "graph.js",
                 "images.js", "favicon.svg")
 STATIC_DIRS = ("art",)
 

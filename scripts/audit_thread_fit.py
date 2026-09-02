@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import argparse
 import collections
-import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 from pathlib import Path

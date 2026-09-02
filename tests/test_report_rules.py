@@ -215,7 +215,8 @@ class AiReportTests(unittest.TestCase):
     """
 
     def _write(self, lines):
-        import tempfile, pathlib
+        import tempfile
+        import pathlib
         d = pathlib.Path(tempfile.mkdtemp())
         (d / "t-001.md").write_text(chr(10).join(lines), encoding="utf-8")
         return d

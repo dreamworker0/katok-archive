@@ -68,7 +68,8 @@ DEFAULT_MODEL = llm.DEFAULT_MODEL
 TIMEOUT_SEC = llm.TIMEOUT_SEC
 call_claude = llm.call_claude
 parse_reply = llm.parse_reply
-from scripts.topic_reports import (
+# 별칭을 import 사이에 두는 것은 의도다 — llm 을 옮긴 사연이 그 옆에 있어야 읽힌다.
+from scripts.topic_reports import (  # noqa: E402
     MAX_VERBATIM_CHARS as REPORT_RULES_MAX_QUOTE,
     REPORT_RULES,
     REPORTS_DIR,

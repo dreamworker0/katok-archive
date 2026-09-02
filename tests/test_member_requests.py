@@ -120,7 +120,8 @@ class LegacyShapeTest(unittest.TestCase):
     """옛 요청 파일은 nickname 하나만 갖고 있다. 그대로 읽혀야 한다."""
 
     def test_single_nickname_is_promoted_to_list(self):
-        import json, tempfile, os
+        import json
+        import tempfile
         from unittest import mock
         payload = {"requests": [{"email": "a@x.com", "nickname": "홍길동",
                                  "collection": "unpublished"}]}

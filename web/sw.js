@@ -39,6 +39,7 @@
     "images.js",
     "graph.js",
     "text.js",
+    "admin.js",
     "app.js",
     "boot.js",
     "pwa.js",

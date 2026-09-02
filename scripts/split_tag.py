@@ -52,7 +52,6 @@ from pathlib import Path
 from scripts import tags as taglib
 from scripts.llm import DEFAULT_MODEL, call_claude, parse_reply
 from scripts.tag_surgery import apply_keyword_changes, backup_dir, shown
-from scripts.topic_reports import REPORTS_DIR
 from scripts.topic_reports import load_reports
 
 ROOT = Path(__file__).resolve().parent.parent

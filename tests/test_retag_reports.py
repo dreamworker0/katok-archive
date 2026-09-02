@@ -152,7 +152,6 @@ class SanitizeTest(unittest.TestCase):
         self.assertEqual(tags, ["제미나이", "클로드"])
 
     def test_non_list_reply_gives_nothing(self):
-        from scripts.tags import fold
         tags, _ = sanitize("제미나이", [], keys(VOCAB), set(), set(), set())
         self.assertEqual(tags, [])
 

@@ -661,7 +661,7 @@ def run(directory: Path, dry_run: bool) -> dict:
     repaired = apply_repairs(messages, plan.repairs)
     files_path = OUTPUT / "files.jsonl"
     attachments = build_site._read_jsonl(files_path) if files_path.exists() else []
-    attach_stats = link_attachments(attachments, messages, directory, dry_run=False)
+    link_attachments(attachments, messages, directory, dry_run=False)
     linked = apply_media_links(images, plan.media_links)
     # 본문에 파일 이름이 적힌 판을 먼저 붙이고, 남은 것을 시각으로 맞춘다.
     # 순서가 중요하다 — 이름이 적힌 쪽이 더 확실하므로 그것이 자리를 먼저 잡는다.

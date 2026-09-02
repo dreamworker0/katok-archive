@@ -39,7 +39,6 @@ import argparse
 import base64
 import html
 import io
-import json
 from pathlib import Path
 
 from scripts import jsonio, scan_image_pii

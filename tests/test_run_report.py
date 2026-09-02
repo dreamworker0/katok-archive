@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""야간 갱신 결과가 화면까지 닿는지 — 세 조각의 계약.
+r"""야간 갱신 결과가 화면까지 닿는지 — 세 조각의 계약.
 
 갱신 경로가 둘인데 한쪽만 화면에 보였다. '지금 갱신' 버튼은 refresh_watcher.js 가
 `settings/refresh` 에 상태를 써서 관리 탭이 실시간으로 보여줬지만, 매일 23:40
@@ -104,7 +104,9 @@ class ReportRunScriptTest(unittest.TestCase):
 class AdminScreenShowsItTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.app = read("web/app.js")
+        # 관리자 화면은 web/admin.js 로 떼어냈다(2026-09-02). 이 검사는 파일이 아니라
+        # "화면이 그것을 듣고 그리는가" 를 묻는 것이라 둘을 이어 읽는다.
+        cls.app = read("web/app.js") + read("web/admin.js")
         cls.boot = read("web/boot.js")
 
     def test_boot_subscribes_to_the_document(self):
@@ -120,7 +122,8 @@ class AdminScreenShowsItTest(unittest.TestCase):
     def test_subscription_is_released(self):
         """구독을 놓아주지 않으면 관리 탭을 여닫을 때마다 리스너가 쌓인다."""
         self.assertIn("state.lastRunUnsub", self.app)
-        block = self.app.split("function unwatchRefresh()", 1)[1].split("\n  }", 1)[0]
+        # admin.js 안에서는 팩토리 한 단계 더 들어가 있어 닫는 괄호가 네 칸이다
+        block = self.app.split("function unwatchRefresh()", 1)[1].split("\n    }", 1)[0]
         self.assertIn("state.lastRunUnsub = null", block)
 
     def test_failure_and_staleness_are_warnings_not_notes(self):

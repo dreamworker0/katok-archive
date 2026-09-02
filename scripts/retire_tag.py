@@ -60,7 +60,7 @@ from scripts.retag_reports import (
     sanitize,
 )
 from scripts.tag_surgery import apply_keyword_changes, backup_dir, shown
-from scripts.topic_reports import REPORTS_DIR, TAG_COUNT_MIN, load_reports, tag_rules
+from scripts.topic_reports import TAG_COUNT_MIN, load_reports, tag_rules
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "output"

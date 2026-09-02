@@ -39,9 +39,14 @@ jobs:
           node-version: "24"
           cache: npm
 
-      # 파이썬 의존성은 Pillow 하나다.
+      # 파이썬 의존성은 Pillow 하나다. ruff 는 검사 도구라 requirements 에 넣지 않는다 —
+      # 매일 밤 무인으로 도는 파이프라인의 의존성 목록에 린터가 있을 이유가 없다.
       - name: 파이썬 의존성
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt ruff
+
+      # 틀린 코드(정의 안 된 이름·안 쓰는 import)를 검사보다 먼저 잡는다. 규칙은 ruff.toml.
+      - name: 파이썬 린트
+        run: python -m ruff check scripts tests
 
       # devDependencies(firebase-tools)는 빼고 받는다. 200MB 가까이 되는데 CI 는
       # 배포하지 않으므로 쓸 일이 없다. `npm test` 가 쓰는 firebase-admin 은

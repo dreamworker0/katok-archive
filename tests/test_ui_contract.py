@@ -38,7 +38,7 @@ REQUIRED_IDS = {
 
 
 def front_end_js() -> str:
-    """app.js + text.js 를 이어 읽는다.
+    """app.js + text.js + admin.js 를 이어 읽는다.
 
     이 검사들이 묻는 것은 "프런트가 이렇게 하는가" 이고, 그 답은 두 파일에 걸쳐
     있다. 글자·마크다운 다루기는 `web/text.js` 로 떼어냈다(app.js 안에 있는 동안
@@ -51,7 +51,7 @@ def front_end_js() -> str:
     동작 자체는 `tests/text.test.js` 가 실제로 함수를 불러서 본다.
     """
     parts = [(ROOT / "web" / name).read_text(encoding="utf-8")
-             for name in ("app.js", "text.js")]
+             for name in ("app.js", "text.js", "admin.js")]
     return "".join(parts)
 
 

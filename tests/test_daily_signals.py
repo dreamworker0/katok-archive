@@ -12,7 +12,6 @@ run_daily.ps1 은 자식 스크립트의 출력을 읽어 '발행할지'를 정�
 from __future__ import annotations
 
 from pathlib import Path
-import re
 import unittest
 
 
@@ -105,7 +104,9 @@ class ButtonPathSaysWhatActuallyHappenedTests(unittest.TestCase):
     """
 
     WATCHER = (ROOT / "scripts" / "refresh_watcher.js").read_text(encoding="utf-8")
-    APP = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    # 관리 탭 카드는 web/admin.js 에 있다(2026-09-02 분리). 둘을 이어 읽는다.
+    APP = ((ROOT / "web" / "app.js").read_text(encoding="utf-8")
+           + (ROOT / "web" / "admin.js").read_text(encoding="utf-8"))
 
     def test_runner_emits_the_unsorted_marker_even_when_zero(self):
         # 0 과 '못 읽었다' 를 구분할 수 있어야 부르는 쪽이 말을 고를 수 있다.
@@ -214,9 +215,6 @@ class RunnerStillGuardsPublishingTests(unittest.TestCase):
 
     def test_unreadable_classification_marker_leans_to_publishing(self):
         # 모를 때는 발행하는 쪽으로 기운다. 불필요한 발행은 손해가 없다.
-        block = DAILY[DAILY.index("CLASSIFIED) 를 읽지 못했습니다"):][:400] \
-            if "CLASSIFIED) 를 읽지 못했습니다" in DAILY \
-            else DAILY[DAILY.index("CLASSIFIED"):]
         self.assertIn("$classified = 1", DAILY)
 
 
