@@ -38,7 +38,7 @@ REQUIRED_IDS = {
 
 
 def front_end_js() -> str:
-    """app.js 와 거기서 떼어낸 화면 조각(text·stats·mine·admin)을 이어 읽는다.
+    """app.js 와 거기서 떼어낸 화면 조각 전부를 이어 읽는다.
 
     이 검사들이 묻는 것은 "프런트가 이렇게 하는가" 이고, 그 답은 두 파일에 걸쳐
     있다. 글자·마크다운 다루기는 `web/text.js` 로 떼어냈다(app.js 안에 있는 동안
@@ -51,7 +51,8 @@ def front_end_js() -> str:
     동작 자체는 `tests/text.test.js` 가 실제로 함수를 불러서 본다.
     """
     parts = [(ROOT / "web" / name).read_text(encoding="utf-8")
-             for name in ("app.js", "text.js", "stats.js", "mine.js", "admin.js")]
+             for name in ("app.js", "text.js", "summary.js", "graph-view.js", "tags.js",
+                          "gallery.js", "stats.js", "mine.js", "admin.js")]
     return "".join(parts)
 
 
@@ -172,7 +173,7 @@ class FileOriginContractTests(unittest.TestCase):
         self.assertIn('" · 만료 " + gone.length', self.app)
 
     def test_the_note_does_not_explain_a_label_that_is_not_shown(self):
-        block = self.app[self.app.index("function renderFiles()"):]
+        block = fn_body(self.app, "renderFiles")
         self.assertIn("if (pending)", block[:4000])
         self.assertIn("if (gone.length)", block[:4000])
 
@@ -200,7 +201,8 @@ class TagPickContractTests(unittest.TestCase):
     def test_pick_limit_is_stated_once_and_shown_to_the_user(self):
         self.assertIn("var TAG_PICK_MAX = 3", self.app)
         # 화면 안내문도 같은 값을 쓴다 — 숫자를 두 곳에 적으면 어긋난다
-        self.assertIn('"개 · 최대 " + TAG_PICK_MAX', self.app)
+        # (tags.js 로 떼어낸 뒤에는 ctx 로 건네받는다 — 값은 여전히 한 곳이다)
+        self.assertIn('"개 · 최대 " + ctx.TAG_PICK_MAX', self.app)
 
     def test_intersection_not_union(self):
         # 고른 태그가 **모두** 붙은 주제만 남아야 한다
@@ -208,7 +210,7 @@ class TagPickContractTests(unittest.TestCase):
         self.assertIn("sets.every(", block[:600])
 
     def test_dead_combinations_are_disabled_before_the_user_taps(self):
-        self.assertIn("disabled", self.app[self.app.index("function renderTags()"):][:3000])
+        self.assertIn("disabled", fn_body(self.app, "renderTags")[:3000])
         self.assertIn(".tag-chip[disabled]", self.css)
 
     def test_selected_state_has_its_own_look(self):
@@ -249,11 +251,11 @@ class TagPickContractTests(unittest.TestCase):
         채우면 정작 화제가 눈에 안 들어온다. 빼는 것이지 지우는 것이 아니므로
         검색으로는 그대로 찾힌다.
         """
-        block = self.app[self.app.index("function renderTags()"):][:900]
+        block = fn_body(self.app, "renderTags")[:900]
         self.assertIn("!r.person && !r.place", block)
         self.assertIn("r.place", block)
         # 따로 모은 것도 화면에 있어야 한다 — 빼고 안 보여주면 사라진 것과 같다
-        later = self.app[self.app.index("function renderTags()"):][:6000]
+        later = fn_body(self.app, "renderTags")[:6000]
         self.assertIn("지명·기관 이름으로 붙은 태그", later)
         self.assertIn("사람 이름으로 붙은 태그", later)
 

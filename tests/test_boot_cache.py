@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BOOT = (ROOT / "web" / "boot.js").read_text(encoding="utf-8")
 APP = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+SUMMARY = (ROOT / "web" / "summary.js").read_text(encoding="utf-8")
 
 
 class BundleCacheContractTest(unittest.TestCase):
@@ -56,7 +57,7 @@ class LazyLoadContractTest(unittest.TestCase):
 
     def test_summary_waits_instead_of_saying_empty(self):
         """요지가 오기 전의 요지 화면은 '비었다' 가 아니라 '오는 중' 이다."""
-        body = APP[APP.index("function renderSummary()"):APP.index("function renderDoc(")]
+        body = SUMMARY[SUMMARY.index("function renderSummary()"):SUMMARY.index("function renderDoc(")]
         self.assertIn("state.digestsPending", body)
         self.assertIn("요지를 불러오는 중", body)
         self.assertIn("state.digestsPending = !!(A.lazy && A.lazy.digests)", APP)
