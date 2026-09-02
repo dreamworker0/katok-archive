@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 BOOT = (ROOT / "web" / "boot.js").read_text(encoding="utf-8")
 APP = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
 SUMMARY = (ROOT / "web" / "summary.js").read_text(encoding="utf-8")
+TIMELINE = (ROOT / "web" / "timeline.js").read_text(encoding="utf-8")
 
 
 class BundleCacheContractTest(unittest.TestCase):
@@ -64,10 +65,10 @@ class LazyLoadContractTest(unittest.TestCase):
 
     def test_ai_buttons_are_patched_in_not_redrawn(self):
         """읽던 자리와 펼친 카드를 날리지 않는다 — 단추만 끼운다."""
-        body = APP[APP.index("function attachAiReports"):APP.index("function aiReportBlock")]
+        body = TIMELINE[TIMELINE.index("function attachAiReports"):TIMELINE.index("function aiReportBlock")]
         self.assertIn("patchAiButtons(el.view)", body)
         self.assertNotIn("render()", body)
-        patch = APP[APP.index("function patchAiButtons"):APP.index("function attachDigests")]
+        patch = TIMELINE[TIMELINE.index("function patchAiButtons"):TIMELINE.index("function attachAiReports")]
         self.assertIn("bindAiToggle(", patch)
 
     def test_ai_failure_is_not_fatal(self):

@@ -39,6 +39,7 @@
     "images.js",
     "graph.js",
     "text.js",
+    "timeline.js",
     "summary.js",
     "graph-view.js",
     "tags.js",

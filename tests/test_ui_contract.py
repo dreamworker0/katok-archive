@@ -51,7 +51,7 @@ def front_end_js() -> str:
     동작 자체는 `tests/text.test.js` 가 실제로 함수를 불러서 본다.
     """
     parts = [(ROOT / "web" / name).read_text(encoding="utf-8")
-             for name in ("app.js", "text.js", "summary.js", "graph-view.js", "tags.js",
+             for name in ("app.js", "text.js", "timeline.js", "summary.js", "graph-view.js", "tags.js",
                           "gallery.js", "stats.js", "mine.js", "admin.js")]
     return "".join(parts)
 
