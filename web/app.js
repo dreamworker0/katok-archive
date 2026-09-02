@@ -160,12 +160,19 @@
   function threadMatches(t) { return TIMELINE.threadMatches(t); }
   function pickThreads() { return TIMELINE.pickThreads.apply(null, arguments); }
   function jumpToTimeline(id) { return TIMELINE.jumpToTimeline(id); }
-  function attachAiReports(items) { return TIMELINE.attachAiReports(items); }
+  /* A.lazy 는 '아직 안 왔다' 는 표시다(boot.js assembleArchive). 도착하면 내린다 —
+   * 표시가 사실과 어긋나 있으면 나중에 그것을 읽는 코드가 조용히 틀린다. 지금은
+   * init 이 한 번 읽어 state.digestsPending 을 세우는 자리뿐이다. */
+  function attachAiReports(items) {
+    if (A.lazy) A.lazy.aiReports = false;
+    return TIMELINE.attachAiReports(items);
+  }
 
   /** boot.js 가 요지를 받아 오면 부른다. 요지 화면을 보고 있었으면 다시 그린다. */
   function attachDigests(d) {
     DIGESTS = d || {};
     A.digests = DIGESTS;
+    if (A.lazy) A.lazy.digests = false;
     state.digestsPending = false;
     if (state.view === "summary") render();
   }

@@ -56,6 +56,12 @@ class LazyLoadContractTest(unittest.TestCase):
         for name in ("attachDigests", "attachAiReports"):
             self.assertIn("app.%s(" % name, BOOT)
 
+    def test_lazy_flags_go_down_when_the_parts_arrive(self):
+        """도착한 뒤에도 '아직 안 왔다' 로 남아 있으면, 그 표시를 읽는 코드가 틀린다."""
+        body = APP[APP.index("function attachAiReports(items)"):APP.index("태그 입구")]
+        self.assertIn("A.lazy.aiReports = false", body)
+        self.assertIn("A.lazy.digests = false", body)
+
     def test_summary_waits_instead_of_saying_empty(self):
         """요지가 오기 전의 요지 화면은 '비었다' 가 아니라 '오는 중' 이다."""
         body = SUMMARY[SUMMARY.index("function renderSummary()"):SUMMARY.index("function renderDoc(")]
