@@ -452,7 +452,14 @@ ArchiveImages.diagnose()   // {mode, total, loaded, failed, waiting, lastError}
 
 ## 남은 것 (다음 단계)
 
-- **P2** 관리자 페이지 + Cloud Functions (멤버·제외를 UI로, Custom Claims)
-- **P3** 온톨로지 v2 (엔티티×패턴·근거)
-- **P5** 자동 수집 (Codex Computer Use)
+끝난 것은 지운다 — 남겨 두면 문서가 현재를 말하지 않는다.
+
+- ~~P2 관리자 페이지 + Cloud Functions~~ — 끝. `functions/index.js`, 관리 탭.
+- ~~P5 자동 수집~~ — 끝. Codex 가 아니라 `kakao_export.ps1`(Ctrl+S) + `kakao_drawer.ps1`(서랍).
+  [AUTOMATION.md](AUTOMATION.md).
+- **P3** 온톨로지 v2 — 부분. 관계에 정의역·치역과 종류 표는 들어갔고(`scripts/ontology.py`),
+  근거(어느 메시지가 이 관계를 말했나)는 아직 없다.
+- 첫 화면이 매번 Firestore 에서 약 3.5MB 를 다시 받는다 — 2026-09-02 부터
+  `meta.content_hash` 로 IndexedDB 에 두고 바뀐 날만 다시 받는다(`web/boot.js`).
+  aiReports·digests 를 화면에 들어갈 때 받는 것은 아직이다.
 - ⚠️ **멤버 동의 정리 후 실제 공개** — 7/23 대화방 찬반 투표·개인정보 동의 참조

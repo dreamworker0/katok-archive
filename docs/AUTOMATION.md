@@ -47,11 +47,15 @@ Firestore 적재 → 테스트까지 자동으로 진행된다.
 | `scripts/kakao_export.ps1` | 카톡에 Ctrl+S 를 보내 대화 내보내기 → inbox 로 |
 | `scripts/kakao_ocr.ps1` | 화면 글자를 좌표와 함께 읽기(진단용) |
 | `scripts/ingest_incremental.py` | txt → 새 메시지만 추출해 아카이브 갱신 |
+| `scripts/kakao_drawer.ps1` | 카톡 '채팅방 서랍' 에서 사진·파일 원본을 내려받기 (2026-08-20) |
+| `scripts/drawer_grid.py` | 서랍 스크린샷에서 카드 사각형 찾기 — 위 스크립트가 누를 좌표 |
+| `scripts/collect_drawer.py` | 받은 원본을 inbox/drawer/ 로 옮겨 메시지에 잇기 |
+| `scripts/ai_reports.py` | 사람 보고서 옆의 AI 검증 주석을 무인으로 쓰기 (2026-08-27) |
 | `scripts/run_daily.ps1` | 위 단계를 순서대로 실행 |
 | `scripts/classify_unsorted.py` | 미분류 스레드를 주제별로 분류 (유일한 LLM 단계) |
 | `scripts/publish_state.py` | 발행본이 로컬보다 뒤처졌는지 판정 (네 번째 발행 사유) |
 | `scripts/refresh_watcher.js` | 관리 탭의 '지금 갱신' 을 받아 위를 실행 (상주) |
-| `scripts/report_run.js` | 갱신 결과를 `settings/lastRun` 에 남겨 관리 탭에 보이게 한다 |
+| `scripts/report_run.js` | 갱신 결과를 `settings/lastRun` 에 남겨 관리 탭에 보이게 하고, 실패는 디스코드로 알린다 |
 | `scripts/prune_workspace.py` | 로그·스크린샷·백업 마름질 (자산 중복은 손으로만) |
 | `scripts/llm.py` | `claude -p` 호출과 응답 읽기 — 일곱 모듈 공용 |
 | `scripts/tag_surgery.py` | 태그 수술 넷이 함께 쓰는 골격 (백업하고 적용) |
@@ -371,8 +375,32 @@ stderr 를 오류로 승격시키지 않는다 — 알림을 남기려는 코드
 그것이 곧 거짓말이 된다). 겹쳐 돌아 물러난 실행(exit 75)도 남기지 않는다 —
 실패가 아니고, 남기면 이미 돌고 있는 쪽의 결과를 덮는다.
 
-검증: `tests/test_run_report.py` 14개 — 세 갈래 종료·단계 이름·DryRun·기록 실패가
+검증: `tests/test_run_report.py` — 세 갈래 종료·단계 이름·DryRun·기록 실패가
 갱신을 죽이지 않는지, 그리고 화면이 그것을 듣고 그리는지.
+
+### 화면만으로도 부족했다 — 실패는 디스코드로 온다 (2026-09-02)
+
+`settings/lastRun` 은 관리 탭을 **열어야** 보인다. 2026-08-02 하루가 통째로 빠진
+것도, 2026-09-01 밤이 테스트 단계에서 멈춘 것도, 아침에 로그를 열고서야 알았다.
+실패는 사람을 찾아가야 한다.
+
+`config/notify.json` 에 디스코드 웹훅 주소를 두면 `report_run.js` 가 `failed` 를
+한 줄 보낸다 — 단계 이름, exit 코드, 오늘 로그 경로, 다시 돌리는 법.
+
+```json
+{ "discord_webhook": "https://discord.com/api/webhooks/…", "notify_on": ["failed"] }
+```
+
+- 파일이 없으면 아무 일도 하지 않는다. 이 기능이 없던 때와 똑같이 돈다.
+- 웹훅 주소는 아는 사람은 누구나 그 채널에 글을 쓸 수 있는 값이다. `.gitignore`
+  에 있고, 예시는 `config/notify.example.json`. 환경 변수 `KATOK_NOTIFY_WEBHOOK`
+  이 있으면 파일보다 앞선다.
+- 기본은 `failed` 만이다. 매일 '성공' 이 오면 그 채널은 곧 읽지 않는 채널이 되고,
+  그러면 실패도 같이 묻힌다. 보고 싶으면 `notify_on` 에 `"ok"` 를 더한다.
+- 화면 기록과 알림은 서로 독립이다. Firestore 가 안 닿는 날이 바로 알림이 가장
+  필요한 날이다.
+
+검증: `tests/report_notify.test.js`.
 
 ## 개인정보 가리기 (2026-07-30)
 
@@ -621,8 +649,16 @@ python -m scripts.count_unsorted
   그때는 안전장치가 중단시키고 화면을 남기므로 데이터가 망가지지는 않는다.
 - 매일 내보내면 그날 대화만 담긴 작은 파일이 나온다(정상). 전체 히스토리가
   필요하면 카톡에서 위로 스크롤해 불러온 뒤 내보내야 한다.
-- 사진 파일은 자동 수집되지 않는다(내보내기 txt 에 포함되지 않음).
-  현재 147건이 `pending` 상태이며 화면에는 플레이스홀더로 표시된다.
+- 사진·파일 원본은 내보내기 txt 에 들어 있지 않다. 2026-08-20 부터
+  `kakao_drawer.ps1` 이 '채팅방 서랍' 에서 매일 받아 온다 — **파일은 공유일 +
+  14일이면 만료**되므로 서랍 창이 닫혀 있는 날이 이어지면 그 기간의 파일은
+  영구 소실이다. 못 받은 날은 관리 탭에 경고로 뜬다. 서랍이 받기 전의 사진은
+  `pending` 으로 남아 화면에 플레이스홀더로 보인다.
+- 문서 크기. Firestore 문서는 1MiB 가 한도다. 목록으로 늘어나는 것(threads ·
+  aiReports · media)은 업로더가 크기로 나눠 담고, 나눌 수 없는 것(meta · graph ·
+  digests · myMessages)은 발행 로그와 검사가 80% 에서 미리 말한다
+  (`build_firestore_payload.plan_documents`). 그 경고가 뜨면 나눠 담을 길을 정할
+  때다 — 2026-09-01 밤은 그 경고가 없어서 터진 뒤에 알았다.
 # 보고서 문맥 연결 감사
 
 링크·사진·첨부가 보고서의 관련 문단에 연결됐는지, 잘못되거나 중복된
