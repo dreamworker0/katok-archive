@@ -40,8 +40,14 @@ PLACEHOLDER_DOMAINS = ("example.com", "example.org", "example.net", "example.or.
 
 # 도메인이 진짜여도(gmail.com·sasw.or.kr) 앞자리가 이러면 서식의 빈칸이다.
 # 도메인째 넘기지 않는 이유: 그러면 진짜 gmail 주소가 그대로 통과한다.
+#
+# `noreply` 는 앞자리만으로 '받는 사람이 없는 주소' 라고 말한다. 커밋 메시지의
+# Co-Authored-By 트레일러가 그 꼴이라, 문서가 커밋 규칙을 적어 두면 그 문서에
+# 그대로 든다(실측 2026-09-04: docs/PLAN-knowledge-2026-09.md). 사람의 연락처를
+# 찾는 검사가 '아무에게도 안 닿는 주소' 를 잡으면, 잡는 쪽이 틀린 것이다.
 PLACEHOLDER_LOCALS = ("you", "someone", "member", "member1", "member2",
-                      "name", "user", "admin", "a", "b", "c", "d", "e")
+                      "name", "user", "admin", "noreply", "no-reply",
+                      "a", "b", "c", "d", "e")
 
 # 탐지기 검사에 쓰는 **지어낸** 연락처.
 #

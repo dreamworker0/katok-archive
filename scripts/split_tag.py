@@ -35,10 +35,30 @@
     `scripts.retag_reports.replace_keywords_line` 을 그대로 쓴다. 이 폴더는 CRLF 고,
     줄바꿈을 건드리면 diff 가 파일 전체로 번진다. 그 함정을 두 번 구현하지 않는다.
 
+반대쪽 일 — 갈래를 **채우는** 모드(`--fill-category`)
+    가르고 나면 남는 것이 있다. projects 주제 106개 중 63개만 갈래를 얻었고 43개는
+    갈래가 없다(실측 2026-09-04). 갈래로 묶어 보이는 화면과 갈래로 절을 나누는 요지
+    산문은 그 43개를 '그 밖' 으로 밀어낸다 — 106개 중 43개가 '그 밖' 이면 묶은 것이
+    아니다.
+
+    그래서 같은 갈래 표·같은 프롬프트 골격으로 방향만 뒤집는다. 대상은 '그 분류에
+    속하고 갈래 태그를 하나도 안 가진 주제' 이고, 넓은 태그를 갈래로 **바꾸는** 것이
+    아니라 갈래를 **덧붙인다**(태그가 6개면 어휘 밖 1회짜리 하나를 갈래로 바꾼다).
+
+    2026-08-21 의 `adopt_orphans` 사고를 되풀이하지 않는 이유가 대상에 있다. 그때는
+    고립 태그에 부모를 붙였더니 초대·논문 대화가 '앱 제작' 으로 끌려왔다 — 태그 하나만
+    보고 판단했기 때문이다. 여기 대상은 **이미 projects 인 주제**다. 이 방의 사람이
+    '프로젝트·결과물' 로 분류해 둔 것이므로 '무엇을 위해 만든 것인가' 를 묻는 것이
+    성립한다. 그래도 모델이 '없음' 을 고를 수 있게 두고, 그때는 붙이지 않는다 —
+    협업 경험담·구상만 있는 대화는 갈래가 없는 것이 맞다.
+
 사용
     python -m scripts.split_tag --tag "앱 제작"            # 제안만 만든다
     python -m scripts.split_tag --tag "앱 제작" --apply    # 제안을 적용한다
     python -m scripts.split_tag --tag "앱 제작" --stats    # 몇 편인지만 센다
+
+    python -m scripts.split_tag --tag "앱 제작" --fill-category projects
+    python -m scripts.split_tag --tag "앱 제작" --fill-category projects --apply
 """
 from __future__ import annotations
 
@@ -49,10 +69,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from scripts import jsonio
 from scripts import tags as taglib
 from scripts.llm import DEFAULT_MODEL, call_claude, parse_reply
 from scripts.tag_surgery import apply_keyword_changes, backup_dir, shown
-from scripts.topic_reports import load_reports
+from scripts.topic_reports import TAG_COUNT_MAX, load_reports
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "output"
@@ -68,12 +89,20 @@ TIMEOUT_SEC = 300
 NONE = "없음"
 
 
-def load_kinds(tag: str, path: Path | None = None) -> dict[str, str]:
+def load_kinds(tag: str, path: Path | None = None,
+               hinted_only: bool = False) -> dict[str, str]:
     """`config/tag_broader.json` 에서 이 태그의 갈래와 설명을 읽는다.
 
     갈래는 `broader[tag]` 에 있어야 한다 — 거기 없으면 갈라내도 넓은 태그가 그것을
     되찾지 못해서, 갈라낸 편들이 넓은 입구에서 사라진다. 그건 가르는 것이 아니라
     잃는 것이다.
+
+    `hinted_only` 는 `split_hints` 에 설명이 적힌 것만 갈래로 본다. 시간이 지나면
+    `broader[tag]` 에는 갈래가 아닌 자식이 섞인다 — '앱 제작' 아래에 'C#'·'파워앱스'
+    처럼 **결과물·도구 이름**이 좁은 태그로 들어와 있다(실측 2026-09-04: 자식 15개
+    중 갈래는 7개). 그것을 갈래로 내놓으면 '이 대화는 C# 갈래' 같은 답이 오고,
+    묶음이 아니라 목록이 된다. 설명이 적혀 있다는 것이 곧 '사람이 갈래로 세운 것'
+    이라는 표시다.
     """
     p = path or BROADER
     raw = json.loads(p.read_text(encoding="utf-8"))
@@ -85,7 +114,46 @@ def load_kinds(tag: str, path: Path | None = None) -> dict[str, str]:
             % (tag, shown(p))
         )
     hints = (raw.get("split_hints") or {}).get(tag) or {}
+    if hinted_only:
+        children = [c for c in children if str(hints.get(c, "")).strip()]
+        if not children:
+            raise SystemExit(
+                "'%s' 의 갈래 설명이 %s 의 split_hints 에 없습니다.\n"
+                "갈래마다 한 줄 설명을 적으세요 — 그것이 갈래와 좁은 태그를 가릅니다."
+                % (tag, shown(p))
+            )
     return {c: str(hints.get(c, "")).strip() for c in children}
+
+
+def facet_keys(tag: str, names: list[str] | None = None,
+               path: Path | None = None) -> dict[str, set[str]]:
+    """갈래 → 그 갈래를 뜻하는 fold 열쇠들(자신 + 자식의 자식까지).
+
+    갈래 이름만 보면 안 되는 이유: '실천 도구'·'업무 앱'·'당사자 지원 앱' 은 그
+    자체가 `broader` 의 부모여서 자식을 여럿 가진다('StatAgent'·'job-hub'…). 그
+    자식을 태그로 가진 주제는 승격(`rollup_parent_tags`)으로 갈래를 얻으므로 이미
+    갈래가 있는 것이고, 여기서 또 물으면 없는 층을 하나 더 세운다.
+    """
+    p = path or BROADER
+    broader = json.loads(p.read_text(encoding="utf-8")).get("broader") or {}
+
+    def walk(name: str, seen: set[str]) -> set[str]:
+        out: set[str] = set()
+        for child in broader.get(name) or []:
+            key = taglib.fold(child)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.add(key)
+            out |= walk(child, seen)
+        return out
+
+    out: dict[str, set[str]] = {}
+    for facet in (names if names is not None else broader.get(tag) or []):
+        key = taglib.fold(facet)
+        if key:
+            out[facet] = {key} | walk(facet, {key})
+    return out
 
 
 def targets(reports: dict[str, dict], tag: str) -> list[str]:
@@ -93,6 +161,24 @@ def targets(reports: dict[str, dict], tag: str) -> list[str]:
     key = taglib.fold(tag)
     return sorted(t for t, r in reports.items()
                   if any(taglib.fold(k) == key for k in r["keywords"]))
+
+
+def fill_targets(reports: dict[str, dict], threads: list[dict], category: str,
+                 keys: dict[str, set[str]]) -> list[str]:
+    """그 분류에 속하고 **갈래를 하나도 안 가진** 주제. 원장 순서로.
+
+    넓은 태그('앱 제작')를 가졌는지는 보지 않는다. 그것을 가진 편은 `--tag` 모드가
+    갈라 주는 몫이고, 여기서 찾는 것은 어느 쪽으로도 갈래가 없는 편이다.
+    """
+    have = set().union(*keys.values()) if keys else set()
+    out = []
+    for th in threads:
+        if th.get("category") != category:
+            continue
+        kw = (reports.get(th["id"]) or {}).get("keywords") or []
+        if not any(taglib.fold(k) in have for k in kw):
+            out.append(th["id"])
+    return out
 
 
 def build_prompt(items: list[dict], tag: str, kinds: dict[str, str]) -> str:
@@ -135,9 +221,120 @@ def build_prompt(items: list[dict], tag: str, kinds: dict[str, str]) -> str:
 {{"t-012": "업무 앱"}}"""
 
 
+def build_fill_prompt(items: list[dict], tag: str, kinds: dict[str, str],
+                      category_label: str) -> str:
+    """갈래를 **채우는** 프롬프트. 고르는 규칙은 가르는 쪽과 같은 문장을 쓴다.
+
+    두 프롬프트가 다른 말로 같은 것을 물으면 결과가 갈라진다 — 이미 갈래를 받은
+    63편과 이제 받을 43편이 다른 기준으로 나뉘면, 묶어 보이는 화면에서 그 어긋남이
+    그대로 드러난다.
+    """
+    lines = []
+    for name, hint in kinds.items():
+        lines.append("- **%s** — %s" % (name, hint) if hint else "- **%s**" % name)
+    menu = "\n".join(lines)
+
+    blocks = []
+    for it in items:
+        blocks.append(
+            "[%s]\n제목: %s\n요지: %s\n태그: %s\n본문:\n%s"
+            % (it["id"], it["title"], it["summary"],
+               ", ".join(it["keywords"]) or "(없음)", it["report"])
+        )
+    body = "\n\n".join(blocks)
+    ids = ", ".join(it["id"] for it in items)
+
+    return f"""아래 보고서 {len(items)}편은 모두 '{category_label}' 로 분류된 대화인데,
+'{tag}' 의 갈래 태그가 하나도 없습니다. 그래서 갈래로 묶어 보이는 화면에서 전부
+'그 밖' 으로 밀립니다. **갈래를 하나씩 골라** 주는 일입니다. 본문·제목·요지는
+고치지 않습니다.
+
+### 갈래 (이 중에서 **딱 하나**)
+{menu}
+- **{NONE}** — 위 어디에도 안 맞을 때만. 억지로 넣지 마세요.
+
+### 어떻게 고르나
+- **무엇을 위한 것인가**로 고르세요. 무엇으로 만들었나(안티그래비티·러버블·
+  앱스스크립트)가 아니라, **누가 무엇에 쓰는 것인가**가 기준입니다.
+- 여러 갈래에 걸치면 **그 대화의 중심**을 고르세요. 곁가지로 잠깐 나온 쪽이
+  아니라, 이 보고서가 주로 이야기하는 것입니다.
+- **만든 이야기가 아니면 '{NONE}' 입니다.** 협업 경험담·구상·후기처럼 결과물이
+  없는 대화는 갈래가 없는 것이 맞습니다. 그런 편에 갈래를 붙이면 그 갈래를
+  누른 사람이 찾던 것을 못 찾습니다.
+- 본문을 읽고 판단하세요. 태그는 참고만 하세요 — 태그가 부실해서 채우는 것입니다.
+
+--- 보고서 ---
+{body}
+--- 끝 ---
+
+답은 JSON 만. 다른 말은 붙이지 마세요. 열쇠는 보고서 id, 값은 갈래 이름 하나입니다.
+{len(items)}편 전부({ids})에 답해야 합니다.
+
+{{"t-012": "업무 앱"}}"""
+
+
+def screen_fill(reports: dict[str, dict], answers: dict[str, str],
+                kinds: dict[str, str], vocab: list[str],
+                counts: collections.Counter | None = None,
+                max_tags: int = TAG_COUNT_MAX) -> dict[str, dict]:
+    """답을 제안으로 만든다 — 갈래를 **덧붙이거나** 한 자리를 바꾼다. 호출하지 않는다.
+
+    태그는 한 편에 `max_tags` 개까지다(`topic_reports.TAG_COUNT_MAX`). 자리가
+    남으면 덧붙이고, 꽉 찼으면 **어휘 밖이고 한 번만 쓰인** 태그 하나를 갈래로
+    바꾼다 — 그 태그는 태그 목록에도 안 나오고 부모도 없어서, 사실상 그 편에만
+    있는 말이다(`tags.build_tag_index` 의 `min_count`). 그런 태그가 없으면
+    건너뛰고 로그만 남긴다. 잘 붙은 태그를 갈래 자리 때문에 버리지는 않는다.
+
+    뒤에서부터 고른다. keywords 의 순서에는 사람이 쓴 무게가 담겨 있어(앞이
+    중심이다) 뒤가 가장 곁가지다.
+    """
+    by_key = {taglib.fold(k): k for k in kinds}
+    vocab_keys = {taglib.fold(v) for v in vocab}
+    counts = counts if counts is not None else tag_counts(reports)
+
+    out: dict[str, dict] = {}
+    for tid in sorted(answers):
+        raw = (answers[tid] or "").strip()
+        if not raw or taglib.fold(raw) == taglib.fold(NONE):
+            print("  %s: 갈래를 못 고름 — 그대로 둡니다" % tid)
+            continue
+        kind = by_key.get(taglib.fold(raw))
+        if not kind:
+            print("  %s: 목록에 없는 갈래 '%s' — 손대지 않습니다" % (tid, raw))
+            continue
+        before = reports[tid]["keywords"]
+        if any(taglib.fold(k) == taglib.fold(kind) for k in before):
+            continue        # 이미 그 갈래가 있다
+        if len(before) < max_tags:
+            after, dropped = before + [kind], None
+        else:
+            spare = [k for k in before
+                     if taglib.fold(k) not in vocab_keys
+                     and counts.get(taglib.fold(k), 0) <= 1]
+            if not spare:
+                print("  %s: 태그가 %d개인데 바꿀 만한 것이 없습니다 — 건너뜁니다"
+                      % (tid, len(before)))
+                continue
+            dropped = spare[-1]
+            after = [kind if k == dropped else k for k in before]
+        row = {"before": before, "after": after, "kind": kind}
+        if dropped:
+            row["dropped"] = dropped
+        out[tid] = row
+    return out
+
+
+def tag_counts(reports: dict[str, dict]) -> collections.Counter:
+    """태그 fold → 몇 편에 쓰였나. '1회짜리' 판정의 근거다."""
+    return collections.Counter(
+        taglib.fold(k) for r in reports.values() for k in r["keywords"])
+
+
 def ask(reports: dict[str, dict], ids: list[str], tag: str, kinds: dict[str, str],
-        model: str, batch_size: int, timeout: int) -> dict[str, str]:
+        model: str, batch_size: int, timeout: int, prompt_of=None,
+        what: str = "태그 가르기") -> dict[str, str]:
     """배치로 나눠 물어 **다듬지 않은 답**을 모은다. 실패한 배치는 건너뛴다."""
+    prompt_of = prompt_of or (lambda items: build_prompt(items, tag, kinds))
     out: dict[str, str] = {}
     total = (len(ids) + batch_size - 1) // batch_size
     for n in range(total):
@@ -146,8 +343,7 @@ def ask(reports: dict[str, dict], ids: list[str], tag: str, kinds: dict[str, str
         print("배치 %d/%d — %d편 (%s ~ %s)"
               % (n + 1, total, len(chunk), chunk[0], chunk[-1]))
         reply = parse_reply(
-            call_claude(build_prompt(items, tag, kinds), model, timeout, "태그 가르기")
-            or "")
+            call_claude(prompt_of(items), model, timeout, what) or "")
         if not reply:
             print("  답을 받지 못해 이 배치는 건너뜁니다 — 다음 실행이 다시 봅니다.")
             continue
@@ -195,16 +391,28 @@ def screen(reports: dict[str, dict], answers: dict[str, str], tag: str,
     return out
 
 
-def apply_proposal(proposal: dict, day: str) -> tuple[int, list[str], Path]:
+def apply_proposal(proposal: dict, day: str, kind: str = "split"
+                   ) -> tuple[int, list[str], Path]:
     """제안대로 keywords 줄을 바꾼다. 바꾸기 전 md 와 태그는 백업 폴더에 남긴다."""
-    backup = backup_dir("split", day)
+    backup = backup_dir(kind, day)
     done, failed = apply_keyword_changes(proposal["changes"], backup)
     return done, failed, backup
+
+
+def category_label(category: str) -> str:
+    """분류 id → 라벨. 원장을 못 읽으면 id 를 그대로 쓴다."""
+    try:
+        cats = jsonio.read_json(OUT / "topics.json").get("categories") or []
+    except (OSError, ValueError):
+        return category
+    return next((c["label"] for c in cats if c.get("id") == category), category)
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="너무 넓어진 태그를 갈래로 가른다")
     ap.add_argument("--tag", required=True, help="가를 넓은 태그")
+    ap.add_argument("--fill-category", metavar="분류id",
+                    help="가르는 대신 **채운다** — 그 분류에서 갈래가 없는 주제에 갈래를 붙인다")
     ap.add_argument("--apply", action="store_true",
                     help="제안 파일을 읽어 md 를 바꾼다 (호출 없음)")
     ap.add_argument("--stats", action="store_true", help="몇 편인지만 센다 (호출 없음)")
@@ -217,8 +425,11 @@ def main() -> int:
     ap.add_argument("--proposal", type=Path, default=None)
     args = ap.parse_args()
 
-    proposal_path = args.proposal or (
-        OUT / ("split-proposal-%s.json" % args.tag.replace(" ", "_")))
+    fill = args.fill_category
+    tag_slug = args.tag.replace(" ", "_")
+    proposal_path = args.proposal or (OUT / (
+        ("fill-proposal-%s-%s.json" % (fill, tag_slug)) if fill
+        else ("split-proposal-%s.json" % tag_slug)))
 
     if args.apply:
         if not proposal_path.is_file():
@@ -229,7 +440,8 @@ def main() -> int:
             print("제안에 바꿀 것이 없습니다.")
             return 0
         done, failed, backup = apply_proposal(
-            proposal, datetime.now().strftime("%Y%m%d"))
+            proposal, datetime.now().strftime("%Y%m%d"),
+            "facet" if fill else "split")
         print("보고서 %d편의 keywords 줄을 바꿨습니다." % done)
         for f in failed:
             print("  못 바꿈 — %s" % f)
@@ -238,15 +450,24 @@ def main() -> int:
         return 0
 
     reports = load_reports()
-    kinds = load_kinds(args.tag)
-    ids = targets(reports, args.tag)
-    print("'%s' 를 직접 지닌 보고서 %d편 · 갈래 %d개" % (args.tag, len(ids), len(kinds)))
+    kinds = load_kinds(args.tag, hinted_only=bool(fill))
+    if fill:
+        threads = jsonio.read_json(OUT / "topics.json")["threads"]
+        ids = fill_targets(reports, threads, fill,
+                           facet_keys(args.tag, list(kinds)))
+        label = category_label(fill)
+        print("'%s' 주제 가운데 '%s' 갈래가 없는 것 %d편 · 갈래 %d개"
+              % (label, args.tag, len(ids), len(kinds)))
+    else:
+        ids = targets(reports, args.tag)
+        print("'%s' 를 직접 지닌 보고서 %d편 · 갈래 %d개"
+              % (args.tag, len(ids), len(kinds)))
     for name, hint in kinds.items():
         print("  %-14s %s" % (name, hint))
     if args.stats:
         return 0
     if not ids:
-        print("가를 것이 없습니다.")
+        print("채울 것이 없습니다." if fill else "가를 것이 없습니다.")
         return 0
 
     if args.rescreen:
@@ -260,34 +481,58 @@ def main() -> int:
         if args.limit:
             ids = ids[:args.limit]
             print("  --limit %d — 앞에서 %d편만 봅니다." % (args.limit, len(ids)))
-        answers = ask(reports, ids, args.tag, kinds, args.model, args.batch,
-                      args.timeout)
+        answers = ask(
+            reports, ids, args.tag, kinds, args.model, args.batch, args.timeout,
+            prompt_of=((lambda items: build_fill_prompt(items, args.tag, kinds,
+                                                        category_label(fill)))
+                       if fill else None),
+            what="갈래 채우기" if fill else "태그 가르기")
         if not answers:
             print("\n답을 하나도 받지 못했습니다.")
             return 1
 
-    changes = screen(reports, answers, args.tag, kinds)
+    if fill:
+        # 어휘는 화면이 보는 것과 같게 잰다 — `retag_reports.load_state` 와 같은 꼴.
+        threads = jsonio.read_json(OUT / "topics.json")["threads"]
+        for th in threads:
+            r = reports.get(th["id"])
+            if r:
+                th["keywords"] = r["keywords"]
+        parts_path = OUT / "participants.json"
+        parts = jsonio.read_json(parts_path) if parts_path.is_file() else {}
+        places, _ = taglib.load_places()
+        vocab = [name for name, _ in taglib.vocabulary(threads, parts, places)]
+        changes = screen_fill(reports, answers, kinds, vocab)
+    else:
+        changes = screen(reports, answers, args.tag, kinds)
     if not changes:
         print("\n바뀔 것이 없습니다.")
         return 0
 
     spread = collections.Counter(v["kind"] for v in changes.values())
-    print("\n보고서 %d편이 갈립니다." % len(changes))
+    print("\n보고서 %d편이 %s." % (len(changes), "갈래를 받습니다" if fill else "갈립니다"))
     for name in kinds:
         print("  %-14s %d편" % (name, spread.get(name, 0)))
     left = len(ids) - len(changes)
     if left:
-        print("  %-14s %d편 ('%s' 그대로)" % ("(못 가름)", left, args.tag))
+        print("  %-14s %d편 (%s)" % ("(못 가름)", left,
+                                     "갈래 없이 그대로" if fill
+                                     else "'%s' 그대로" % args.tag))
+    swapped = {t: v["dropped"] for t, v in changes.items() if v.get("dropped")}
+    if swapped:
+        print("  태그가 꽉 차서 한 자리를 바꾼 편 %d개: %s" % (
+            len(swapped), ", ".join("%s(%s)" % kv for kv in sorted(swapped.items()))))
 
     proposal_path.parent.mkdir(parents=True, exist_ok=True)
     proposal_path.write_text(
         json.dumps({"made": datetime.now().isoformat(timespec="seconds"),
-                    "tag": args.tag, "model": args.model, "kinds": list(kinds),
-                    "answers": answers, "changes": changes},
+                    "tag": args.tag, "fill_category": fill, "model": args.model,
+                    "kinds": list(kinds), "answers": answers, "changes": changes},
                    ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print("\n제안 → %s" % shown(proposal_path))
     print("md 는 아직 한 글자도 안 바꿨습니다. 적용:")
-    print('  python -m scripts.split_tag --tag "%s" --apply' % args.tag)
+    print('  python -m scripts.split_tag --tag "%s"%s --apply'
+          % (args.tag, (" --fill-category %s" % fill) if fill else ""))
     return 0
 
 

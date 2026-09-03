@@ -167,23 +167,38 @@ class EveryScriptUsesTheSharedSkeletonTest(unittest.TestCase):
     따로 본다. 여기서 갈라지면 검사가 지키는 것은 골격 하나뿐이고, 실제로 원본
     md 를 덮어쓰는 코드는 검사 밖에 있게 된다.
     """
-    SCRIPTS = {"retag_reports": "retag", "split_tag": "split", "retire_tag": "retire"}
+    # 한 스크립트가 수술을 여럿 하면 이름도 여럿이다 — `split_tag` 는 태그를
+    # 가르는 일(split)과 갈래를 채우는 일(facet)을 함께 한다. 되돌릴 지점이
+    # 섞이지 않으려면 그 둘도 서로 다른 폴더여야 한다.
+    SCRIPTS = {"retag_reports": ("retag",), "split_tag": ("split", "facet"),
+               "retire_tag": ("retire",)}
+
+    def source(self, name: str) -> str:
+        return (Path(__file__).resolve().parent.parent
+                / "scripts" / (name + ".py")).read_text(encoding="utf-8")
 
     def test_apply_proposal_delegates(self):
-        for name, kind in self.SCRIPTS.items():
+        for name in self.SCRIPTS:
             with self.subTest(script=name):
-                src = (Path(__file__).resolve().parent.parent
-                       / "scripts" / (name + ".py")).read_text(encoding="utf-8")
+                src = self.source(name)
                 body = src.split("def apply_proposal(", 1)[1].split("\ndef ", 1)[0]
                 self.assertIn("apply_keyword_changes(", body)
-                self.assertIn('backup_dir("%s"' % kind, body)
+                self.assertIn("backup_dir(", body)
                 # 자기 사본으로 되돌아간 표시들
                 self.assertNotIn("shutil.copy2", body)
                 self.assertNotIn("REPORTS_DIR /", body)
 
+    def test_every_backup_kind_is_named_in_its_script(self):
+        """폴더 이름이 코드 밖에서 정해지면 어디로 백업되는지 읽을 수 없다."""
+        for name, kinds in self.SCRIPTS.items():
+            src = self.source(name)
+            for kind in kinds:
+                with self.subTest(script=name, kind=kind):
+                    self.assertIn('"%s"' % kind, src)
+
     def test_backup_kinds_are_distinct(self):
         """폴더 이름이 겹치면 다른 수술이 서로의 되돌릴 지점을 덮는다."""
-        kinds = list(self.SCRIPTS.values())
+        kinds = [k for ks in self.SCRIPTS.values() for k in ks]
         self.assertEqual(len(kinds), len(set(kinds)))
 
 

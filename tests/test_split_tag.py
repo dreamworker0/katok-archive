@@ -10,13 +10,22 @@
 """
 from __future__ import annotations
 
+import collections
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from scripts import tags as taglib
-from scripts.split_tag import NONE, load_kinds, screen, targets
+from scripts.split_tag import (
+    NONE,
+    facet_keys,
+    fill_targets,
+    load_kinds,
+    screen,
+    screen_fill,
+    targets,
+)
 
 TAG = "앱 제작"
 KINDS = {"업무 앱": "실무자 업무", "게임": "놀이", "실천 도구": "실천에 쓰는 것"}
@@ -109,6 +118,90 @@ class ScreenTest(unittest.TestCase):
         for tid, change in got.items():
             self.assertEqual(len(REPORTS[tid]["keywords"]), len(change["after"]))
             self.assertNotIn(TAG, change["after"])
+
+
+class FillTest(unittest.TestCase):
+    """갈래를 **채우는** 쪽. 가르는 쪽과 반대로, 갈래가 없는 주제를 찾아 붙인다."""
+
+    BROADER = {
+        "broader": {
+            "앱 제작": ["업무 앱", "게임 제작", "실천 도구", "C#", "파워앱스"],
+            "실천 도구": ["월급계산기"],
+        },
+        "split_hints": {"앱 제작": {"업무 앱": "실무자 업무", "게임 제작": "놀이",
+                                 "실천 도구": "실천에 쓰는 것"}},
+    }
+
+    def table(self) -> Path:
+        d = Path(tempfile.mkdtemp())
+        p = d / "tag_broader.json"
+        p.write_text(json.dumps(self.BROADER, ensure_ascii=False), encoding="utf-8")
+        return p
+
+    def test_only_kinds_with_a_hint_count_as_facets(self):
+        """'C#'·'파워앱스' 는 자식이지만 갈래가 아니다 — 결과물·도구 이름이다."""
+        got = load_kinds("앱 제작", self.table(), hinted_only=True)
+        self.assertEqual(["업무 앱", "게임 제작", "실천 도구"], list(got))
+
+    def test_a_facet_owns_its_grandchildren(self):
+        keys = facet_keys("앱 제작", ["실천 도구"], self.table())
+        self.assertIn(taglib.fold("월급계산기"), keys["실천 도구"])
+
+    def test_threads_that_already_have_a_facet_are_not_targets(self):
+        reports = {
+            "t-1": {"keywords": ["업무 앱", "구글 시트"]},        # 갈래 그대로
+            "t-2": {"keywords": ["월급계산기"]},                 # 갈래의 자식
+            "t-3": {"keywords": ["C#", "안티그래비티"]},          # 갈래 아님
+            "t-4": {"keywords": ["클로드"]},
+        }
+        threads = [{"id": "t-1", "category": "projects"},
+                   {"id": "t-2", "category": "projects"},
+                   {"id": "t-3", "category": "projects"},
+                   {"id": "t-4", "category": "projects"},
+                   {"id": "t-5", "category": "ai-tools"}]
+        keys = facet_keys("앱 제작", ["업무 앱", "게임 제작", "실천 도구"], self.table())
+        self.assertEqual(["t-3", "t-4"],
+                         fill_targets(reports, threads, "projects", keys))
+
+    def test_a_spare_slot_gets_the_facet_appended(self):
+        reports = {"t-3": {"keywords": ["C#", "안티그래비티"]}}
+        got = screen_fill(reports, {"t-3": "업무 앱"}, KINDS, ["안티그래비티"])
+        self.assertEqual(["C#", "안티그래비티", "업무 앱"], got["t-3"]["after"])
+        self.assertNotIn("dropped", got["t-3"])
+
+    def test_a_full_line_swaps_the_last_tag_that_is_outside_the_vocabulary(self):
+        """어휘 안에 있는 태그는 잘 붙은 것이다 — 갈래 자리 때문에 버리지 않는다."""
+        keywords = ["클로드", "안티그래비티", "가", "나", "다", "라"]
+        reports = {"t-6": {"keywords": keywords}}
+        counts = collections.Counter(taglib.fold(k) for k in keywords)
+        got = screen_fill(reports, {"t-6": "업무 앱"}, KINDS,
+                          ["클로드", "안티그래비티", "라"], counts)
+        self.assertEqual("다", got["t-6"]["dropped"])
+        self.assertEqual(["클로드", "안티그래비티", "가", "나", "업무 앱", "라"],
+                         got["t-6"]["after"])
+        self.assertEqual(6, len(got["t-6"]["after"]))
+
+    def test_a_full_line_with_nothing_to_spare_is_skipped(self):
+        keywords = ["클로드", "커서", "노션", "슬랙", "디스코드", "깃허브"]
+        reports = {"t-7": {"keywords": keywords}}
+        got = screen_fill(reports, {"t-7": "업무 앱"}, KINDS, keywords)
+        self.assertEqual({}, got, "잘 붙은 태그를 갈래 자리 때문에 버리지 않는다")
+
+    def test_a_tag_used_elsewhere_too_is_not_spare(self):
+        keywords = ["가", "나", "다", "라", "마", "바"]
+        reports = {"t-8": {"keywords": keywords},
+                   "t-9": {"keywords": ["가", "나", "다", "라", "마"]}}
+        got = screen_fill(reports, {"t-8": "업무 앱"}, KINDS, [])
+        self.assertEqual("바", got["t-8"]["dropped"], "다른 편에도 쓰인 말은 1회짜리가 아니다")
+
+    def test_none_adds_nothing(self):
+        reports = {"t-3": {"keywords": ["C#"]}}
+        self.assertEqual({}, screen_fill(reports, {"t-3": NONE}, KINDS, []))
+        self.assertEqual({}, screen_fill(reports, {"t-3": "복지 앱"}, KINDS, []))
+
+    def test_a_facet_already_present_is_left_alone(self):
+        reports = {"t-1": {"keywords": ["업무 앱"]}}
+        self.assertEqual({}, screen_fill(reports, {"t-1": "업무 앱"}, KINDS, []))
 
 
 class BroaderTableIsConsistentTest(unittest.TestCase):
