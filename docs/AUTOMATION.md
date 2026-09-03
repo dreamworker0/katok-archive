@@ -35,8 +35,14 @@ Firestore 적재 → 테스트까지 자동으로 진행된다.
 통계·갤러리·삭제 요청 반영은 예정대로 발행된다. 그래서 `Invoke-Step`(실패 시 중단)을
 쓰지 않는다.
 
-요지 산문(`topic-digests.json`)은 여전히 사람이 한다 — 아카이브 전체를 요약한 글이라
-새 글 몇 건 때문에 12편을 매일 다시 쓰면 품질이 흔들리고 비용도 훨씬 크다.
+요지 산문(`topic-digests.json`)도 2026-09-04 부터 자동이다 — 다만 **낡은 분류만**
+다시 쓴다(`digest_prose.py`, 5d 단계). 12편을 매일 다시 쓰면 하룻밤에 $8~12 이 들고
+대개 어제와 같은 글이 나오므로, '정리 뒤 주제가 몇 개 쌓였나' 로 낡음을 판정하고
+하룻밤 세 편까지만 쓴다. 규칙은 [REPORT-RULES.md](REPORT-RULES.md#요지-산문-규칙).
+
+사람이 하던 동안 이 글은 2026-07-28 에 멈춰 있었고, 그 다섯 주 사이에 늘어난 주제
+59개가 첫 화면에 없었다. 아무도 몰랐던 이유는 '언제 쓴 글인지'가 어디에도 없어서다 —
+그래서 지금은 정리 시점(`as_of`)을 데이터에 남기고 카드에도 적는다.
 
 ---
 
@@ -513,12 +519,16 @@ OCR 은 무료·오프라인이고 한국어를 읽지만 한계가 있다 — �
 
 | 건드리지 않는 것 | 결과 |
 |---|---|
-| `output/topic-digests.json` | **요지 산문**이 마지막 정리 시점으로 남는다 |
 | `knowledge.json` 의 사람(person) 노드 | 참여자는 결정론적 파이프라인이 관리한다 |
 | 사진 파일 자체 | 내보내기 txt 에 없다 → `pending` 유지 |
+| `output/reports/*.md` 의 본문 | 사람이 쓴 글이다. 밤 갱신은 **없는 것만** 채운다 |
 
-즉 매일 아침 상태는 **"타임라인·통계·주제 분류까지 최신, 요지 산문만 마지막 정리
-시점"** 이다.
+요지 산문은 2026-09-04 부터 여기서 빠졌다(5d 단계). 다만 하룻밤 세 편 상한이 있어
+열두 편이 한꺼번에 낡은 날에는 나흘에 걸쳐 따라잡는다 — 카드에 "정리 <날짜> · 그 뒤
++N" 이 적혀 있으므로 어느 분류가 뒤처졌는지 화면에서 보인다.
+
+즉 매일 아침 상태는 **"타임라인·통계·주제 분류·요지까지 최신(요지는 낡은 것부터
+차례로)"** 이다.
 
 ### 비용을 어떻게 억제하는가
 
@@ -627,14 +637,21 @@ python -m scripts.classify_unsorted --dry-run
 python -m scripts.classify_unsorted --model fable
 ```
 
-요지 산문 갱신과 분류 결과 교정은 여전히 사람 일이다 (Claude 에게 요청 — Fable 권장).
+분류 결과 교정은 여전히 사람 일이다 (Claude 에게 요청 — Fable 권장).
 
 1. `output/topics.json` 에서 `t-unsorted-YYYY-MM-DD` 스레드 확인
 2. 적절한 카테고리의 스레드로 옮기거나 새 스레드로 분리
 3. 새로 등장한 사람·앱·도구를 `output/knowledge.json` 에 노드·엣지로 추가
-4. 필요하면 `output/topic-digests.json` 의 요지 산문 갱신
-5. 테스트: `python -m unittest discover -s tests` (참조 무결성·커버리지 검증)
-6. 재발행: `python -m scripts.build_firestore_payload && node scripts/upload_firestore.js`
+4. 테스트: `python -m unittest discover -s tests` (참조 무결성·커버리지 검증)
+5. 재발행: `python -m scripts.build_firestore_payload && node scripts/upload_firestore.js`
+
+요지 산문은 손으로 고치지 않는다. 분류를 옮겼으면 그 분류가 낡은 것이 되므로 밤
+갱신이 알아서 다시 쓰고, 당장 보고 싶으면 그 분류만 부른다:
+```bash
+python -m scripts.digest_prose --cat projects --model fable
+```
+열두 편을 한꺼번에 다시 쓰는 것은 분류 체계를 바꾼 뒤에만 한다
+(`--all --limit 0 --model fable`, 합 $8~12).
 
 미분류가 얼마나 쌓였는지 세기:
 ```bash

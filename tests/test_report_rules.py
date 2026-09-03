@@ -91,6 +91,19 @@ class RuleSourceTests(unittest.TestCase):
         self.assertIn(str(tr.QUOTE_REQUIRED_FROM) + "건 이상", tr.REPORT_RULES)
         self.assertIn(str(tr.SECTION_REQUIRED_FROM) + "건 이상", tr.REPORT_RULES)
 
+    def test_digest_rules_state_the_same_numbers_the_check_uses(self):
+        """요지 산문도 같은 규칙을 따른다 — 글과 검사가 같은 상수를 본다.
+
+        `digest_prose.validate` 가 이 숫자들로 걸러낸다. 규칙 글에 다른 숫자가
+        박히면 모델은 600자로 쓰라는 말을 읽고 검사는 500자에서 버리는 꼴이 되고,
+        그때 규칙은 규칙이 아니라 취향이다.
+        """
+        self.assertIn("%d자 이내" % tr.DIGEST_HEADLINE_MAX, tr.DIGEST_RULES)
+        self.assertIn("%d자 이내" % tr.DIGEST_OVERVIEW_MAX, tr.DIGEST_RULES)
+        self.assertIn("%d개 이상" % tr.DIGEST_SECTION_FROM, tr.DIGEST_RULES)
+        self.assertIn("%d~%d개" % tr.DIGEST_KEYWORDS, tr.DIGEST_RULES)
+        self.assertIn("%d~%d문장" % tr.DIGEST_SECTION_SENTENCES, tr.DIGEST_RULES)
+
 
 class ShortReportAssetTests(unittest.TestCase):
     """문단이 하나뿐인 보고서는 자료가 글과 함께 있어야 한다.

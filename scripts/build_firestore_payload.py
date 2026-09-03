@@ -524,6 +524,10 @@ def build_payload() -> dict:
     meta = {
         "chat_room": data["chat_room"],
         "categories": data["categories"],
+        # 분류의 상위 묶음. 요지 화면의 내비게이션이 열두 줄을 넷으로 접는다.
+        # `categories` 와 같은 자리에 둔다 — 둘 다 화면이 첫 그림을 그리기 전에
+        # 있어야 하는 것이고(meta 는 늘 받는다), 요지 문서는 뒤에 온다.
+        "groups": data.get("groups") or [],
         "stats": data["stats"],
         "media_count": len(media),
         "my_message_owners": len(my_messages),

@@ -202,6 +202,14 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .cat-nav button:hover, .cat-nav-item:hover { color: var(--ink); border-color: var(--accent); }
 .cat-nav .swatch { width: 10px; height: 10px; border-radius: 50%; }
 
+/* 상위 묶음으로 접은 내비게이션. 열두 줄이 평평하면 'AI 코딩 도구'와 'AI 모델'이
+   한 덩어리라는 것을 알 수 없다. 묶음 이름은 작게 — 눌러 가는 것은 분류이고
+   묶음은 길잡이다. */
+.cat-nav-groups { display: flex; flex-direction: column; gap: 12px; margin-bottom: 26px; }
+.cat-nav-group h3 { font-size: 11.5px; font-weight: 700; letter-spacing: .04em;
+  color: var(--ink-faint); margin: 0 0 6px; }
+.cat-nav-groups .cat-nav { margin-bottom: 0; }
+
 /* 주제 제목은 링크지만 평소엔 제목처럼 보여야 한다 — 파랗게 물들이면 문서가
    아니라 목록처럼 읽힌다. 가리켰을 때만 링크라고 말한다. */
 .doc-title .doc-link { color: inherit; text-decoration: none; }
@@ -216,6 +224,10 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .doc-headline { color: var(--ink-soft); font-size: 14px; margin: 0 0 12px; }
 .doc-meta { font-size: 12px; color: var(--ink-faint); margin-left: auto; white-space: nowrap; }
 .doc-overview { font-size: 15px; line-height: 1.75; margin: 6px 0 16px; }
+/* 요지 산문의 절 — 주제가 스무 개를 넘는 분류에만 있다. 제목은 갈래 이름이라
+   아래 소속 주제 목록의 소제목과 같은 말이 되고, 그것이 의도다. */
+.doc-sec { font-size: 13.5px; font-weight: 700; color: var(--ink); margin: 14px 0 4px; }
+.doc-sec-body { font-size: 14.5px; line-height: 1.75; margin: 0 0 4px; color: var(--ink-soft); }
 .doc-kw { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
 
 /* 자세히 보기 — 모바일에서만 나온다. 데스크톱은 늘 펼쳐져 있어 버튼이 필요 없다. */
@@ -249,6 +261,13 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
   padding: 4px 0; }
 .more-fold summary:hover { color: var(--accent); }
 .thread-list .more-fold { margin-top: 0; border-top: 1px solid var(--line); }
+/* 갈래 접힘 — 갈래가 있는 분류에서는 갈래 자체가 접힘 단위다. 데스크톱은 열어
+   두고(아래 규칙) 모바일은 접힌 채로 시작한다. 소제목이 '업무 앱 · 20' 이라
+   열지 않고도 무엇이 몇 개인지 읽힌다. */
+.facet-fold > summary { font-size: 13px; color: var(--ink); }
+@media (min-width: 761px) {
+  .facet-fold > summary { padding: 6px 0; }
+}
 .thread-line { display: flex; gap: 8px; align-items: baseline; padding: 5px 0; border-top: 1px solid var(--line);
   font-size: 13px; cursor: pointer; }
 .thread-line:hover { color: var(--accent); }

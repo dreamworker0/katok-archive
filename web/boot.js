@@ -327,6 +327,9 @@
     window.ARCHIVE = {
       chat_room: meta.chat_room,
       categories: meta.categories || [],
+      // 분류의 상위 묶음. 요지 화면의 내비게이션이 이것으로 열두 줄을 넷으로
+      // 접는다. 없으면(옛 발행본) 화면이 예전처럼 평평한 줄로 그린다.
+      groups: meta.groups || [],
       stats: meta.stats || {},
       threads: threads,
       media: core.media,

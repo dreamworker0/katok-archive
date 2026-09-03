@@ -8,6 +8,7 @@
   4. inbox/*.txt 를 증분 반영                  ingest_incremental.py
   5. 주제 분류 (LLM, 비치명적)                 classify_unsorted.py
   5c. 발행본이 로컬보다 뒤처졌나 확인           publish_state.py
+  5d. 요지 산문 갱신 (LLM, 비치명적)            digest_prose.py
   6. 갤러리용 작은 사진 생성                   build_thumbnails.py
   6b. 사진 속 개인정보 검사                     ocr_images.ps1 + scan_image_pii.py
   7. 발행본 재생성                             build_firestore_payload.py
@@ -18,9 +19,10 @@
 
 설계
   - 각 단계는 실패하면 즉시 중단한다. 반쪽 상태로 발행하지 않는다.
-    **단, 5단계(주제 분류)는 예외다** — 실패하면 미분류 스레드가 남을 뿐이므로
+    **단, LLM 을 쓰는 칸은 예외다** — 5(주제 분류)·5b-2(AI 주석)·5b(보조 분류)·
+    5d(요지 산문). 실패하면 미분류 스레드가 남거나 옛 글이 하루 더 서 있을 뿐이므로
     삼키고 나아간다. LLM 장애가 그날 타임라인·통계·삭제 요청 반영을 통째로
-    날려서는 안 된다. 이것이 파이프라인에서 유일하게 LLM 을 쓰는 칸이다.
+    날려서는 안 된다.
   - 6~8단계는 발행 사유가 있을 때만 돈다. 사유는 넷이다 — 새 메시지, 멤버 요청
     변경, 주제 분류 변경, 그리고 **발행본이 로컬보다 뒤처짐**. 조용한 날에 들어온
     삭제 요청이 묻히면 안 되므로 요청 변경도 사유이고, 정리해 놓고 안 올리면 화면이
@@ -412,6 +414,27 @@ $secCode = $LASTEXITCODE
 foreach ($l in $secOut) { Say "    $l" }
 if ($null -ne $secCode -and $secCode -ne 0) {
     Say "보조 분류가 실패했습니다 (exit $secCode) — 곁길 없이 계속합니다." 'WARN'
+}
+
+# 5d) 요지 산문 갱신 — 낡은 분류만, 하룻밤 세 편까지.
+#
+#     이 칸이 없던 동안 첫 화면이 2026-07-28 에 멈춰 있었다. 분류·태그·보조 분류·
+#     AI 주석은 전부 여기서 자동인데 요지만 사람 몫으로 남아 있었고, 그 다섯 주
+#     사이에 주제가 59개 늘어 가장 활발했던 8월이 통째로 첫 화면에서 빠졌다.
+#
+#     보조 분류와 같은 꼴로 붙인다(Invoke-Step 이 아니다). 요지 한 편을 못 써서
+#     그날 타임라인·통계·삭제 요청 반영이 날아가서는 안 되고, 실패하면 그 분류는
+#     옛 글을 그대로 지닌다 — 다음 밤이 다시 본다.
+#
+#     낡은 분류가 없으면 호출도 없다(대개 그렇다). 있으면 세 편까지만 쓴다.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try { $digestOut = & { python -m scripts.digest_prose } 2>&1 }
+finally { $ErrorActionPreference = $prevEap }
+$digestCode = $LASTEXITCODE
+foreach ($l in $digestOut) { Say "    $l" }
+if ($null -ne $digestCode -and $digestCode -ne 0) {
+    Say "요지 산문 갱신이 실패했습니다 (exit $digestCode) — 옛 요지로 계속합니다." 'WARN'
 }
 
 # 6) 갤러리용 작은 사진 — 발행본을 만들기 전에 있어야 한다

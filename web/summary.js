@@ -19,6 +19,9 @@
         pickThreads = ctx.pickThreads, runSearch = ctx.runSearch, setView = ctx.setView,
         writeHash = ctx.writeHash;
 
+    // 폭 맞추기가 스스로 부른 toggle 을 '사람이 만졌다'로 세지 않게 하는 표시.
+    var syncingFolds = false;
+
     // ---------- 주제별 지식(요약) ----------
     function renderSummary() {
       var totals = ctx.data().STATS.totals || {};
@@ -38,18 +41,53 @@
         esc(totals.participants || 0) + "명의 이야기를 주제별로 모았습니다.</p>" +
         '</div><img class="archive-welcome__art" src="art/archive-hero.webp" ' +
         'alt="" width="1280" height="800" /></section>',
-        '<div class="cat-nav">',
       ];
+      /* 내비게이션을 상위 묶음으로 접는다.
+       *
+       * 열두 줄이 평평하게 늘어서 있으면 'AI 코딩 도구'와 'AI 모델'이 한 덩어리라는
+       * 것을 알 수 없다. 묶음은 이미 코드에 있었고(ontology.CATEGORY_GROUPS) 관심
+       * 분야 계산에만 쓰였다 — 화면이 안 쓴 것이 아까운 자리였다.
+       *
+       * 묶음 표는 발행 데이터에서 읽는다(A.groups). 화면에 하드코딩하면 온톨로지
+       * 원본이 둘이 되고, 언젠가 한쪽만 고친다. 표가 없는 옛 발행본에서는 예전처럼
+       * 평평한 한 줄로 그린다 — 화면이 비지 않는 편이 낫다. */
+      var cats = ctx.data().CATS;
+      var byId = {}; cats.forEach(function (c) { byId[c.id] = c; });
       var digestCount = 0;
-      ctx.data().CATS.forEach(function (c) {
-        var d = ctx.data().DIGESTS[c.id]; if (!d) return;
+      function navItem(c) {
+        var d = ctx.data().DIGESTS[c.id]; if (!d) return "";
         digestCount++;
-        html.push('<a class="cat-nav-item" href="/summary?cat=' + encodeURIComponent(c.id) +
+        return '<a class="cat-nav-item" href="/summary?cat=' + encodeURIComponent(c.id) +
           '" data-goto="doc-' + c.id + '" data-cat="' + esc(c.id) + '">' +
           '<span class="swatch" style="background:' + colorFor(c.id) + '"></span>' +
-          esc(c.label) + " · " + (d.message_count || 0) + "</a>");
-      });
-      html.push("</div>");
+          esc(c.label) + " · " + (d.message_count || 0) + "</a>";
+      }
+      var groups = (ctx.data().A || {}).groups || [];
+      if (groups.length) {
+        var placed = {};
+        html.push('<div class="cat-nav-groups">');
+        groups.forEach(function (g) {
+          var items = (g.categories || []).map(function (cid) {
+            if (!byId[cid]) return "";
+            placed[cid] = true;
+            return navItem(byId[cid]);
+          }).join("");
+          if (!items) return;
+          html.push('<div class="cat-nav-group"><h3>' + esc(g.label) + "</h3>" +
+            '<div class="cat-nav">' + items + "</div></div>");
+        });
+        // 묶음에 없는 분류(ontology.PROVISIONAL_CATEGORIES — '아직 정해지지 않은
+        // 자리')는 끝에 붙인다. 빠뜨리면 그 분류로 가는 입구가 사라진다.
+        var rest = cats.filter(function (c) { return !placed[c.id]; })
+          .map(navItem).join("");
+        if (rest) {
+          html.push('<div class="cat-nav-group"><h3>그 밖</h3>' +
+            '<div class="cat-nav">' + rest + "</div></div>");
+        }
+        html.push("</div>");
+      } else {
+        html.push('<div class="cat-nav">' + cats.map(navItem).join("") + "</div>");
+      }
       if (!digestCount) {
         html.push(emptyState("archive", "아직 모인 기록이 없어요",
           "새로운 이야기가 정리되면 이곳에서 가장 먼저 만날 수 있습니다."));
@@ -97,6 +135,49 @@
         }
       }
       bindDocActions(el.view);
+      syncFacetFolds(el.view);
+    }
+
+    /** 갈래 접힘을 화면 폭에 맞춘다 — 데스크톱은 열림, 모바일은 접힘.
+     *
+     *  CSS 로는 못 한다. <details> 의 여닫힘은 `open` 속성이고, 열린 것을 CSS 로
+     *  감추면 눌러도 안 열린다.
+     *
+     *  그림을 그린 직후에 재면 폭이 아직 0 인 경우가 있다(창이 늦게 자리를 잡을
+     *  때 — 실측: 첫 그림에서 데스크톱인데도 전부 접혔다). 그래서 한 번 더,
+     *  레이아웃이 끝난 다음 프레임에 잰다. 사람이 손으로 여닫은 뒤에는 건드리지
+     *  않는다(`data-touched`) — 열어 둔 것을 다시 접으면 화면이 제멋대로 움직인다. */
+    function syncFacetFolds(scope) {
+      function apply() {
+        if (!window.innerWidth) return;      // 아직 폭을 모른다. 다음 기회에.
+        var wide = !window.matchMedia ||
+                   window.matchMedia("(min-width: 761px)").matches;
+        // 우리가 바꾸는 것도 toggle 을 부른다 — 그것까지 '사람이 만졌다'로 세면
+        // 다음 프레임의 재기가 아무것도 못 고친다.
+        syncingFolds = true;
+        Array.prototype.forEach.call(scope.querySelectorAll(".facet-fold"),
+          function (d) {
+            if (d.getAttribute("data-touched")) return;
+            d.open = wide;
+          });
+        syncingFolds = false;
+      }
+      apply();
+      if (window.requestAnimationFrame) window.requestAnimationFrame(apply);
+    }
+
+    /** "· 정리 2026-09-04" — 그 뒤로 주제가 늘었으면 "· 그 뒤 +12" 까지.
+     *
+     *  낡음이 화면에 보이면 사람이 안다. 요지는 밤마다 낡은 것만 다시 쓰므로
+     *  (scripts/digest_prose.py) 어느 분류가 며칠 뒤처져 있을 수 있고, 그것을
+     *  숨기면 읽는 사람은 이 글이 오늘 것인 줄 안다. */
+    function tidiedAt(d) {
+      var as = d.as_of || {};
+      if (!as.date) return "";
+      var out = " · 정리 " + esc(as.date);
+      var grown = (d.threads || []).length - (as.thread_count || 0);
+      if (grown > 0) out += " · 그 뒤 +" + grown;
+      return out;
     }
 
     function renderDoc(cid, d) {
@@ -154,11 +235,43 @@
         return '<div class="thread-line" data-start="t-' + esc(t.id) + '"><b>' + esc(t.title) +
           '</b><span class="tl-date">' + esc(range) + '</span><span class="tl-n">💬 ' + t.count + "</span></div>";
       }
-      var threadTop = threadList.slice(0, 10), threadRest = threadList.slice(10);
-      var threads = threadTop.map(tl).join("");
-      if (threadRest.length) {
-        threads += '<details class="more-fold"><summary>대화 주제 ' + threadRest.length + "개 더</summary>" +
-          threadRest.map(tl).join("") + "</details>";
+      /* 갈래가 있으면 갈래가 접힘 단위다.
+       *
+       * projects 는 주제가 106개다. '10개 + 더보기' 규칙을 그대로 쓰면 앞의 열 개가
+       * 최근 날짜순으로 뽑히고 나머지 96개가 한 상자에 들어간다 — 그 상자는 열어도
+       * 벽이다. 갈래로 나누면 스물 남짓씩 일곱 덩어리가 되고, 덩어리마다 무엇이
+       * 들어 있는지 소제목이 말해 준다.
+       *
+       * 그래서 갈래마다 다시 '10개 + 더보기'를 겹치지 않는다. 접힘이 두 층이 되면
+       * 몇 번을 눌러야 목록이 다 보이는지 알 수 없다. */
+      var threads = "";
+      var facets = (d.facets || []).filter(function (f) {
+        return (f.thread_ids || []).length;
+      });
+      if (facets.length) {
+        var order = {};
+        threadList.forEach(function (t, i) { order[t.id] = i; });
+        threads = facets.map(function (f) {
+          var rows = (f.thread_ids || []).map(function (id) {
+            return ctx.data().THREAD_BY_ID[id];
+          }).filter(Boolean).sort(function (a, b) {
+            return (order[a.id] === undefined ? 1e9 : order[a.id]) -
+                   (order[b.id] === undefined ? 1e9 : order[b.id]);
+          });
+          if (!rows.length) return "";
+          // 열린 채로 그리고, 좁은 화면에서만 접는다(syncFacetFolds). 반대로 두면
+          // 폭을 아직 모르는 첫 그림에서 목록이 통째로 접혀 사라진 것처럼 보인다.
+          return '<details class="more-fold facet-fold" open><summary>' +
+            esc(f.label) + " · " + rows.length + "</summary>" +
+            rows.map(tl).join("") + "</details>";
+        }).join("");
+      } else {
+        var threadTop = threadList.slice(0, 10), threadRest = threadList.slice(10);
+        threads = threadTop.map(tl).join("");
+        if (threadRest.length) {
+          threads += '<details class="more-fold"><summary>대화 주제 ' + threadRest.length + "개 더</summary>" +
+            threadRest.map(tl).join("") + "</details>";
+        }
       }
 
       /* 여기 소속은 아니지만 이 분류를 찾아온 사람이 볼 만한 주제(보조 분류).
@@ -213,9 +326,15 @@
         '<h2 class="doc-title"><a class="doc-link" href="/summary?cat=' +
         encodeURIComponent(cid) + '" data-cat="' + esc(cid) + '">' +
         esc(d.label) + "</a></h2>" +
-        '<span class="doc-meta">' + (d.message_count || 0) + "개 메시지 · " + (d.threads || []).length + "개 주제</span></div>" +
+        '<span class="doc-meta">' + (d.message_count || 0) + "개 메시지 · " +
+        (d.threads || []).length + "개 주제" + tidiedAt(d) + "</span></div>" +
         (d.headline ? '<p class="doc-headline">' + esc(d.headline) + "</p>" : "") +
         '<p class="doc-overview">' + esc(d.overview || "") + "</p>" +
+        // 요지 산문의 절. 없으면 예전과 같다(주제가 적은 분류).
+        (d.sections || []).map(function (s) {
+          return '<h3 class="doc-sec">' + esc(s.title) + "</h3>" +
+            '<p class="doc-sec-body">' + esc(s.body) + "</p>";
+        }).join("") +
         (body
           ? '<button class="doc-toggle" type="button" aria-expanded="false" ' +
             'aria-controls="docbody-' + cid + '">' +
@@ -292,6 +411,12 @@
       });
       Array.prototype.forEach.call(scope.querySelectorAll(".thread-line"), function (b) {
         b.onclick = function () { jumpToTimeline(b.getAttribute("data-start")); };
+      });
+      // 사람이 여닫은 갈래는 폭 맞추기가 건드리지 않는다(syncFacetFolds).
+      Array.prototype.forEach.call(scope.querySelectorAll(".facet-fold"), function (d) {
+        d.addEventListener("toggle", function () {
+          if (!syncingFolds) d.setAttribute("data-touched", "1");
+        });
       });
     }
 

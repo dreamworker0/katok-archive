@@ -343,6 +343,47 @@ class KnowledgeTest(unittest.TestCase):
             self.assertTrue(d["overview"].strip(), c["id"])
             self.assertTrue(d["headline"].strip(), c["id"])
 
+    def test_every_digest_says_when_it_was_tidied(self):
+        """정리 시점이 없으면 낡았는지 알 수 없다 — 화면도, 밤 갱신도.
+
+        이 검사는 열두 편을 다시 쓴 뒤에 통과한다(`digest_prose --all`).
+        """
+        for c in self.topics["categories"]:
+            as_of = self.data["digests"][c["id"]].get("as_of") or {}
+            self.assertTrue(as_of.get("date"), "%s 에 as_of 가 없다" % c["id"])
+            self.assertGreater(as_of.get("thread_count", 0), 0, c["id"])
+
+    def test_a_big_category_is_split_into_sections(self):
+        from scripts.topic_reports import DIGEST_SECTION_FROM
+        for c in self.topics["categories"]:
+            d = self.data["digests"][c["id"]]
+            if len(d["threads"]) >= DIGEST_SECTION_FROM:
+                self.assertTrue(d["sections"],
+                                "%s 는 주제 %d개인데 절이 없다"
+                                % (c["id"], len(d["threads"])))
+
+    def test_facet_groups_cover_every_thread_exactly_once(self):
+        """갈래별 개수의 합이 소속 주제 수와 다르면 어느 쪽이 틀렸는지 알 수 없다."""
+        from scripts import ontology
+        for cid, d in self.data["digests"].items():
+            ids = [t for f in d["facets"] for t in f["thread_ids"]]
+            if cid in ontology.CATEGORY_FACETS:
+                self.assertEqual(sorted(ids), sorted(t["id"] for t in d["threads"]),
+                                 "%s 갈래 합이 소속 주제와 다르다" % cid)
+                self.assertEqual(len(ids), len(set(ids)), "%s 갈래가 겹친다" % cid)
+                self.assertEqual(build_site.FACET_REST, d["facets"][-1]["label"],
+                                 "'그 밖' 이 마지막이 아니다")
+            else:
+                self.assertEqual([], d["facets"], "%s 는 갈래 표가 없다" % cid)
+
+    def test_the_group_table_goes_down_to_the_screen(self):
+        """묶음 라벨을 화면에 하드코딩하면 온톨로지 원본이 둘이 된다."""
+        from scripts import ontology
+        self.assertEqual([g["label"] for g in ontology.CATEGORY_GROUPS],
+                         [g["label"] for g in self.data["groups"]])
+        listed = {c for g in self.data["groups"] for c in g["categories"]}
+        self.assertEqual(self.cat_ids - ontology.PROVISIONAL_CATEGORIES, listed)
+
     def test_digest_derived_lists_consistent(self):
         # 카테고리 digest 메시지 합계 = 전체 메시지 수
         total = sum(d["message_count"] for d in self.data["digests"].values())

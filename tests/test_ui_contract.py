@@ -773,7 +773,7 @@ class MobileDensityContractTests(unittest.TestCase):
         검사 범위를 '자세히 보기' 힌트를 만드는 대목으로 좁힌다. 파일 전체를 보면
         결과물 버튼의 '주제 3 · 언급 3' 같은 다른 자리의 표기까지 걸린다.
         """
-        self.assertIn('개 메시지 · " + (d.threads || []).length + "개 주제', self.app)
+        self.assertIn('개 메시지 · " +\n        (d.threads || []).length + "개 주제', self.app)
         start = self.app.index("var counts = [];")
         hint = self.app[start:self.app.index("var body =", start)]
         self.assertNotIn('counts.push("주제 ', hint)
@@ -905,6 +905,78 @@ class UiArtworkContractTests(unittest.TestCase):
                 path = art / name
                 self.assertTrue(path.is_file())
                 self.assertLessEqual(path.stat().st_size, budget)
+
+
+class SummaryNavAndFacetContractTests(unittest.TestCase):
+    """첫 화면이 무엇으로 나뉘어 보이는가.
+
+    세 가지가 여기서 갈라질 수 있다.
+
+    · 묶음 라벨을 화면에 하드코딩하면 온톨로지 원본이 둘이 된다
+    · 묶음에 없는 분류(`PROVISIONAL_CATEGORIES`)를 빠뜨리면 그 입구가 사라진다
+    · 갈래 접힘 안에 '10개 + 더보기'를 또 겹치면 몇 번 눌러야 다 보이는지 알 수 없다
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = front_end_js()
+        cls.css = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
+
+    def test_group_labels_come_from_the_published_data(self):
+        self.assertIn("(ctx.data().A || {}).groups", self.app)
+        from scripts import ontology
+        for g in ontology.CATEGORY_GROUPS:
+            self.assertNotIn(g["label"], self.app,
+                             "묶음 라벨 '%s' 가 화면에 박혀 있다" % g["label"])
+
+    def test_a_category_in_no_group_still_gets_an_entrance(self):
+        self.assertIn("return !placed[c.id];", self.app)
+
+    def test_a_missing_group_table_falls_back_to_one_flat_row(self):
+        # 옛 발행본에는 groups 가 없다. 화면이 비는 것보다 평평한 줄이 낫다.
+        self.assertIn('html.push(\'<div class="cat-nav">\' + cats.map(navItem)', self.app)
+
+    def test_the_facet_fold_is_the_only_fold(self):
+        start = self.app.index("if (facets.length) {")
+        block = self.app[start:self.app.index("} else {", start)]
+        self.assertIn("facet-fold", block)
+        self.assertNotIn("개 더</summary>", block,
+                         "갈래 안에 '더보기' 를 또 겹쳤다 — 접힘이 두 층이 된다")
+
+    def test_the_facet_fold_is_drawn_open_and_closed_only_on_narrow_screens(self):
+        """반대로 두면 폭을 아직 모르는 첫 그림에서 목록이 통째로 사라진다.
+
+        실측: 그린 직후에 `matchMedia` 로 재면 창이 아직 자리를 안 잡아 폭이 0 이고,
+        데스크톱에서도 갈래가 전부 접힌 채로 나왔다.
+        """
+        self.assertIn('class="more-fold facet-fold" open>', self.app)
+        self.assertIn("function syncFacetFolds(", self.app)
+        self.assertIn('window.matchMedia("(min-width: 761px)")', self.app)
+        self.assertIn("if (!window.innerWidth) return;", self.app)
+        self.assertIn("window.requestAnimationFrame(apply)", self.app)
+
+    def test_a_fold_the_reader_opened_is_left_alone(self):
+        self.assertIn('d.getAttribute("data-touched")', self.app)
+        self.assertIn('if (!syncingFolds) d.setAttribute("data-touched", "1")', self.app)
+
+    def test_the_facet_summary_says_what_and_how_many(self):
+        self.assertIn('esc(f.label) + " · " + rows.length', self.app)
+
+    def test_the_card_says_when_the_prose_was_tidied(self):
+        self.assertIn("function tidiedAt(", self.app)
+        self.assertIn('" · 정리 "', self.app)
+        self.assertIn('" · 그 뒤 +"', self.app,
+                      "정리 뒤 늘어난 주제를 안 적으면 낡음이 화면에서 안 보인다")
+
+    def test_digest_sections_are_drawn_under_the_overview(self):
+        self.assertIn('class="doc-sec"', self.app)
+        self.assertIn("(d.sections || []).map", self.app)
+        self.assertIn(".doc-sec {", self.css)
+        self.assertIn(".doc-sec-body {", self.css)
+
+    def test_the_group_nav_has_a_style_of_its_own(self):
+        self.assertIn(".cat-nav-groups {", self.css)
+        self.assertIn(".cat-nav-group h3 {", self.css)
 
 
 class FirebaseHostingContractTests(unittest.TestCase):

@@ -161,6 +161,74 @@ def load_broader(path: Path | None = None,
     return out
 
 
+def load_split_hints(parent: str, path: Path | None = None) -> dict[str, str]:
+    """`config/tag_broader.json` 의 `split_hints[parent]` — 갈래와 한 줄 설명.
+
+    자식과 갈래는 다르다. `broader[parent]` 에는 시간이 지나면 갈래가 아닌 자식이
+    섞인다 — '앱 제작' 아래에 'C#'·'파워앱스' 처럼 결과물·도구 이름이 좁은 태그로
+    들어와 있다(실측 2026-09-04: 자식 15개 중 갈래 7개). **설명이 적혀 있다는 것이
+    곧 사람이 갈래로 세운 것이라는 표시다.**
+
+    순서를 지킨다. 한 주제가 두 갈래에 걸릴 때 앞선 것을 고르므로(`facet_of`),
+    이 순서가 곧 '무엇을 먼저 보는가' 의 판단이다.
+    """
+    p = path or BROADER_PATH
+    if not p.exists():
+        return {}
+    hints = (json.loads(p.read_text(encoding="utf-8")).get("split_hints")
+             or {}).get(parent) or {}
+    return {str(k).strip(): str(v).strip() for k, v in hints.items() if str(k).strip()}
+
+
+def facet_keys(parent: str, names: list[str] | None = None,
+               path: Path | None = None) -> dict[str, set[str]]:
+    """갈래 → 그 갈래를 뜻하는 fold 열쇠들(자신 + 자식의 자식까지).
+
+    갈래 이름만 보면 안 되는 이유: '실천 도구'·'업무 앱'·'당사자 지원 앱' 은 그
+    자체가 `broader` 의 부모여서 자식을 여럿 가진다('StatAgent'·'job-hub'…). 그
+    자식을 태그로 가진 주제는 승격(`rollup_parent_tags`)으로 갈래를 얻으므로 이미
+    갈래가 있는 것이고, 그것을 못 알아보면 없는 층을 하나 더 세운다.
+
+    `names` 를 주면 그것만 갈래로 본다(대개 `load_split_hints` 의 열쇠들).
+    """
+    p = path or BROADER_PATH
+    if not p.exists():
+        return {}
+    broader = json.loads(p.read_text(encoding="utf-8")).get("broader") or {}
+
+    def walk(name: str, seen: set[str]) -> set[str]:
+        out: set[str] = set()
+        for child in broader.get(name) or []:
+            key = fold(child)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.add(key)
+            out |= walk(child, seen)
+        return out
+
+    out: dict[str, set[str]] = {}
+    for facet in (names if names is not None else broader.get(parent) or []):
+        key = fold(facet)
+        if key:
+            out[facet] = {key} | walk(facet, {key})
+    return out
+
+
+def facet_of(tag_names: list[str], keys: dict[str, set[str]]) -> str | None:
+    """이 주제의 갈래 하나. 어느 갈래도 아니면 None.
+
+    **한 주제는 딱 한 갈래다.** 여럿에 걸리면 `keys` 의 순서에서 앞선 것을 고른다 —
+    겹치게 두면 갈래별 개수의 합이 소속 주제 수와 어긋나고, 그 숫자를 카드 우상단
+    주제 수와 견주는 사람이 어느 쪽이 틀렸는지 알 수 없게 된다.
+    """
+    have = {fold(t) for t in tag_names or []}
+    for facet, fkeys in keys.items():
+        if have & fkeys:
+            return facet
+    return None
+
+
 def load_short_parents(path: Path | None = None) -> list[str]:
     """`config/tag_broader.json` 의 `short_parents` — 두 글자짜리 넓은 태그.
 

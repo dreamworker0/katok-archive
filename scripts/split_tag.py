@@ -125,35 +125,10 @@ def load_kinds(tag: str, path: Path | None = None,
     return {c: str(hints.get(c, "")).strip() for c in children}
 
 
-def facet_keys(tag: str, names: list[str] | None = None,
-               path: Path | None = None) -> dict[str, set[str]]:
-    """갈래 → 그 갈래를 뜻하는 fold 열쇠들(자신 + 자식의 자식까지).
-
-    갈래 이름만 보면 안 되는 이유: '실천 도구'·'업무 앱'·'당사자 지원 앱' 은 그
-    자체가 `broader` 의 부모여서 자식을 여럿 가진다('StatAgent'·'job-hub'…). 그
-    자식을 태그로 가진 주제는 승격(`rollup_parent_tags`)으로 갈래를 얻으므로 이미
-    갈래가 있는 것이고, 여기서 또 물으면 없는 층을 하나 더 세운다.
-    """
-    p = path or BROADER
-    broader = json.loads(p.read_text(encoding="utf-8")).get("broader") or {}
-
-    def walk(name: str, seen: set[str]) -> set[str]:
-        out: set[str] = set()
-        for child in broader.get(name) or []:
-            key = taglib.fold(child)
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            out.add(key)
-            out |= walk(child, seen)
-        return out
-
-    out: dict[str, set[str]] = {}
-    for facet in (names if names is not None else broader.get(tag) or []):
-        key = taglib.fold(facet)
-        if key:
-            out[facet] = {key} | walk(facet, {key})
-    return out
+# 갈래 판정은 `scripts/tags.py` 에 있다 — 발행(`build_site.build_digests`)도 같은
+# 판정을 봐야 하고, 그쪽이 이 스크립트를(= `llm.call_claude` 를) 끌고 들어갈 이유는
+# 없다. 이름만 남긴다(`build_site._read_json` 과 같은 방식).
+facet_keys = taglib.facet_keys
 
 
 def targets(reports: dict[str, dict], tag: str) -> list[str]:

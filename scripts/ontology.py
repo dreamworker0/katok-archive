@@ -84,6 +84,24 @@ CATEGORY_GROUPS = [
      "categories": ["events", "members", "community", "news-articles"]},
 ]
 
+# 분류 → 그 분류를 갈래로 나눌 부모 태그. `config/tag_broader.json` 의
+# `split_hints[부모]` 에 갈래마다 한 줄 설명이 적혀 있고, 그 설명이 곧 '사람이
+# 갈래로 세운 것' 이라는 표시다(`split_tag.load_kinds` 의 `hinted_only`).
+#
+# 왜 projects 하나인가
+#     projects 는 106개다. 한 분류 카드에 106개를 늘어놓으면 목록이 아니라 벽이고,
+#     요지 산문도 한 문단이 106개를 덮는다. 갈래 일곱 개로 나누면 20 · 11 · 12 ·
+#     14 · 10 · 5 · 4 정도가 되어 눈으로 짚을 수 있다(실측 2026-09-04).
+#
+#     ai-tools 50개는 갈래가 도구 이름 24개여서 나누면 묶음이 아니라 또 하나의
+#     목록이 된다 — '무엇을 하려 했나'(설치·요금·비교·워크플로) 축이 먼저 있어야
+#     하고, 그 갈래 표를 사람이 적기 전에는 코드가 할 일이 없다.
+#
+#     남은 열 분류는 40개 미만이고 `DIGEST_SECTION_FROM`(20) 을 넘는 것은
+#     ai-tools · ai-models · events 셋뿐이다. 그 셋은 갈래 없이 시기·화두로 절을
+#     나눈다(`topic_reports.DIGEST_RULES`).
+CATEGORY_FACETS = {"projects": "앱 제작"}
+
 # 분류가 아직 정해지지 않은 자리. 빠뜨린 것과 구분하려고 적어 둔다 —
 # `test_every_category_belongs_to_a_group` 이 이 목록만 예외로 봐준다.
 #

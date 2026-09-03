@@ -29,6 +29,7 @@ from scripts.topic_reports import (
     apply_ai_reports,
     apply_reports,
     content_chars,
+    digest_stale_note,
     load_ai_reports,
     load_reports,
     place_context_anchors,
@@ -96,6 +97,36 @@ def file_share_expired(share_date: str, today: date | None = None) -> bool:
     except ValueError:
         return False
     return (today or date.today()) >= shared + timedelta(days=FILE_RETENTION_DAYS)
+
+
+# 어느 갈래도 아닌 주제가 모이는 자리. **마지막**에 놓는다 — 이름이 붙은 갈래를
+# 먼저 보여주고 나머지를 뒤에 두는 것이, 관계망에서 '다룬 주제' 를 먼저 보여주고
+# '스친 언급' 을 뒤에 두는 것과 같은 판단이다.
+FACET_REST = "그 밖"
+
+
+def facet_groups(category: str, threads: list[dict]) -> list[dict]:
+    """분류의 소속 주제를 갈래로 나눈다. [{label, thread_ids}]. 갈래가 없으면 빈 목록.
+
+    한 주제는 **딱 한 갈래**다(`tags.facet_of`). 겹치게 두면 갈래별 개수의 합이
+    소속 주제 수와 어긋나고, 그 숫자를 카드 우상단의 주제 수와 견주는 사람이
+    어느 쪽이 틀렸는지 알 수 없게 된다.
+
+    빈 갈래는 내지 않는다. 눌러도 아무것도 없는 소제목은 고장으로 보인다.
+    """
+    parent = ontology.CATEGORY_FACETS.get(category)
+    if not parent:
+        return []
+    names = list(taglib.load_split_hints(parent))
+    keys = taglib.facet_keys(parent, names)
+    if not keys:
+        return []
+    buckets: dict[str, list[str]] = {n: [] for n in names}
+    buckets[FACET_REST] = []
+    for t in threads:
+        buckets[taglib.facet_of(t.get("tags") or [], keys) or FACET_REST].append(t["id"])
+    return [{"label": n, "thread_ids": ids}
+            for n, ids in buckets.items() if ids]
 
 
 def build_digests(
@@ -232,11 +263,13 @@ def build_digests(
         return taglib.fold(word) in tag_keys or word.lower() in thread_text
 
     dropped_kw: list[str] = []
+    stale_notes: list[str] = []
 
     digests = {}
     for c in topics["categories"]:
         cid = c["id"]
         p = prose.get(cid, {})
+        mine = threads_by_cat.get(cid, [])
         top_nicks = [
             {"nickname": nk, "count": n}
             for nk, n in nick_by_cat.get(cid, Counter()).most_common(8)
@@ -246,21 +279,38 @@ def build_digests(
             "label": c["label"],
             "headline": p.get("headline", ""),
             "overview": p.get("overview", ""),
+            # 절과 정리 시점은 요지 산문이 쥐고 있는 것을 그대로 내려보낸다.
+            # `pii.mask_tree` 가 digests 트리 전체를 훑으므로 따로 가릴 일은 없다.
+            "sections": [
+                {"title": s.get("title", ""), "body": s.get("body", "")}
+                for s in (p.get("sections") or [])
+                if s.get("title") and s.get("body")
+            ],
+            "as_of": p.get("as_of") or {},
             "keywords": [k for k in p.get("keywords", []) if keeps(k)],
+            "facets": facet_groups(cid, mine),
             "apps": apps_by_cat.get(cid, []),
             "links": links_by_cat.get(cid, []),
             "participants": top_nicks,
-            "threads": threads_by_cat.get(cid, []),
+            "threads": mine,
             "also_threads": [
                 {"id": t["id"], "category": t["category"]}
                 for t in also_by_cat.get(cid, [])
             ],
-            "message_count": sum(t["count"] for t in threads_by_cat.get(cid, [])),
+            "message_count": sum(t["count"] for t in mine),
         }
         dropped_kw += ["%s:%s" % (cid, k) for k in p.get("keywords", []) if not keeps(k)]
+        note = digest_stale_note(c["label"], len(mine), p)
+        if note:
+            stale_notes.append(note)
     if dropped_kw:
         print("[요지 태그] 어느 주제와도 이어지지 않아 화면에서 뺀 %d개: %s"
               % (len(dropped_kw), ", ".join(dropped_kw)))
+    # 낡음은 목록으로 견준다 — 매일 같은 줄이 쌓이면 사람이 그 줄을 읽지 않게 된다
+    # (scripts/warnlog.py 의 이유).
+    warnlog.note("stale_digests", stale_notes,
+                 "[요지] 정리 시점이 뒤처진 분류",
+                 advice="`python -m scripts.digest_prose`", sample=12)
     return digests
 
 
@@ -778,6 +828,11 @@ def build_data(
             "downloaded_videos": downloaded_videos,
         },
         "categories": topics["categories"],
+        # 분류의 상위 묶음. 요지 화면의 내비게이션이 이것으로 열두 줄을 넷으로
+        # 접는다. 화면에 하드코딩하지 않는 이유는 온톨로지 원본이 한 곳인 이유와
+        # 같다 — 묶음을 하나 고칠 때 코드와 화면이 갈라지면 언젠가 한쪽만 고친다.
+        # 묶음에 없는 분류(`PROVISIONAL_CATEGORIES`)는 화면이 끝에 붙인다.
+        "groups": [dict(g) for g in ontology.CATEGORY_GROUPS],
         "messages": out_messages,
         "threads": threads_meta,
         "digests": digests,

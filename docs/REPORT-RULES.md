@@ -95,6 +95,55 @@ python -m scripts.classify_unsorted --rewrite-unstructured 5
 `--rewrite-thin` 으로 고친다. **길게만 쓴 한 덩어리 산문은 분량 검사에 안 걸린다** —
 그것을 잡는 것이 위의 구조 검사다.
 
+# 요지 산문 규칙
+
+분류마다 한 편, **첫 화면**에 서는 글이다(`output/topic-digests.json`). 보고서가 대화
+하나를 요약하듯 요지는 그 분류 전체를 요약한다.
+
+규칙 원본은 보고서와 같은 자리, `scripts/topic_reports.py` 의 `DIGEST_RULES` 하나다.
+`scripts/digest_prose.py` 의 프롬프트가 그것을 그대로 싣고 `validate` 가 같은 상수를
+본다. 상수는 이렇게 나뉜다 — 숫자는 코드에서 보고 여기서 옮겨 적지 않는다.
+
+| 상수 | 무엇을 정하나 |
+|---|---|
+| `DIGEST_HEADLINE_MAX` | headline 한 줄의 글자 상한 |
+| `DIGEST_OVERVIEW_MAX` | overview 의 글자 상한 |
+| `DIGEST_SECTION_FROM` | 소속 주제가 이만큼이면 `sections` 를 **반드시** 나눈다 |
+| `DIGEST_SECTION_SENTENCES` | 한 절의 문장 수 |
+| `DIGEST_KEYWORDS` | keywords 개수. 어휘 밖은 검사가 버린다 |
+| `DIGEST_STALE_THREADS` · `DIGEST_STALE_DAYS` | 무엇을 '낡음' 이라 하나 |
+
+## 절 제목은 갈래 이름을 그대로 쓴다
+
+`ontology.CATEGORY_FACETS` 에 적힌 분류(지금은 `projects` 하나)는 갈래 표가 있고
+(`config/tag_broader.json` 의 `split_hints`), 그 갈래 이름이 절 제목이 된다. 화면의
+소속 주제 목록도 같은 갈래로 묶이므로(`build_site.facet_groups`) **절과 목록이 같은
+말로 나뉜다** — 글에서 읽은 이름을 목록에서 다시 찾을 수 있다.
+
+갈래 표가 없는 분류는 시기·화두로 나눈다. 갈래를 새로 세우는 것은 사람 판단이라
+코드가 정하지 않는다(`scripts/split_tag.py` 의 docstring과 같은 이유).
+
+## 낡은 것만 다시 쓴다
+
+매일 열두 편을 다시 쓰면 하룻밤에 $8~12 이 들고 대개 어제와 같은 글이 나온다. 그래서
+'낡음' 을 데이터로 정의하고(위 두 상수) 정리 시점을 `as_of` 에 남긴다.
+
+- 밤 갱신(`run_daily.ps1` 5d)은 **낡은 분류만**, 하룻밤 세 편까지.
+- 발행(`build_site`)은 뒤처진 분류를 `[요지]` 경고로 찍는다. 어제와 같으면 한 줄로
+  줄인다(`scripts/warnlog.py`).
+- 화면은 카드 우상단에 "정리 2026-09-04 · 그 뒤 +12" 를 적는다. **낡음이 눈에 보이면
+  사람이 안다.**
+
+정리 시점을 남기기 전에는 이 글이 2026-07-28 에 멈춰 있었고, 그 다섯 주 사이에 늘어난
+주제 59개가 첫 화면에 없었다. 그때 아무도 몰랐던 이유가 '언제 쓴 글인지 화면에 없어서'
+였다.
+
+전부 다시 쓰려면(분류 체계를 바꾼 뒤 등):
+
+    python -m scripts.digest_prose --all --limit 0 --model fable
+
+이 호출만 상위 모델을 쓴다. 아카이브 전체를 요약하는 산문이라 판단이 곧 글의 질이 된다.
+
 # AI 보고서 규칙
 
 사람 보고서 옆에 붙는 **기계의 검증 주석**이다(`output/ai-reports/t-XXX.md`).

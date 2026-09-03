@@ -169,6 +169,61 @@ TAG_COUNT_MAX = 6
 NEW_TAGS_ALLOWED = 1     # 목록에 없는 말은 한 편에 이만큼만
 
 
+# ------------------------------------------------------------- 요지 산문 규칙
+#
+# 요지 산문은 분류마다 한 편, **첫 화면**에 서는 글이다. 보고서가 대화 하나를
+# 요약하듯 요지는 그 분류 전체를 요약한다.
+#
+# 왜 규칙이 여기 있나 — 보고서 규칙과 같은 이유다. 이 글은 밤 갱신이 쓰고
+# `digest_prose.validate` 가 검사한다. 규칙이 프롬프트에만 있으면 검사가 다른
+# 것을 보고, 검사에만 있으면 프롬프트가 어긋난 글을 만든다. 그리고 규칙 글에 든
+# 숫자는 반드시 아래 상수에서 f-string 으로 받는다 — 박아 두면 조용히 낡고,
+# 낡은 숫자를 말하는 규칙은 규칙이 아니라 취향이 된다(`tag_debt_line` 의 교훈).
+#
+# 왜 사람 손에서 뗐나 — 분류·태그·보조 분류·AI 주석은 전부 밤마다 자동인데
+# 요지만 사람 몫으로 남아 있었다. 그 결과 2026-07-28 에 멈췄고, 그 뒤 주제가
+# 59개 늘어 가장 활발했던 8월이 통째로 첫 화면에서 빠졌다(실측 2026-09-04).
+# 구조 문제가 아니라 갱신 체계가 없던 것이 문제였다.
+
+DIGEST_SECTION_FROM = 20     # 소속 주제 이만큼부터 절을 나눈다
+DIGEST_STALE_THREADS = 5     # 정리 뒤 새 주제가 이만큼 쌓이면 낡은 것
+DIGEST_STALE_DAYS = 30       # 또는 이만큼 지났고 새 주제가 하나라도 있으면
+DIGEST_HEADLINE_MAX = 40     # headline 글자 상한
+DIGEST_OVERVIEW_MAX = 600    # overview 글자 상한
+DIGEST_SECTION_SENTENCES = (3, 6)
+DIGEST_KEYWORDS = (4, 8)
+
+DIGEST_RULES = f"""- **사실만 씁니다.** 아래 주제 보고서에 없는 것을 채우지 마세요. 이 글은 보고서의
+  요약이고, 보고서가 이미 원문의 요약입니다. 두 겹 위에서 지어낸 말은 되돌릴 길이
+  없습니다.
+- **인용하지 마세요.** 원문도 보고서 문장도 그대로 옮기지 않습니다.
+- 사람 이름은 주어로 써도 됩니다(누가 무엇을 만들었나가 이 방의 내용입니다).
+  다만 **평가하는 말은 쓰지 않습니다** — 잘한다·아쉽다·활발하다 같은 말은 아카이브가
+  사람을 평가하는 화면처럼 읽히게 합니다.
+
+### headline — 한 줄
+- **{DIGEST_HEADLINE_MAX}자 이내.** 이 분류가 무엇을 이야기하는 방인지 한 줄로.
+  분류 이름을 되풀이하지 마세요(카드에 이미 있습니다).
+
+### overview — 처음 온 사람에게 하는 말
+- **{DIGEST_OVERVIEW_MAX}자 이내.** 목록의 요약이 아니라 **흐름**입니다. 무엇이 반복
+  화두였고, 무엇이 무엇으로 이어졌고, 지금 어디까지 왔나.
+- 주제를 나열하지 마세요. 아래 목록이 그 일을 이미 합니다.
+
+### sections — 큰 분류는 나눈다
+- 소속 주제가 **{DIGEST_SECTION_FROM}개 이상이면 `sections` 를 반드시 나눕니다.**
+  한 문단으로 스물 몇 개를 덮으면 읽는 사람이 눈으로 짚을 곳이 없습니다.
+- 절 제목은 **주어진 갈래 이름을 그대로** 쓰세요. 갈래가 주어지지 않은 분류는
+  시기나 화두로 나누고, 그때 제목은 짧게 지으세요.
+- 한 절은 **{DIGEST_SECTION_SENTENCES[0]}~{DIGEST_SECTION_SENTENCES[1]}문장.**
+- 주제가 {DIGEST_SECTION_FROM}개 미만이면 `sections` 는 빈 목록으로 두세요.
+
+### keywords — 눌러서 그 화제로 가는 입구
+- **{DIGEST_KEYWORDS[0]}~{DIGEST_KEYWORDS[1]}개.** 아래 '고를 수 있는 말' 에서만
+  고르세요. 목록 밖의 말은 어느 주제와도 이어지지 않아 검사에서 버려집니다 —
+  눌러도 빈 화면이 나오는 입구를 만드는 것보다 입구가 하나 적은 것이 낫습니다."""
+
+
 def tag_debt_line(kinds: int | None = None, once: int | None = None) -> str:
     """'왜 목록에서 고르라 하는가' 를 한 줄로. 숫자는 **재서** 넣는다.
 
@@ -219,6 +274,26 @@ def tag_rules(vocabulary: list[str] | None = None, kinds: int | None = None,
 
 ### 이미 쓰이는 태그 (많이 쓰인 순)
 {words}""")
+
+
+def digest_stale_note(label: str, thread_count: int, digest: dict) -> str | None:
+    """정리 시점이 뒤처진 분류에 붙일 경고 한 줄. 뒤처지지 않았으면 None.
+
+    `build_site.build_digests`(발행)와 `digest_prose.select_stale`(갱신)이 같은
+    기준을 봐야 한다 — 발행이 "괜찮다" 고 하는데 갱신이 다시 쓰거나, 그 반대이면
+    둘 중 하나가 거짓말이다. 판정은 여기 하나에 두고 둘이 부른다.
+
+    `select_stale` 의 두 기준 가운데 **주제가 쌓인 것**만 본다. 날짜로만 낡은
+    것(30일)은 갱신이 알아서 따라잡을 일이고, 발행 로그가 조용한 분류를 두고
+    매일 무언가 잘못됐다고 말하면 그 줄을 읽지 않게 된다.
+    """
+    as_of = (digest or {}).get("as_of") or {}
+    if not as_of.get("date"):
+        return "%s: 정리 시점 없음" % label
+    grown = thread_count - int(as_of.get("thread_count") or 0)
+    if grown >= DIGEST_STALE_THREADS:
+        return "%s: 정리 뒤 주제 +%d (as_of %s)" % (label, grown, as_of["date"])
+    return None
 
 
 # 자리표를 받을 수 있는 메시지 종류. 동영상이 빠져 있던 동안, 본문이 짚어 둔
