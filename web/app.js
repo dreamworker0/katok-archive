@@ -142,6 +142,8 @@
   var GRAPHV = window.ArchiveGraphView({
     data: appData, state: state, el: el, esc: esc, colorFor: colorFor,
     runSearch: runSearch, setView: setView, render: render,
+    // 관계의 근거가 된 주제로 보내는 데 쓴다(node panel 의 '관계와 근거').
+    pickThreads: pickThreads,
     stats: function () { return STATSV; },
   });
   function renderGraph() { return GRAPHV.renderGraph(); }

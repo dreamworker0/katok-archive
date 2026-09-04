@@ -381,6 +381,26 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 /* 언제 오간 이야기인가. 내용이 아니라 딸린 사실이므로 한 단 흐리게 둔다. */
 .node-panel .np-when { font-size: 12px; color: var(--ink-faint); }
 .node-panel .np-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+/* 관계와 근거 — 관계망에서 유일하게 되짚을 수 없던 층에 낸 길이다.
+   근거 있는 관계가 위로 오고, 없는 것은 단추 대신 '근거 없음' 이라고 적는다. */
+.node-panel .np-rel { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.node-panel .np-rel h5 { font-size: 11.5px; font-weight: 700; letter-spacing: .03em;
+  color: var(--ink-faint); margin: 0 0 6px; }
+.node-panel .np-rel-row { display: flex; align-items: center; gap: 6px;
+  font-size: 12.5px; padding: 3px 0; }
+.node-panel .np-rel-row b { font-weight: 600; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.node-panel .np-rel-dir { color: var(--ink-faint); flex: 0 0 auto; }
+.node-panel .np-rel-kind { color: var(--ink-faint); font-size: 11px; flex: 0 0 auto; }
+.node-panel .np-rel-go { margin-left: auto; flex: 0 0 auto; min-height: 26px;
+  padding: 2px 9px; border: 1px solid var(--line-strong); border-radius: 999px;
+  background: var(--surface); color: var(--ink-soft); font: inherit; font-size: 11px;
+  font-weight: 700; cursor: pointer; }
+.node-panel .np-rel-go:hover { color: var(--accent); border-color: var(--accent);
+  background: var(--accent-soft); }
+.node-panel .np-rel-none b { color: var(--ink-faint); font-weight: 500; }
+.node-panel .np-rel-no { margin-left: auto; flex: 0 0 auto; color: var(--ink-faint);
+  font-size: 11px; }
 .node-panel .np-close { position: absolute; top: 8px; right: 10px; cursor: pointer; color: var(--ink-faint);
   font-size: 18px; line-height: 1; background: none; border: 0; }
 .btn { border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink);
@@ -957,6 +977,11 @@ img.img-error {
      (20,375px)이 되어 아무도 끝까지 보지 않는다. 제목·개요만 두고 나머지는
      눌러서 연다. 개요도 세 줄로 줄인다 — 개요만 12개여도 8화면이다.
      데스크톱은 넓어서 견딜 만하므로 그대로 둔다. */
+  /* 근거 단추는 패널 안의 작은 칩이지만 손가락으로 눌러야 한다. 데스크톱 26px
+     로는 모바일에서 빗나간다 — 이 화면의 다른 누를 것들과 같은 크기로 둔다. */
+  .node-panel .np-rel-go { min-height: 34px; padding: 4px 12px; font-size: 12px; }
+  .node-panel .np-rel-row { padding: 5px 0; }
+
   .doc-toggle { display: flex; }
   .doc:not(.open) .doc-body { display: none; }
   .doc:not(.open) .doc-overview {

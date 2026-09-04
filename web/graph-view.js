@@ -15,7 +15,8 @@
 
   window.ArchiveGraphView = function (ctx) {
     var state = ctx.state, el = ctx.el, esc = ctx.esc, colorFor = ctx.colorFor,
-        runSearch = ctx.runSearch, setView = ctx.setView, render = ctx.render;
+        runSearch = ctx.runSearch, setView = ctx.setView, render = ctx.render,
+        pickThreads = ctx.pickThreads;
 
     // ---------- 관계망 ----------
     function renderGraph() {
@@ -36,6 +37,61 @@
           panel.classList.add("on");
         },
       });
+    }
+
+    /** 이 노드의 관계와 그 **근거**.
+     *
+     *  관계망은 이 아카이브에서 유일하게 되짚을 수 없는 층이었다 — 엣지를 봐도
+     *  왜 그렇게 아는지 갈 곳이 없었다. 발행본의 엣지에는 근거가 된 주제가
+     *  실려 있으므로(`build_site.publish_edges`), 여기서 그 주제로 보내 준다.
+     *
+     *  근거가 없는 관계는 **단추를 내지 않는다.** 눌러서 빈 목록이 나오면 고장으로
+     *  보인다 — 요지 태그를 화면에서 뺀 것과 같은 판단이다. 대신 관계 자체는
+     *  보여 준다: 관계가 있다는 것과 근거를 못 찾았다는 것은 다른 말이고, 그
+     *  차이가 보여야 사람이 무엇을 볼지 안다.
+     */
+    function relationRows(node) {
+      var K = ctx.data().KNOW;
+      var byId = {};
+      (K.nodes || []).forEach(function (n) { byId[n.id] = n; });
+      var etype = {};
+      (K.edge_types || []).forEach(function (t) { etype[t.id] = t.label || t.id; });
+
+      var rows = (K.edges || []).map(function (e) {
+        var mine = e.source === node.id, other = byId[mine ? e.target : e.source];
+        if ((!mine && e.target !== node.id) || !other) return null;
+        var ids = e.evidence_threads || [];
+        return {
+          label: other.label, dir: mine ? "→" : "←",
+          rel: etype[e.type] || e.type, ids: ids, by: e.by || "",
+        };
+      }).filter(Boolean);
+      if (!rows.length) return "";
+
+      // 근거가 있는 것을 먼저, 그 안에서 근거가 많은 것을 먼저. 되짚을 수 있는
+      // 관계가 위에 오는 것이 이 절의 뜻이다.
+      rows.sort(function (a, b) {
+        return (b.ids.length - a.ids.length) || a.label.localeCompare(b.label);
+      });
+      var withEv = rows.filter(function (r) { return r.ids.length; }).length;
+
+      return '<div class="np-rel"><h5>관계 ' + rows.length + "개 · 근거 있는 것 " +
+        withEv + "개</h5>" +
+        rows.map(function (r) {
+          var head = '<span class="np-rel-dir">' + r.dir + "</span>" +
+            '<b>' + esc(r.label) + "</b>" +
+            '<span class="np-rel-kind">' + esc(r.rel) + "</span>";
+          if (!r.ids.length) {
+            return '<div class="np-rel-row np-rel-none">' + head +
+              '<span class="np-rel-no">근거 없음</span></div>';
+          }
+          return '<div class="np-rel-row">' + head +
+            '<button class="np-rel-go" data-ev="' + esc(r.ids.join(",")) +
+            '" data-label="' + esc(node.label + " " + r.dir + " " + r.label) +
+            '" title="근거가 된 대화 주제를 봅니다' +
+            (r.by ? " (" + esc(r.by) + ")" : "") + '">근거 ' + r.ids.length +
+            "</button></div>";
+        }).join("") + "</div>";
     }
 
     function fillNodePanel(node) {
@@ -75,7 +131,13 @@
       }
       body.innerHTML = '<h4>' + esc(node.label) + "</h4>" +
         '<div class="np-type">' + esc(typeMap[node.type] || node.type || "") + "</div>" + rows +
-        when + '<div class="np-actions">' + actions + "</div>";
+        when + '<div class="np-actions">' + actions + "</div>" + relationRows(node);
+      Array.prototype.forEach.call(body.querySelectorAll("[data-ev]"), function (b) {
+        b.onclick = function () {
+          var ids = (b.getAttribute("data-ev") || "").split(",").filter(Boolean);
+          if (ids.length) pickThreads(ids, b.getAttribute("data-label"), "subject");
+        };
+      });
       Array.prototype.forEach.call(body.querySelectorAll("[data-act]"), function (b) {
         b.onclick = function () {
           var v = b.getAttribute("data-v");

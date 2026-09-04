@@ -343,6 +343,37 @@ class KnowledgeTest(unittest.TestCase):
             self.assertTrue(d["overview"].strip(), c["id"])
             self.assertTrue(d["headline"].strip(), c["id"])
 
+    def test_edge_evidence_is_published_as_threads_not_messages(self):
+        """원문을 발행하지 않으므로 message id 를 실으면 갈 곳 없는 링크가 된다."""
+        tids = {t["id"] for t in self.data["threads"]}
+        published = 0
+        for e in self.data["knowledge"]["edges"]:
+            self.assertNotIn("evidence", e, "원장의 message id 가 발행본에 새어 나갔다")
+            for tid in e.get("evidence_threads") or []:
+                self.assertIn(tid, tids, e)
+            if e.get("evidence_threads"):
+                published += 1
+                self.assertTrue(e.get("by"), "어느 규칙이 찾았는지가 함께 가야 한다")
+            else:
+                self.assertNotIn("by", e, "근거 없는 엣지에 규칙 이름만 남으면 안 된다")
+        self.assertGreater(published, 0, "근거가 하나도 발행되지 않았다")
+
+    def test_publishing_does_not_touch_the_ledger(self):
+        """원장 객체를 발행 때 바꾸면 그 뒤로 원장을 쓰는 코드가 발행본을 본다."""
+        edges = [{"source": "a", "target": "b", "type": "uses",
+                  "evidence": ["msg-1"], "by": "named-both"}]
+        out = build_site.publish_edges(edges, {"msg-1": "t-1"})
+        self.assertEqual(["msg-1"], edges[0]["evidence"])
+        self.assertEqual(["t-1"], out[0]["evidence_threads"])
+        self.assertNotIn("evidence", out[0])
+
+    def test_two_messages_in_one_thread_become_one_thread(self):
+        edges = [{"source": "a", "target": "b", "type": "uses",
+                  "evidence": ["msg-1", "msg-2", "msg-9"], "by": "named-both"}]
+        out = build_site.publish_edges(
+            edges, {"msg-1": "t-1", "msg-2": "t-1", "msg-9": "t-2"})
+        self.assertEqual(["t-1", "t-2"], out[0]["evidence_threads"])
+
     def test_every_digest_says_when_it_was_tidied(self):
         """정리 시점이 없으면 낡았는지 알 수 없다 — 화면도, 밤 갱신도.
 

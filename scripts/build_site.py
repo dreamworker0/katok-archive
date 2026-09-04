@@ -105,6 +105,36 @@ def file_share_expired(share_date: str, today: date | None = None) -> bool:
 FACET_REST = "그 밖"
 
 
+def publish_edges(edges: list[dict], thread_of: dict[str, str]) -> list[dict]:
+    """원장의 근거를 발행본에서 **주제 id** 로 바꾼다.
+
+    원장은 근거를 message id 로 쥔다 — 가장 좁은 자리를 가리키는 것이 맞고,
+    관리자는 원장으로 그 한 줄을 볼 수 있다(`messagesSource`).
+
+    **발행본에는 그 id 를 그대로 실을 수 없다.** 이 아카이브는 원문을 발행하지
+    않으므로 멤버가 message id 를 눌러도 갈 곳이 없다. 그래서 그 메시지가 속한
+    주제로 바꿔 싣는다 — 주제는 발행되고, 보고서가 그 대화를 요약해 놓았다.
+
+    `by`(어느 규칙이 찾았나)는 그대로 싣는다. 화면이 '표로 이어 살아난 근거'를
+    다르게 보일 자리가 아직 없지만, 근거의 출처를 화면에서 확인할 수 있어야
+    나중에 규칙을 고칠 때 사람이 판단할 수 있다.
+
+    엣지를 고치지 않는다 — 새 목록을 만들어 돌려준다. 원장 객체를 발행 때 바꾸면
+    그 다음에 원장을 쓰는 코드가 발행본을 보게 된다.
+    """
+    out = []
+    for e in edges:
+        row = {k: v for k, v in e.items() if k != "evidence"}
+        tids = [t for t in dict.fromkeys(
+            thread_of.get(m) for m in (e.get("evidence") or [])) if t]
+        if tids:
+            row["evidence_threads"] = tids
+        else:
+            row.pop("by", None)
+        out.append(row)
+    return out
+
+
 def facet_groups(category: str, threads: list[dict]) -> list[dict]:
     """분류의 소속 주제를 갈래로 나눈다. [{label, thread_ids}]. 갈래가 없으면 빈 목록.
 
@@ -333,10 +363,19 @@ def weigh_knowledge(knowledge: dict, messages: list[dict]) -> list[str]:
     `mentions`(횟수)도 함께 남긴다 — 크기(`value`)는 제곱근으로 눌러 놓아서
     거꾸로 세어 볼 수 없다.
 
-    **엣지에는 시점을 붙이지 않는다.** 근거가 원문에만 있어서, 사람→앱·도구 엣지
-    210개 중 154개에만 날짜가 나오고 사람→분류 89개와 앱→도구 등 174개는 근거가
-    아예 없다(실측 2026-08-14: 473개 중 33%). 3분의 2가 빈 칸인 값은 화면이 믿고
-    쓸 수 없고, 없는 것을 추정해 채우면 `is_subject` 에서 겪은 그 실수가 된다.
+    **엣지에는 시점을 붙이지 않는다.** 실측 2026-08-14: 사람→앱·도구 엣지 210개 중
+    154개에만 **이름이 나온 날짜**가 잡히고 나머지 263개는 안 잡혔다(473개 중 33%).
+    3분의 2가 빈 칸인 값은 화면이 믿고 쓸 수 없고, 없는 것을 추정해 채우면
+    `is_subject` 에서 겪은 그 실수가 된다.
+
+    그 33%는 **날짜를 잡을 수 있나**를 잰 숫자다 — 근거가 있나를 잰 것이 아니다.
+    모양마다 규칙을 달리 두면 근거는 560개 중 406개(72%)에서 찾힌다
+    (`scripts/graph_evidence.py`, 실측 2026-09-04). 특히 사람→분류는 그 사람이 그
+    분류에서 한 말이 곧 근거여서 98%가 걸린다. 이 문장이 "사람→분류는 근거가 아예
+    없다" 로 읽히던 동안 그쪽을 아무도 보지 않았다.
+
+    날짜를 안 붙이는 판단은 그대로다. 근거가 붙은 지금은 날짜가 근거에서 나오므로,
+    필요해지면 화면이 계산한다 — 원장에 두 벌로 두면 갈라진다.
 
     사람 노드는 크기를 건드리지 않는다(발언량으로 이미 계산돼 있다). 시점은
     그 사람이 처음·마지막 말한 날로 붙인다 — '언제부터 방에 있었나' 다.
@@ -847,7 +886,11 @@ def build_data(
         ),
         "knowledge": {
             "nodes": knowledge.get("nodes", []),
-            "edges": knowledge.get("edges", []),
+            # 근거는 원장에 message id 로 있고 발행본에는 주제 id 로 간다
+            # (원문을 발행하지 않으므로 — `publish_edges`).
+            "edges": publish_edges(
+                knowledge.get("edges", []),
+                {mid: t["id"] for t in topics["threads"] for mid in t["message_ids"]}),
             "node_types": knowledge.get("node_types", []),
             "edge_types": knowledge.get("edge_types", []),
         },

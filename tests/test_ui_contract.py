@@ -979,6 +979,57 @@ class SummaryNavAndFacetContractTests(unittest.TestCase):
         self.assertIn(".cat-nav-group h3 {", self.css)
 
 
+class GraphEvidenceContractTests(unittest.TestCase):
+    """관계망에서 근거로 되짚는 길.
+
+    관계망은 이 아카이브에서 유일하게 되짚을 수 없는 층이었다. 길을 냈으니
+    두 가지가 갈라지지 않게 묶어 둔다.
+
+    · 근거가 없는 관계에 단추를 내면 눌러서 빈 목록이 나온다 — 고장으로 보인다
+    · 그렇다고 관계 자체를 감추면 '관계가 없다' 와 '근거를 못 찾았다' 가 같아진다
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = front_end_js()
+        cls.css = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
+
+    def test_the_panel_reads_the_published_thread_ids(self):
+        self.assertIn("e.evidence_threads", self.app)
+        self.assertNotIn("e.evidence ", self.app,
+                         "발행본에는 message id 가 없다")
+
+    def test_no_button_without_evidence_but_the_relation_still_shows(self):
+        start = self.app.index("function relationRows(")
+        block = self.app[start:self.app.index("\n    function fillNodePanel(", start)]
+        self.assertIn("if (!r.ids.length)", block)
+        self.assertIn("근거 없음", block)
+        self.assertIn("np-rel-go", block)
+        # 근거 없는 줄에는 단추가 없다 — 그 분기 안에 단추 클래스가 없어야 한다
+        none_branch = block[block.index("if (!r.ids.length)"):]
+        none_branch = none_branch[:none_branch.index("return '<div class=\"np-rel-row\">")]
+        self.assertNotIn("np-rel-go", none_branch)
+
+    def test_the_button_goes_to_the_threads(self):
+        self.assertIn("pickThreads = ctx.pickThreads", self.app)
+        self.assertIn('pickThreads(ids, b.getAttribute("data-label"), "subject")',
+                      self.app)
+        self.assertIn("pickThreads: pickThreads", self.app,
+                      "app.js 가 관계망 화면에 pickThreads 를 넘겨야 한다")
+
+    def test_relations_with_evidence_come_first(self):
+        self.assertIn("b.ids.length - a.ids.length", self.app)
+
+    def test_the_rule_name_is_shown_so_a_reader_can_judge(self):
+        self.assertIn("r.by", self.app)
+
+    def test_the_section_has_a_style_of_its_own(self):
+        for sel in (".node-panel .np-rel {", ".node-panel .np-rel-row {",
+                    ".node-panel .np-rel-go {", ".node-panel .np-rel-no {"):
+            with self.subTest(sel=sel):
+                self.assertIn(sel, self.css)
+
+
 class FirebaseHostingContractTests(unittest.TestCase):
     def test_hosting_enables_oauth_popup_opener_compatibility(self):
         config = json.loads((ROOT / "firebase.json").read_text(encoding="utf-8"))
