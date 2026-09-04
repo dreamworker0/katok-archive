@@ -373,8 +373,15 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 
 .node-panel { position: absolute; top: 54px; right: 12px; width: 250px; max-width: 72%;
   background: var(--surface); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow);
-  padding: 14px; display: none; }
-.node-panel.on { display: block; }
+  padding: 14px; display: none;
+  /* 관계가 많은 노드는 패널이 그래프 칸보다 길어진다. .graph-wrap 이 overflow:hidden
+     이므로 넘친 만큼은 아예 닿을 수 없었다 — 실측 2026-09-05: 관계 15개인 주제에서
+     여덟째 아래가 잘렸다. 칸 안에 가두고, 넘치는 것은 관계 목록만 굴린다.
+     제목·닫기는 제자리에 둔다 — 패널째 굴리면 ✕ 가 위로 사라진다. */
+  max-height: calc(100% - 66px); flex-direction: column; }
+.node-panel.on { display: flex; }
+/* 굴릴 자리를 만들려면 사이의 칸도 줄어들 수 있어야 한다(min-height: 0). */
+#npBody { display: flex; flex-direction: column; min-height: 0; }
 .node-panel h4 { margin: 0 0 4px; font-size: 15px; }
 .node-panel .np-type { font-size: 12px; color: var(--ink-faint); margin-bottom: 8px; }
 .node-panel .np-row { font-size: 13px; margin: 4px 0; color: var(--ink-soft); }
@@ -383,9 +390,12 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .node-panel .np-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 /* 관계와 근거 — 관계망에서 유일하게 되짚을 수 없던 층에 낸 길이다.
    근거 있는 관계가 위로 오고, 없는 것은 단추 대신 '근거 없음' 이라고 적는다. */
-.node-panel .np-rel { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.node-panel .np-rel { margin-top: 14px; border-top: 1px solid var(--line);
+  overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
+/* 위 여백은 머리글이 갖는다 — .np-rel 이 가지면 그 10px 틈으로 굴러가는 줄이 비친다. */
 .node-panel .np-rel h5 { font-size: 11.5px; font-weight: 700; letter-spacing: .03em;
-  color: var(--ink-faint); margin: 0 0 6px; }
+  color: var(--ink-faint); margin: 0 0 6px; padding: 10px 0 4px;
+  position: sticky; top: 0; background: var(--surface); }
 .node-panel .np-rel-row { display: flex; align-items: center; gap: 6px;
   font-size: 12.5px; padding: 3px 0; }
 .node-panel .np-rel-row b { font-weight: 600; overflow: hidden;
@@ -977,6 +987,8 @@ img.img-error {
      (20,375px)이 되어 아무도 끝까지 보지 않는다. 제목·개요만 두고 나머지는
      눌러서 연다. 개요도 세 줄로 줄인다 — 개요만 12개여도 8화면이다.
      데스크톱은 넓어서 견딜 만하므로 그대로 둔다. */
+  /* 판을 통째로 덮으면 무엇을 눌렀는지가 안 보인다. 목록은 그 안에서 굴린다. */
+  .node-panel { max-height: 62%; }
   /* 근거 단추는 패널 안의 작은 칩이지만 손가락으로 눌러야 한다. 데스크톱 26px
      로는 모바일에서 빗나간다 — 이 화면의 다른 누를 것들과 같은 크기로 둔다. */
   .node-panel .np-rel-go { min-height: 34px; padding: 4px 12px; font-size: 12px; }

@@ -1029,6 +1029,30 @@ class GraphEvidenceContractTests(unittest.TestCase):
             with self.subTest(sel=sel):
                 self.assertIn(sel, self.css)
 
+    def test_a_long_relation_list_can_be_reached(self):
+        """관계 15개인 주제에서 여덟째 아래가 잘려 아예 닿을 수 없었다
+        (실측 2026-09-05). .graph-wrap 이 overflow:hidden 이라 패널이 그 칸보다
+        길어진 만큼은 화면 밖도 아니고 그냥 없는 것이 된다.
+
+        패널을 칸 안에 가두고, 넘치는 것은 관계 목록만 굴린다. 패널째 굴리면
+        닫기(✕)가 위로 사라진다 — 그래서 굴리는 것은 목록이어야 한다.
+        """
+        panel = self.css[self.css.index(".node-panel { position:"):]
+        panel = panel[:panel.index(".node-panel h4")]
+        self.assertIn("max-height: calc(100% - 66px)", panel)
+        self.assertIn("flex-direction: column", panel)
+        self.assertIn(".node-panel.on { display: flex; }", panel)
+        self.assertIn("#npBody {", panel)
+        # 사이 칸이 줄어들 수 있어야 안쪽이 굴러간다
+        self.assertIn("min-height: 0", panel)
+        rel = self.css[self.css.index(".node-panel .np-rel {"):]
+        rel = rel[:rel.index(".node-panel .np-rel-row")]
+        self.assertIn("overflow-y: auto", rel)
+        self.assertIn("min-height: 0", rel)
+        # 머리글은 굴러도 붙어 있고, 위 여백을 제 것으로 가져 그 틈으로 줄이 비치지 않는다
+        self.assertIn("position: sticky", rel)
+        self.assertNotIn(".node-panel .np-rel { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px;", self.css)
+
 
 class FirebaseHostingContractTests(unittest.TestCase):
     def test_hosting_enables_oauth_popup_opener_compatibility(self):
