@@ -32,10 +32,39 @@ def read_jsonl(path: str | Path) -> list[dict]:
     return rows
 
 
+def _text(data, indent: int | None) -> str:
+    """쓰는 모양은 한 곳에서만 만든다 — `write_json_if_changed` 가 이것과
+    글자까지 같은지로 '안 바뀌었다' 를 판정하기 때문이다."""
+    return json.dumps(data, ensure_ascii=False, indent=indent) + "\n"
+
+
 def write_json(path: str | Path, data, indent: int | None = 2) -> None:
     """사람이 읽고 git diff 로 볼 파일이라 들여쓰기를 준다."""
-    Path(path).write_text(
-        json.dumps(data, ensure_ascii=False, indent=indent) + "\n", encoding="utf-8")
+    Path(path).write_text(_text(data, indent), encoding="utf-8")
+
+
+def write_json_if_changed(path: str | Path, data, indent: int | None = 2) -> bool:
+    """내용이 같으면 쓰지 않는다. 실제로 썼을 때만 True.
+
+    파일 **시각**이 신호이기 때문이다. `publish_state` 는 원장 파일이 마지막
+    적재보다 새로운지를 보고 '발행본이 뒤처졌다' 를 판정한다. 내용이 같은데 다시
+    쓰면 아무 일도 없던 날에 발행이 한 번 돈다 — 실측 2026-09-05: 검사만 돌려도
+    (test_firestore_payload 가 build_payload 를 부른다) knowledge.json 의 시각이
+    움직여 PUBLISH_STALE=1 이 됐다.
+
+    한 번 쓴 것과 글자까지 같아야 안 쓴다 — `write_json` 과 같은 모양으로 만들어
+    견준다(들여쓰기 2, 끝에 줄바꿈 하나).
+    """
+    p = Path(path)
+    text = _text(data, indent)
+    if p.exists():
+        try:
+            if p.read_text(encoding="utf-8") == text:
+                return False
+        except (OSError, UnicodeDecodeError):
+            pass          # 못 읽으면 쓴다 — 읽기 실패가 안 쓸 이유는 못 된다
+    p.write_text(text, encoding="utf-8")
+    return True
 
 
 def write_jsonl(path: str | Path, rows: list[dict]) -> None:

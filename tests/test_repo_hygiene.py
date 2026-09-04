@@ -5,9 +5,13 @@
 보이는데, 이런 것은 몇 달 뒤에 엉뚱한 자리에서 터진다.
 """
 import json
+import os
 import re
+import tempfile
 import unittest
 from pathlib import Path
+
+from scripts import jsonio
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -119,6 +123,41 @@ class SharedJsonIoTests(unittest.TestCase):
         src = (ROOT / "scripts" / "build_site.py").read_text(encoding="utf-8")
         self.assertIn("_read_json = jsonio.read_json", src)
         self.assertIn("_read_jsonl = jsonio.read_jsonl", src)
+
+    def test_the_guarded_writer_does_not_touch_an_identical_file(self):
+        """파일 **시각**이 신호다 — publish_state 는 원장이 마지막 적재보다
+        새로운지로 '발행본이 뒤처졌다' 를 판정한다. 내용이 같은데 다시 쓰면
+        아무 일도 없던 날에 발행이 한 번 돈다.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "x.json"
+            self.assertTrue(jsonio.write_json_if_changed(p, {"ㄱ": 1}))
+            os.utime(p, (0, 0))
+            self.assertFalse(jsonio.write_json_if_changed(p, {"ㄱ": 1}))
+            self.assertEqual(0, p.stat().st_mtime, "안 바뀌면 시각도 그대로다")
+            self.assertTrue(jsonio.write_json_if_changed(p, {"ㄱ": 2}))
+            self.assertEqual({"ㄱ": 2}, json.loads(p.read_text(encoding="utf-8")))
+
+    def test_both_writers_make_the_same_bytes(self):
+        """모양이 어긋나면 '안 바뀌었다' 가 늘 거짓이 되어 매번 쓴다 — 막으려던
+        것이 그대로 돌아온다."""
+        with tempfile.TemporaryDirectory() as d:
+            a, b = Path(d) / "a.json", Path(d) / "b.json"
+            jsonio.write_json(a, {"ㄱ": [1, 2]})
+            jsonio.write_json_if_changed(b, {"ㄱ": [1, 2]})
+            self.assertEqual(a.read_bytes(), b.read_bytes())
+
+    def test_the_ledger_writers_go_through_the_guarded_writer(self):
+        """검사도 build_payload 를 부른다 — 늘 쓰면 검사만 돌려도 원장 시각이
+        움직여 PUBLISH_STALE=1 이 된다(실측 2026-09-05).
+        """
+        for name in ("build_site.py", "build_firestore_payload.py"):
+            src = (ROOT / "scripts" / name).read_text(encoding="utf-8")
+            with self.subTest(name=name):
+                self.assertIn(
+                    'jsonio.write_json_if_changed(OUTPUT / "knowledge.json"', src)
+                self.assertNotIn(
+                    '(OUTPUT / "knowledge.json").write_text', src)
 
 
 class GhostFileTests(unittest.TestCase):

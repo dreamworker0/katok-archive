@@ -1023,10 +1023,10 @@ def main() -> None:
     # 사람 노드 동기화 **뒤에** 해야 한다 — 방금 만든 person→topic 엣지도 검사
     # 대상이고, 어긋난 옛 엣지가 그것과 겹치는지 봐야 한다.
     ontology.log(ontology.apply(knowledge))
-    # 노드를 새로 만들지 않았어도 발언 수는 바뀌었을 수 있다. 늘 써서 output 과
-    # 화면이 어긋나지 않게 둔다.
-    (OUTPUT / "knowledge.json").write_text(
-        json.dumps(knowledge, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 노드를 새로 만들지 않았어도 발언 수는 바뀌었을 수 있다. 바뀌면 쓴다 —
+    # 내용이 같은데 다시 쓰면 파일 시각만 움직이고, publish_state 가 그것을
+    # '발행본이 뒤처졌다' 로 읽는다.
+    jsonio.write_json_if_changed(OUTPUT / "knowledge.json", knowledge)
     if added:
         print("사람 노드 %d명 추가: %s" % (len(added), ", ".join(added)))
     digest_prose = _read_json(OUTPUT / "topic-digests.json")

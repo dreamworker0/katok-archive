@@ -27,7 +27,7 @@ import shutil
 from collections import Counter
 from pathlib import Path
 
-from scripts import build_site, member_requests, ontology, pii, scan_image_pii, warnlog
+from scripts import build_site, jsonio, member_requests, ontology, pii, scan_image_pii, warnlog
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
@@ -406,8 +406,9 @@ def build_payload() -> dict:
     # 고친다. 사람 노드 동기화 **뒤에** 해야 한다 — 방금 만든 person→topic 엣지도
     # 검사 대상이고, 어긋난 옛 엣지가 그것과 겹치는지 봐야 한다.
     ontology.log(ontology.apply(knowledge))
-    (OUTPUT / "knowledge.json").write_text(
-        json.dumps(knowledge, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 내용이 같으면 쓰지 않는다 — 검사도 이 함수를 부르므로, 늘 쓰면 검사만 돌려도
+    # 원장 시각이 움직여 publish_state 가 '발행본이 뒤처졌다' 고 읽는다.
+    jsonio.write_json_if_changed(OUTPUT / "knowledge.json", knowledge)
     if added:
         print("    사람 노드 %d명 추가: %s" % (len(added), ", ".join(added)))
 
