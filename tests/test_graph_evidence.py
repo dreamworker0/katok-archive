@@ -53,7 +53,7 @@ THREADS = [
 ]
 
 
-def ctx(node_tags=None) -> dict:
+def ctx(node_tags=None, reports=None) -> dict:
     return {
         "ids": [r[0] for r in ROWS],
         "hay": [r[2].lower() for r in ROWS],
@@ -64,6 +64,9 @@ def ctx(node_tags=None) -> dict:
         "cat": [r[5] for r in ROWS],
         "threads": [dict(t) for t in THREADS],
         "node_tags": node_tags or {},
+        "report_head": (reports or {}).get("head", {}),
+        "report_paras": (reports or {}).get("paras", {}),
+        "report_cat": {t[4]: t[5] for t in ROWS},
     }
 
 
@@ -193,6 +196,84 @@ class TaggedRouteTest(unittest.TestCase):
             {"source": "app:vague", "type": "uses", "target": "tool:short"},
             nowhere, ctx(node_tags=table), {})
         self.assertEqual([], ids, "'상담' 은 t-1 의 말에 안 나온다")
+
+
+def reports(head: dict, paras: dict) -> dict:
+    """보고서 문맥을 만든다. 띄어쓰기를 지운 소문자로 — ge.squeeze 와 같게."""
+    return {"head": {k: ge.squeeze(v) for k, v in head.items()},
+            "paras": {k: [ge.squeeze(x) for x in v] for k, v in paras.items()}}
+
+
+class ReportRouteTest(unittest.TestCase):
+    """원문에 자리가 없으면 보고서를 본다.
+
+    이 방에서 '무엇으로 만들었다' 는 보고서가 가장 또렷하게 적는다. 원문에서는
+    앱 이야기와 도구 이야기가 이어지는 **다른** 메시지로 오간다 — 한 메시지 안만
+    보는 규칙이 볼 수 없는 자리다(실측 2026-09-05: 빈칸 153개 중 84개).
+    """
+
+    def test_two_things_in_one_paragraph_is_evidence_and_points_at_the_thread(self):
+        c = ctx(reports=reports(
+            {"t-3": "무제"},
+            {"t-3": ["이야기 나누는 앱은 바른도구로 만들었다"]}))
+        c["report_cat"]["t-3"] = "projects"
+        edge = {"source": "app:vague", "type": "uses", "target": "tool:bareun"}
+        ids, by = ge.find_evidence(edge, BY_ID, c, {})
+        self.assertEqual(["t-3"], ids, "자리는 주제 id 다 — 가리킬 한 줄이 없다")
+        self.assertEqual("named-both+report", by)
+
+    def test_the_narrow_place_wins(self):
+        """원문에 한 줄이 있으면 그것을 쓴다. 보고서는 없을 때의 자리다."""
+        c = ctx(reports=reports(
+            {"t-3": "무제"},
+            {"t-3": ["사랑이 앱은 바른도구로 만들었다"]}))
+        edge = {"source": "app:sarangi", "type": "uses", "target": "tool:bareun"}
+        ids, by = ge.find_evidence(edge, BY_ID, c, {})
+        self.assertEqual(["msg-2"], ids)
+        self.assertEqual("named-both", by)
+
+    def test_a_person_and_a_thing_must_meet_in_one_paragraph(self):
+        """보고서에는 여러 사람이 나온다. 한 편 전체를 그릇으로 삼으면 서로 다른
+        문단에 따로 나온 사람과 도구가 이어진다.
+        """
+        apart = ctx(reports=reports(
+            {"t-3": "무제"},
+            {"t-3": ["라마바가 인사했다", "누군가 바른도구를 소개했다"]}))
+        edge = {"source": "person:라마바", "type": "uses", "target": "tool:bareun"}
+        self.assertEqual(([], "named-it"), ge.find_evidence(edge, BY_ID, apart, {}))
+        together = ctx(reports=reports(
+            {"t-3": "무제"},
+            {"t-3": ["라마바가 바른도구를 쓴다고 했다"]}))
+        ids, by = ge.find_evidence(edge, BY_ID, together, {})
+        self.assertEqual(["t-3"], ids)
+        self.assertEqual("named-it+report", by)
+
+    def test_the_subject_of_the_report_carries_the_whole_report(self):
+        """보고서는 주제가 하나다. 그 결과물이 제목에 있으면 본문의 도구는 그
+        이야기다 — 문단이 갈려도 이어 준다.
+        """
+        c = ctx(reports=reports(
+            {"t-3": "이야기 나누는 앱 만들기"},
+            {"t-3": ["처음에는 막막했다", "바른도구를 붙이니 풀렸다"]}))
+        edge = {"source": "app:vague", "type": "uses", "target": "tool:bareun"}
+        ids, by = ge.find_evidence(edge, BY_ID, c, {})
+        self.assertEqual(["t-3"], ids)
+        self.assertEqual("named-both+report", by)
+
+    def test_two_things_passing_through_someone_elses_report_do_not_count(self):
+        """제목에 없고 한 문단에서도 안 만나면 붙이지 않는다."""
+        c = ctx(reports=reports(
+            {"t-3": "모임 앞두고 발표자료 공유"},
+            {"t-3": ["이야기 나누는 앱이 잠깐 나왔다", "바른도구 이야기도 잠깐 나왔다"]}))
+        edge = {"source": "app:vague", "type": "uses", "target": "tool:bareun"}
+        self.assertEqual(([], "named-both"), ge.find_evidence(edge, BY_ID, c, {}))
+
+    def test_spacing_does_not_hide_a_name(self):
+        """보고서는 다듬은 글이라 '사랑이 앱' 을 '사랑이앱' 으로도 적는다."""
+        c = ctx(reports=reports(
+            {"t-3": "무제"}, {"t-3": ["이야기나누는앱은 바른도구로 만들었다"]}))
+        edge = {"source": "app:vague", "type": "uses", "target": "tool:bareun"}
+        self.assertEqual(["t-3"], ge.find_evidence(edge, BY_ID, c, {})[0])
 
 
 class PickTest(unittest.TestCase):

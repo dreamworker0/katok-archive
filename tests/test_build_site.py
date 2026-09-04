@@ -374,6 +374,23 @@ class KnowledgeTest(unittest.TestCase):
             edges, {"msg-1": "t-1", "msg-2": "t-1", "msg-9": "t-2"})
         self.assertEqual(["t-1", "t-2"], out[0]["evidence_threads"])
 
+    def test_a_thread_id_in_the_ledger_passes_through(self):
+        """보고서에서 찾은 근거는 원장에서도 주제 id 다 — 두 이름이 한 메시지에
+        없어 가리킬 한 줄이 없기 때문이다(`graph_evidence.from_reports`).
+        """
+        edges = [{"source": "a", "target": "b", "type": "uses",
+                  "evidence": ["t-2"], "by": "named-both+report"}]
+        out = build_site.publish_edges(edges, {"msg-1": "t-1", "msg-9": "t-2"})
+        self.assertEqual(["t-2"], out[0]["evidence_threads"])
+        self.assertEqual("named-both+report", out[0]["by"])
+
+    def test_an_id_that_is_neither_is_dropped(self):
+        edges = [{"source": "a", "target": "b", "type": "uses",
+                  "evidence": ["msg-없음"], "by": "named-both"}]
+        out = build_site.publish_edges(edges, {"msg-1": "t-1"})
+        self.assertNotIn("evidence_threads", out[0])
+        self.assertNotIn("by", out[0], "근거 없는 엣지에 규칙 이름만 남으면 안 된다")
+
     def test_every_digest_says_when_it_was_tidied(self):
         """정리 시점이 없으면 낡았는지 알 수 없다 — 화면도, 밤 갱신도.
 

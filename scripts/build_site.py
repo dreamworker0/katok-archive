@@ -121,12 +121,18 @@ def publish_edges(edges: list[dict], thread_of: dict[str, str]) -> list[dict]:
 
     엣지를 고치지 않는다 — 새 목록을 만들어 돌려준다. 원장 객체를 발행 때 바꾸면
     그 다음에 원장을 쓰는 코드가 발행본을 보게 된다.
+
+    근거가 **이미 주제 id** 인 것도 있다. 보고서에서 찾은 근거가 그렇다 — 두 이름이
+    한 메시지에 없어 가리킬 한 줄이 없고, 보고서가 붙은 자리는 주제다
+    (`graph_evidence.from_reports`). 그것은 그대로 통과시킨다.
     """
     out = []
+    have = set(thread_of.values())
     for e in edges:
         row = {k: v for k, v in e.items() if k != "evidence"}
         tids = [t for t in dict.fromkeys(
-            thread_of.get(m) for m in (e.get("evidence") or [])) if t]
+            (m if m in have else thread_of.get(m))
+            for m in (e.get("evidence") or [])) if t]
         if tids:
             row["evidence_threads"] = tids
         else:

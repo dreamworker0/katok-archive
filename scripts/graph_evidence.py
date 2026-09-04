@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import re
 import shutil
 import sys
 from datetime import datetime
@@ -83,6 +84,8 @@ EVIDENCE_MAX = 3
 
 # 이 길이 미만인 이름은 뒷받침 없이는 근거가 되지 못한다(위 docstring).
 SHORT_NAME_CHARS = 3
+# 보고서 근거는 주제 단위라 한둘이면 족하다 — 같은 말을 여러 편에서 확인시킬 일이 없다.
+EVIDENCE_REPORTS = 2
 
 
 def message_context() -> dict:
@@ -116,6 +119,12 @@ def message_context() -> dict:
         "cat": [cat_of.get(thread_of.get(m["id"])) for m in msgs],
         "threads": threads,
         "node_tags": ontology.load_node_tags(),
+        "report_head": {tid: squeeze(" ".join([
+            r.get("title") or "", r.get("summary") or "",
+            " ".join(r.get("keywords") or [])])) for tid, r in reports.items()},
+        "report_paras": {tid: [squeeze(x) for x in (r.get("report") or "").split("\n\n")
+                               if x.strip()] for tid, r in reports.items()},
+        "report_cat": dict(cat_of),
     }
 
 
@@ -185,6 +194,82 @@ def tagged_hits(node: dict, ctx: dict) -> list[int]:
     return [i for i, tid in enumerate(ctx["thread"]) if tid in tids]
 
 
+def squeeze(text: str) -> str:
+    """띄어쓰기를 지운 소문자. 보고서를 볼 때만 쓴다.
+
+    보고서는 사람이 다듬어 쓴 글이라 같은 것을 '차량 운행일지'·'차량운행일지' 로
+    달리 적는다. 원문(카톡)에는 이 잣대를 쓰지 않는다 — 거기서는 띄어쓰기를 지우면
+    낱말 경계가 무너져 엉뚱한 자리가 걸린다.
+    """
+    return re.sub(r"\s+", "", text.lower())
+
+
+def node_marks(node: dict) -> list[str]:
+    """보고서에서 이 노드를 가리키는 말들(띄어쓰기 없는 소문자)."""
+    names = ontology.node_names(node)
+    label = (node.get("label") or "").lower()
+    return [squeeze(n) for n in names
+            if len(n) >= SHORT_NAME_CHARS or n == label]
+
+
+def from_reports(rule: str, src: dict, dst: dict, ctx: dict) -> list[str]:
+    """원문에서 못 찾은 관계를 **보고서**에서 찾는다. 자리는 주제 id 다.
+
+    왜 보고서인가: 이 아카이브에서 '무엇으로 만들었다' 는 보고서가 가장 또렷하게
+    적는다. 원문에서는 앱 이야기와 도구 이야기가 이어지는 **다른** 메시지로 오가서,
+    한 메시지 안만 보는 규칙은 그 관계를 볼 수 없다 — 실측 2026-09-05: 근거 없는
+    엣지 153개 가운데 84개가 그 꼴이었다.
+
+    왜 message id 가 아닌가: 두 이름이 한 메시지에 없으니 가리킬 한 줄이 없다.
+    아무 줄이나 고르면 거짓 자리다. 보고서가 붙은 자리는 **주제**이고, 발행본의
+    근거는 어차피 주제 id 다(`build_site.publish_edges`).
+
+    ## 어디까지를 '함께 나왔다' 로 보나
+
+    보고서 한 편 전체를 그릇으로 삼으면 안 된다. 긴 보고서에는 여러 이야기가 있고,
+    한 사람과 한 도구가 **서로 다른 문단**에서 따로 나올 수 있다. 실측 2026-09-05:
+    보고서 전체로 재면 57개가 붙는데, 읽어 보니 사람 쪽에 그런 것이 섞여 있었다.
+
+      사람 → 물건   **한 문단** 안에서 만나야 한다. 보고서에는 여러 사람이 나오고,
+                    '누가 무엇을 했다' 는 문단 단위로 적힌다.
+      물건 → 물건   한 문단이거나, **한쪽이 제목·요약에 있으면** 된다. 보고서는
+                    주제가 하나다 — 그 결과물이 제목에 있으면 본문의 도구는 그
+                    이야기다. (제목에 없는 것은 떨어진다: 다른 주제의 보고서에
+                    스쳐 나온 앱과 도구를 이어 붙이지 않는다.)
+      물건 → 분류   그 분류의 보고서가 이름을 적었으면 된다.
+      사람 → 분류   보지 않는다 — 원문으로 98%가 걸린다.
+    """
+    if rule == "spoke-in":
+        return []
+    marks_dst = node_marks(dst)
+    hits = []
+    for tid, paras in ctx["report_paras"].items():
+        head = ctx["report_head"].get(tid, "")
+        if rule == "named-in":
+            if ctx["report_cat"].get(tid) != dst.get("category"):
+                continue
+            if any(m in head or any(m in p for p in paras) for m in node_marks(src)):
+                hits.append(tid)
+            continue
+        if rule == "named-it":
+            who = squeeze(src.get("label") or "")
+            if who and any(who in p and any(m in p for m in marks_dst)
+                           for p in [head] + paras):
+                hits.append(tid)
+            continue
+        marks_src = node_marks(src)
+        together = any(any(a in p for a in marks_src) and any(b in p for b in marks_dst)
+                       for p in [head] + paras)
+        subject = any(m in head for m in marks_src + marks_dst)
+        named_both = (any(any(a in p for a in marks_src) for p in [head] + paras)
+                      and any(any(b in p for b in marks_dst) for p in [head] + paras))
+        if together or (subject and named_both):
+            hits.append(tid)
+    hits.sort()
+    # 처음과 마지막 — `pick` 이 메시지에서 하는 것과 같은 뜻이다.
+    return hits if len(hits) <= EVIDENCE_REPORTS else [hits[0], hits[-1]]
+
+
 def pick(idx: list[int], ctx: dict, cap: int = EVIDENCE_MAX) -> list[int]:
     """가장 이른 것 · 가장 늦은 것 · 가장 긴 것. 원장 순서로 돌려준다.
 
@@ -248,6 +333,10 @@ def find_evidence(edge: dict, nodes: dict, ctx: dict,
         tagged_only = ta | tb
 
     if not hits:
+        # 원문에 자리가 없으면 보고서를 본다. 좁은 자리를 먼저 쓰고, 없을 때만.
+        tids = from_reports(rule, src, dst, ctx)
+        if tids:
+            return tids, rule + "+report"
         return [], rule
     chosen = pick(hits, ctx)
     # 표로 이어 살아난 자리가 섞였으면 남긴다 — 어느 판정이었는지 알아야
