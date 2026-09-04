@@ -9,6 +9,7 @@
   5. 주제 분류 (LLM, 비치명적)                 classify_unsorted.py
   5c. 발행본이 로컬보다 뒤처졌나 확인           publish_state.py
   5d. 요지 산문 갱신 (LLM, 비치명적)            digest_prose.py
+  5e. 관계망 근거 붙이기 (LLM 없음, 비치명적)  graph_evidence.py
   6. 갤러리용 작은 사진 생성                   build_thumbnails.py
   6b. 사진 속 개인정보 검사                     ocr_images.ps1 + scan_image_pii.py
   7. 발행본 재생성                             build_firestore_payload.py
@@ -20,9 +21,9 @@
 설계
   - 각 단계는 실패하면 즉시 중단한다. 반쪽 상태로 발행하지 않는다.
     **단, LLM 을 쓰는 칸은 예외다** — 5(주제 분류)·5b-2(AI 주석)·5b(보조 분류)·
-    5d(요지 산문). 실패하면 미분류 스레드가 남거나 옛 글이 하루 더 서 있을 뿐이므로
-    삼키고 나아간다. LLM 장애가 그날 타임라인·통계·삭제 요청 반영을 통째로
-    날려서는 안 된다.
+    5d(요지 산문). 5e(관계망 근거)는 LLM 을 안 쓰지만 같은 꼴로 둔다. 실패하면
+    미분류 스레드가 남거나 옛 글이 하루 더 서 있을 뿐이므로 삼키고 나아간다. LLM
+    장애가 그날 타임라인·통계·삭제 요청 반영을 통째로 날려서는 안 된다.
   - 6~8단계는 발행 사유가 있을 때만 돈다. 사유는 넷이다 — 새 메시지, 멤버 요청
     변경, 주제 분류 변경, 그리고 **발행본이 로컬보다 뒤처짐**. 조용한 날에 들어온
     삭제 요청이 묻히면 안 되므로 요청 변경도 사유이고, 정리해 놓고 안 올리면 화면이
@@ -435,6 +436,33 @@ $digestCode = $LASTEXITCODE
 foreach ($l in $digestOut) { Say "    $l" }
 if ($null -ne $digestCode -and $digestCode -ne 0) {
     Say "요지 산문 갱신이 실패했습니다 (exit $digestCode) — 옛 요지로 계속합니다." 'WARN'
+}
+
+# 5e) 관계망 근거 — 새로 생긴 엣지에 원문 자리를 붙인다.
+#
+#     관계망은 이 아카이브에서 유일하게 원 출처로 되짚을 수 없는 층이었다. 2026-09-04
+#     에 근거를 붙였는데(406/560), 엣지는 밤마다 늘어난다 — 5단계 분류가 새 앱·도구
+#     노드와 엣지를 원장에 덧붙이기 때문이다. 손으로만 돌리면 어제 붙인 근거가 오늘
+#     들어온 엣지에는 없다(실측 2026-09-05: 하룻밤에 엣지 8개가 근거 없이 생겼다).
+#
+#     LLM 을 부르지 않는다 — 근거는 원문에서 **찾는** 것이고, 모델에게 물으면 그럴듯한
+#     message id 를 지어낼 수 있다. 계산만 하므로 2.5초 걸린다(실측, 엣지 568개).
+#
+#     그래도 보조 분류·요지와 같은 꼴로 붙인다(Invoke-Step 이 아니다) — 근거 하나
+#     때문에 그날 타임라인·통계·삭제 요청 반영이 날아가서는 안 되고, 실패하면 그
+#     엣지는 옛 근거를 그대로 지닌다. 다음 밤이 다시 본다.
+#
+#     발행본(7)보다 **앞**이어야 한다. 뒤에 두면 근거를 붙여 놓고 그날 올리지 못한다.
+#     바뀐 것이 없으면 스크립트가 원장을 쓰지 않는다 — 내용이 같은데 파일 시각만
+#     바꿔 놓으면 publish_state 가 이튿밤에 '발행본이 뒤처졌다' 고 읽는다.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try { $evidenceOut = & { python -m scripts.graph_evidence --apply } 2>&1 }
+finally { $ErrorActionPreference = $prevEap }
+$evidenceCode = $LASTEXITCODE
+foreach ($l in $evidenceOut) { Say "    $l" }
+if ($null -ne $evidenceCode -and $evidenceCode -ne 0) {
+    Say "관계망 근거 붙이기가 실패했습니다 (exit $evidenceCode) — 옛 근거로 계속합니다." 'WARN'
 }
 
 # 6) 갤러리용 작은 사진 — 발행본을 만들기 전에 있어야 한다

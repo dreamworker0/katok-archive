@@ -363,5 +363,50 @@ class SingleRunLockTests(unittest.TestCase):
         self.assertIn('status: "skipped"', block)
 
 
+class GraphEvidenceRunsEveryNightTests(unittest.TestCase):
+    """관계망 근거는 밤마다 붙어야 한다.
+
+    엣지는 5단계 분류가 새 앱·도구를 원장에 덧붙일 때 늘어난다. 근거를 손으로만
+    붙이면 어제 붙인 근거가 오늘 들어온 엣지에는 없다 — 실측 2026-09-05: 하룻밤에
+    엣지 8개가 근거 없이 생겼다. 그 8개는 화면에서 '근거 없음' 으로 보인다.
+    """
+
+    def test_the_runner_calls_it(self):
+        self.assertIn("python -m scripts.graph_evidence --apply", DAILY)
+
+    def test_it_does_not_use_the_fatal_step_runner(self):
+        # 근거 하나 때문에 그날 발행이 통째로 날아가서는 안 된다.
+        self.assertNotIn("Invoke-Step '관계망 근거", DAILY)
+
+    def test_failure_warns_and_continues(self):
+        idx = DAILY.index("관계망 근거 붙이기가 실패했습니다")
+        block = DAILY[idx - 200:idx + 300]
+        self.assertIn("'WARN'", block)
+        for line in block.splitlines():
+            with self.subTest(line=line):
+                self.assertFalse(line.strip().startswith("exit "))
+
+    def test_stderr_is_not_promoted_to_an_error(self):
+        # Invoke-Step 과 같은 함정이다 — 파이썬이 stderr 에 한 줄 쓰면 'Stop' 이
+        # 여기서 갱신을 죽인다.
+        idx = DAILY.index("scripts.graph_evidence")
+        block = DAILY[idx - 400:idx + 200]
+        self.assertIn("$ErrorActionPreference = 'Continue'", block)
+        self.assertIn("finally { $ErrorActionPreference = $prevEap }", block)
+
+    def test_it_runs_after_the_edges_are_made_and_before_publishing(self):
+        # 분류 뒤여야 그날 생긴 엣지를 보고, 발행 앞이어야 그날 올라간다.
+        body = DAILY[DAILY.index("$ErrorActionPreference"):]
+        self.assertLess(body.index("scripts.classify_unsorted"),
+                        body.index("scripts.graph_evidence"))
+        self.assertLess(body.index("scripts.graph_evidence"),
+                        body.index("Invoke-Step '발행본 생성'"))
+
+    def test_the_header_lists_it(self):
+        # 단계 목록은 사람이 파이프라인을 처음 읽는 자리다.
+        head = DAILY[:DAILY.index("사용")]
+        self.assertIn("graph_evidence.py", head)
+
+
 if __name__ == "__main__":
     unittest.main()

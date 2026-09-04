@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import os
 import json
 import tempfile
 import unittest
@@ -233,6 +234,29 @@ class ApplyTest(unittest.TestCase):
         _, backup = self.run_once(k)
         saved = json.loads((backup / "knowledge.json").read_text(encoding="utf-8"))
         self.assertNotIn("evidence", saved["edges"][0])
+
+    def test_nothing_changed_means_the_ledger_is_not_rewritten(self):
+        """내용이 같은데 다시 쓰면 파일 시각만 바뀐다. `publish_state` 는
+        knowledge.json 의 시각을 보고 발행할지 정하므로, 밤마다 돌리는 칸에서
+        그러면 조용한 날에도 발행이 돈다.
+        """
+        k = self.knowledge()
+        self.run_once(k)
+        os.utime(self.path, (0, 0))
+        rows = ge.survey(k, ctx())["rows"]
+        changed, backup = ge.apply_evidence(k, rows, "20260905")
+        self.assertEqual(0, changed)
+        self.assertIsNone(backup, "쓰지 않았으면 백업도 만들지 않는다")
+        self.assertEqual(0, self.path.stat().st_mtime, "파일을 건드리지 않았다")
+        self.assertFalse((self.dir / "backup-graph-20260905").exists())
+
+    def test_it_asks_no_model(self):
+        """근거는 원문에서 **찾는** 것이다. 모델에게 물으면 그럴듯한 message id 를
+        지어낼 수 있고, 그것은 근거의 반대다. 밤마다 도는 칸이 되었으니 더 그렇다.
+        """
+        src = (Path(ge.__file__)).read_text(encoding="utf-8")
+        self.assertNotIn("call_claude", src)
+        self.assertNotIn("from scripts import llm", src)
 
 
 class NodesMissingTest(unittest.TestCase):

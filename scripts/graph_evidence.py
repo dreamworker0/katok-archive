@@ -282,16 +282,19 @@ def report(rows: list[dict]) -> None:
     print("\n규칙별: %s" % " · ".join("%s %d" % kv for kv in by.most_common()))
 
 
-def apply_evidence(knowledge: dict, rows: list[dict], day: str) -> tuple[int, Path]:
+def apply_evidence(knowledge: dict, rows: list[dict],
+                   day: str) -> tuple[int, Path | None]:
     """찾은 근거를 엣지에 덧붙인다. 여러 번 돌려도 같다.
 
     근거를 못 찾은 엣지에는 `evidence` 키를 **아예 만들지 않는다.** 빈 배열을 넣으면
     화면이 '근거가 있다' 고 믿고 빈 목록을 그린다 — `weigh_knowledge.span` 이 빈
     날짜를 안 넣는 것과 같은 이유다.
+
+    **바뀐 것이 없으면 원장을 쓰지 않는다** — 백업도 만들지 않는다. 내용이 같아도
+    다시 쓰면 파일 시각이 바뀌고, `publish_state` 는 `knowledge.json` 의 시각을
+    보고 발행할지 정한다. 밤마다 돌리는 칸에서 그러면 조용한 날에도 발행이 돈다.
+    바뀐 것이 없을 때 돌려주는 백업 경로는 None 이다.
     """
-    backup = backup_dir("graph", day)
-    if KNOWLEDGE.is_file():
-        shutil.copy2(KNOWLEDGE, backup / KNOWLEDGE.name)
     changed = 0
     for r in rows:
         e = r["edge"]
@@ -305,6 +308,11 @@ def apply_evidence(knowledge: dict, rows: list[dict], day: str) -> tuple[int, Pa
                 changed += 1
             e.pop("evidence", None)
             e.pop("by", None)
+    if not changed:
+        return 0, None
+    backup = backup_dir("graph", day)
+    if KNOWLEDGE.is_file():
+        shutil.copy2(KNOWLEDGE, backup / KNOWLEDGE.name)
     jsonio.write_json(KNOWLEDGE, knowledge)
     return changed, backup
 
@@ -401,9 +409,12 @@ def main() -> int:
         print("\n근거 못 찾은 관계 → %s" % shown(path))
     if args.apply:
         changed, backup = apply_evidence(knowledge, rows, args.day)
-        print("\n엣지 %d개를 고쳤습니다(근거를 덧붙임)." % changed)
-        print("백업: %s/ (바꾸기 전 knowledge.json)" % shown(backup))
-        print("다음: python -m scripts.build_site  → 테스트 → 발행")
+        if not changed:
+            print("\n근거는 이미 다 붙어 있습니다 — 원장을 쓰지 않았습니다.")
+        else:
+            print("\n엣지 %d개를 고쳤습니다(근거를 덧붙임)." % changed)
+            print("백업: %s/ (바꾸기 전 knowledge.json)" % shown(backup))
+            print("다음: python -m scripts.build_site  → 테스트 → 발행")
     elif not args.gaps:
         print("\n원장은 한 글자도 안 바꿨습니다. 덧붙이려면 --apply")
     return 0
