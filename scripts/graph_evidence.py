@@ -83,7 +83,8 @@ PARTICIPANTS = OUT / "participants.json"
 EVIDENCE_MAX = 3
 
 # 이 길이 미만인 이름은 뒷받침 없이는 근거가 되지 못한다(위 docstring).
-SHORT_NAME_CHARS = 3
+# 규칙은 ontology 에 있다 — 근거 찾기와 분류 확인이 같은 잣대를 써야 한다.
+SHORT_NAME_CHARS = ontology.SHORT_NAME_CHARS
 # 보고서 근거는 주제 단위라 한둘이면 족하다 — 같은 말을 여러 편에서 확인시킬 일이 없다.
 EVIDENCE_REPORTS = 2
 
@@ -125,6 +126,8 @@ def message_context() -> dict:
         "report_paras": {tid: [squeeze(x) for x in (r.get("report") or "").split("\n\n")
                                if x.strip()] for tid, r in reports.items()},
         "report_cat": dict(cat_of),
+        "cat_label": {c["id"]: c.get("label") or c["id"]
+                      for c in topics.get("categories", [])},
     }
 
 
@@ -170,8 +173,7 @@ def mentions_of(node: dict, ctx: dict) -> list[int]:
     names = ontology.node_names(node)
     if not names:
         return []
-    label = (node.get("label") or "").lower()
-    long_names = [n for n in names if len(n) >= SHORT_NAME_CHARS or n == label]
+    long_names = ontology.findable_names(node)
     short_names = [n for n in names if n not in long_names]
     backing = linked_threads(node, ctx) if short_names else set()
 
@@ -206,10 +208,7 @@ def squeeze(text: str) -> str:
 
 def node_marks(node: dict) -> list[str]:
     """보고서에서 이 노드를 가리키는 말들(띄어쓰기 없는 소문자)."""
-    names = ontology.node_names(node)
-    label = (node.get("label") or "").lower()
-    return [squeeze(n) for n in names
-            if len(n) >= SHORT_NAME_CHARS or n == label]
+    return [squeeze(n) for n in ontology.findable_names(node)]
 
 
 def from_reports(rule: str, src: dict, dst: dict, ctx: dict) -> list[str]:
@@ -446,12 +445,20 @@ def gap_reason(edge: dict, nodes: dict, ctx: dict, cache: dict) -> str:
 
 
 def write_gaps(rows: list[dict], nodes: dict, ctx: dict, day: str) -> Path:
-    """근거를 못 찾은 엣지 문서. 지우지 않는다 — 사람이 본다."""
+    """근거를 못 찾은 엣지 문서. 지우지 않는다 — 사람이 본다.
+
+    `belongs` 는 따로 낸다. 그것은 대화에서 찾은 주장이 아니라 노드의 분류 칸을
+    그대로 엣지로 옮긴 것이라, 근거를 물으면 분류가 어긋난 노드가 전부 '근거 없음'
+    으로 나온다 — 못 찾은 것이 아니라 물음이 어긋난 것이다. 그래서 '왜 못 찾았나'
+    표에서 빼고 '분류를 다시 볼 목록' 으로 돌린다.
+    """
     path = OUT / ("graph-noevidence-%s.md" % day)
     gaps = [r for r in rows if not r["evidence"]]
+    belongs = [r for r in gaps if r["edge"].get("type") == "belongs"]
+    others = [r for r in gaps if r["edge"].get("type") != "belongs"]
     cache: dict[str, list[int]] = {}
     by_shape: dict[str, list[str]] = collections.defaultdict(list)
-    for r in gaps:
+    for r in others:
         e = r["edge"]
         s, d = nodes.get(e["source"]), nodes.get(e["target"])
         by_shape[r["shape"]].append(
@@ -465,16 +472,19 @@ def write_gaps(rows: list[dict], nodes: dict, ctx: dict, day: str) -> Path:
         ontology.load_settled_nodes())
 
     body = ["# 근거를 못 찾은 관계 — %s" % day, "",
-            "- 엣지 %d개 가운데 %d개." % (len(rows), len(gaps)),
+            "- 엣지 %d개 가운데 %d개. 그중 %d개는 `belongs` 라 아래 따로 뒀다."
+            % (len(rows), len(gaps), len(belongs)),
             "- **지우지 않는다.** 누적된 원장이고, 그날 판단으로 과거를 지우면",
             "  되돌릴 수 없다. 이 문서는 사람이 훑는 목록이다.",
             "- 가장 빠른 길은 아래 `node_tags` 후보를 표에 적는 것이다 — 적으면",
             "  `python -m scripts.graph_evidence --report` 를 공짜로 다시 돌려",
             "  근거가 얼마나 늘었는지 볼 수 있다(LLM 호출이 없다).", ""]
-    for shape in sorted(by_shape, key=lambda s: -len(by_shape[s])):
+    for shape in sorted(by_shape, key=lambda x: -len(by_shape[x])):
         body += ["## %s — %d개" % (shape, len(by_shape[shape])), "",
                  "| 출발 | 관계 | 도착 | 왜 못 찾았나 |", "|---|---|---|---|"]
         body += by_shape[shape] + [""]
+
+    body += gaps_belongs_section(belongs, nodes, ctx)
 
     body += ["## `config/node_tags.json` 후보 %d개" % len(cands), "",
              "이름으로도 표로도 주제를 못 찾는 노드다. 짝지을 태그를 골라 적는다.",
@@ -484,6 +494,43 @@ def write_gaps(rows: list[dict], nodes: dict, ctx: dict, day: str) -> Path:
              for nid, label, c in cands] or ["| — | (없음) | — |"]
     path.write_text("\n".join(body) + "\n", encoding="utf-8")
     return path
+
+
+def gaps_belongs_section(belongs: list[dict], nodes: dict, ctx: dict) -> list[str]:
+    """`belongs` 빈칸은 '분류를 다시 볼 목록' 이다.
+
+    판정 규칙은 `build_site.filed_elsewhere` 한 곳에 있다 — 밤 갱신 경고도 같은
+    것을 쓴다. 여기서는 그 결과를 표로 낼 뿐이다.
+    """
+    if not belongs:
+        return []
+    from scripts import build_site      # 규칙은 한 곳에 — 순환 참조는 없다
+
+    said = {n["id"]: seen for n, seen in build_site.filed_elsewhere(
+        [nodes[r["edge"]["source"]] for r in belongs if r["edge"]["source"] in nodes],
+        ctx["hay"], ctx["cat"], floor=1)}
+    out = ["## 분류가 어긋나 보이는 노드 — `belongs` %d개" % len(belongs), "",
+           "`belongs` 는 대화에서 찾은 주장이 아니다. 노드의 **분류 칸**을 그대로",
+           "엣지로 옮긴 것이라, '그 분류의 말에 이 이름이 나오나' 를 물으면 분류가",
+           "어긋난 노드가 전부 근거 없음으로 나온다 — 못 찾은 것이 아니라 물음이",
+           "어긋난 것이다.", "",
+           "**단정하지 않는다.** 도구의 분류는 '이것이 어떤 것인가' 이고 아래 분포는",
+           "'어디서 이야기됐나' 다. 둘은 정당하게 다를 수 있다 — 깃허브 액션은",
+           "인프라가 맞지만 사람들은 무언가 만들며 그 이름을 말한다.", "",
+           "| 노드 | 지금 분류 | 실제로 이야기된 분류 |", "|---|---|---|"]
+    seen_nodes = []
+    for r in belongs:
+        n = nodes.get(r["edge"]["source"])
+        if not n or n["id"] in seen_nodes:
+            continue
+        seen_nodes.append(n["id"])
+        got = said.get(n["id"])
+        spread = (" · ".join("%s %d" % (ctx["cat_label"].get(c, c), v)
+                             for c, v in got.most_common(3))
+                  if got else "원문에 이름이 안 나온다 — 판단할 재료가 없다")
+        out.append("| %s | %s | %s |" % (
+            n["label"], ctx["cat_label"].get(n.get("category"), n.get("category")), spread))
+    return out + [""]
 
 
 def main() -> int:

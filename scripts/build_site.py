@@ -350,6 +350,11 @@ def build_digests(
     return digests
 
 
+def _hay(m: dict) -> str:
+    """원문에서 이름을 찾을 때 보는 글. 크기·근거·분류 확인이 같은 것을 봐야 한다."""
+    return ((m.get("text") or "") + " " + " ".join(m.get("urls") or [])).lower()
+
+
 def weigh_knowledge(knowledge: dict, messages: list[dict]) -> list[str]:
     """지식 노드의 크기와 **시점**을 원문에서 다시 매긴다. 한 번도 안 나온 이름을 돌려준다.
 
@@ -386,10 +391,7 @@ def weigh_knowledge(knowledge: dict, messages: list[dict]) -> list[str]:
     사람 노드는 크기를 건드리지 않는다(발언량으로 이미 계산돼 있다). 시점은
     그 사람이 처음·마지막 말한 날로 붙인다 — '언제부터 방에 있었나' 다.
     """
-    hay = [
-        ((m.get("text") or "") + " " + " ".join(m.get("urls") or [])).lower()
-        for m in messages
-    ]
+    hay = [_hay(m) for m in messages]
     dates = [m.get("date") or "" for m in messages]
     cat_msgs: Counter[str] = Counter(m.get("category") for m in messages if m.get("category"))
 
@@ -435,6 +437,45 @@ def weigh_knowledge(knowledge: dict, messages: list[dict]) -> list[str]:
         # 1번 언급 → 4.5, 10번 → 9, 50번 → 16 정도. 제곱근으로 눌러 편차를 줄인다
         n["value"] = round(3.5 + min(18, (len(idx) ** 0.5) * 1.8), 1)
     return stale
+
+
+# 제 분류에서 한 번도 안 나왔다고 말하려면 몇 번은 나왔어야 한다. 한두 번은 우연이라
+# 목록만 길어진다 — 실측 2026-09-05: 2건 이상 22개 · 3건 이상 15개 · 5건 이상 10개.
+FILED_ELSEWHERE_MIN = 3
+
+
+def filed_elsewhere(nodes: list[dict], hay: list[str], cats: list[str | None],
+                    floor: int = FILED_ELSEWHERE_MIN) -> list[tuple[dict, Counter]]:
+    """제 분류에서는 한 번도 이야기되지 않은 앱·도구. (노드, 분류별 언급 수)
+
+    `belongs` 엣지는 대화에서 찾은 주장이 아니다. 노드의 `category` 칸을 그대로
+    엣지로 투영한 것이다. 그래서 관계망 근거 찾기가 '그 분류의 말에 이 이름이
+    나오나' 를 물으면, 분류가 어긋난 노드가 전부 '근거 없음' 으로 나온다 —
+    실측 2026-09-05: 근거 없는 엣지 153개 가운데 31개가 `belongs` 였다.
+
+    **근거를 못 찾은 것이 아니라 물음이 어긋난 것이다.** 그래서 근거 목록에서
+    빼고 이리로 돌린다. 이것은 사람이 분류를 다시 볼 목록이다.
+
+    단정하지 않는다. 도구의 분류는 '이것이 어떤 것인가' 이고 언급 분포는 '어디서
+    이야기됐나' 라 둘은 정당하게 다를 수 있다 — 깃허브 액션은 인프라가 맞지만
+    사람들은 무언가 만들며 그 이름을 말한다. 그래서 어디서 이야기됐는지를 함께
+    돌려주고, 판단은 사람에게 남긴다.
+    """
+    out = []
+    for n in nodes:
+        if n.get("type") in ("person", "topic") or not n.get("category"):
+            continue
+        names = ontology.findable_names(n)
+        if not names:
+            continue
+        seen: Counter[str] = Counter()
+        for i, h in enumerate(hay):
+            if cats[i] and any(x in h for x in names):
+                seen[cats[i]] += 1
+        if sum(seen.values()) >= floor and not seen.get(n["category"]):
+            out.append((n, seen))
+    out.sort(key=lambda r: -sum(r[1].values()))
+    return out
 
 
 def enrich_threads(threads: list[dict], messages: list[dict]) -> list[dict]:
@@ -852,6 +893,19 @@ def build_data(
     # 관계망 노드 크기를 실제 언급량으로 다시 매긴다
     stale = weigh_knowledge(knowledge, out_messages)
     warnlog.note("stale_nodes", stale, "[관계망] 원문에 한 번도 안 나오는 노드", sample=12)
+    # 분류가 어긋나 보이는 노드. `belongs` 엣지는 이 칸을 그대로 투영한 것이라,
+    # 여기가 어긋나면 관계망 근거 찾기가 그 엣지를 통째로 '근거 없음' 으로 낸다.
+    label_of = {c["id"]: c.get("label") or c["id"] for c in topics.get("categories", [])}
+    warnlog.note(
+        "filed_elsewhere",
+        ["%s(%s→%s)" % (n["label"], label_of.get(n["category"], n["category"]),
+                        label_of.get(seen.most_common(1)[0][0], seen.most_common(1)[0][0]))
+         for n, seen in filed_elsewhere(knowledge.get("nodes", []),
+                                        [_hay(m) for m in out_messages],
+                                        [m.get("category") for m in out_messages])],
+        "[관계망] 제 분류에서는 한 번도 안 나오는 노드",
+        advice="분류 칸을 다시 보세요 — 목록은 `python -m scripts.graph_evidence --gaps`",
+        sample=6)
     # 관계망 노드와 태그를 짝지어 둔 표. 없으면 예전처럼 이름 글자로만 잇는다.
     node_tags = ontology.load_node_tags()
     node_cands = ontology.node_tag_candidates(

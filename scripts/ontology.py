@@ -258,6 +258,11 @@ _PAREN = re.compile(r"[(（]([^)）]+)[)）]")
 _HANGUL = re.compile(r"[가-힣]")
 
 
+# 두 글자 이하는 일반어일 때가 많다 — '상담'·'게임'·'토론'. 그런 이름은 원문 어디에나
+# 있어서, 그대로 찾으면 관계없는 대화가 전부 걸린다.
+SHORT_NAME_CHARS = 3
+
+
 def node_names(node: dict) -> list[str]:
     """이 노드를 원문에서 찾을 때 쓸 이름들 — 소문자로, 중복 없이.
 
@@ -288,6 +293,23 @@ def node_names(node: dict) -> list[str]:
         if inner and not _HANGUL.search(inner):
             out.append(inner.lower())
     return list(dict.fromkeys(x for x in out if x))
+
+
+def findable_names(node: dict) -> list[str]:
+    """원문에서 그대로 찾아도 되는 이름들.
+
+    **짧아도 그것이 이름의 전부면 이름이다.** 방벽은 긴 이름에서 잘라 온 조각을
+    막으려는 것이다 — '상담 실시간 질문 안내 도구' 의 query 가 '상담' 이면 상담
+    이야기 전부가 그 도구 언급이 된다. 반대로 두 글자가 통째로 이름인 노드(노션·
+    슬랙)까지 같은 그물에 걸리면 찾아 놓고 버리게 된다.
+
+    이 규칙이 한 곳에 있어야 한다. 근거 찾기(`graph_evidence.mentions_of`)와
+    분류 확인(`build_site.filed_elsewhere`)이 다른 잣대를 쓰면, 언급이 29건인
+    노드를 한쪽은 '안 나온다' 고 말한다(실측 2026-09-05).
+    """
+    label = (node.get("label") or "").lower()
+    return [n for n in node_names(node)
+            if len(n) >= SHORT_NAME_CHARS or n == label]
 
 
 def load_node_tags(path: Path | None = None) -> dict[str, list[str]]:

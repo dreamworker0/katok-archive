@@ -391,6 +391,49 @@ class KnowledgeTest(unittest.TestCase):
         self.assertNotIn("evidence_threads", out[0])
         self.assertNotIn("by", out[0], "근거 없는 엣지에 규칙 이름만 남으면 안 된다")
 
+    def test_a_node_talked_about_only_elsewhere_is_listed(self):
+        """`belongs` 는 대화에서 찾은 주장이 아니라 노드의 분류 칸이다. 그 칸이
+        어긋나면 근거 찾기가 그 엣지를 통째로 '근거 없음' 으로 낸다 — 근거를 못
+        찾은 것이 아니라 물음이 어긋난 것이라, 분류를 다시 볼 목록으로 낸다.
+        """
+        nodes = [{"id": "tool:a", "type": "tool", "label": "바른도구",
+                  "query": "바른도구", "category": "infra"}]
+        hay = ["바른도구 좋아요", "바른도구 씁니다", "바른도구로 만들었어요"]
+        cats = ["projects", "projects", "welfare-practice"]
+        got = build_site.filed_elsewhere(nodes, hay, cats)
+        self.assertEqual(1, len(got))
+        self.assertEqual("tool:a", got[0][0]["id"])
+        self.assertEqual(2, got[0][1]["projects"])
+
+    def test_one_mention_in_its_own_category_is_enough_to_stay_quiet(self):
+        nodes = [{"id": "tool:a", "type": "tool", "label": "바른도구",
+                  "query": "바른도구", "category": "infra"}]
+        hay = ["바른도구 좋아요", "바른도구 씁니다", "바른도구 이야기"]
+        cats = ["projects", "projects", "infra"]
+        self.assertEqual([], build_site.filed_elsewhere(nodes, hay, cats))
+
+    def test_a_node_barely_mentioned_is_not_judged(self):
+        """한두 번은 우연이다. 목록만 길어지면 진짜가 묻힌다."""
+        nodes = [{"id": "tool:a", "type": "tool", "label": "바른도구",
+                  "query": "바른도구", "category": "infra"}]
+        self.assertEqual([], build_site.filed_elsewhere(
+            nodes, ["바른도구 좋아요"], ["projects"]))
+
+    def test_people_and_categories_are_not_filed_this_way(self):
+        nodes = [{"id": "person:가나다", "type": "person", "label": "가나다",
+                  "category": "projects"}]
+        self.assertEqual([], build_site.filed_elsewhere(
+            nodes, ["가나다 님 안녕하세요"] * 5, ["infra"] * 5))
+
+    def test_a_generic_fragment_name_is_not_counted(self):
+        """이름 규칙은 근거 찾기와 같은 것을 쓴다(ontology.findable_names).
+        다른 잣대를 쓰면 언급이 많은 노드를 한쪽은 '안 나온다' 고 말한다.
+        """
+        nodes = [{"id": "tool:a", "type": "tool", "label": "상담 실시간 안내 도구",
+                  "query": "상담", "category": "infra"}]
+        self.assertEqual([], build_site.filed_elsewhere(
+            nodes, ["오늘 상담 다녀왔습니다"] * 5, ["welfare-practice"] * 5))
+
     def test_every_digest_says_when_it_was_tidied(self):
         """정리 시점이 없으면 낡았는지 알 수 없다 — 화면도, 밤 갱신도.
 

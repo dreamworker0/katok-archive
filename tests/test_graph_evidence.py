@@ -128,6 +128,8 @@ class NodeNameTest(unittest.TestCase):
         """크기(build_site)와 근거(graph_evidence)가 다른 것을 세면 안 된다."""
         src = (Path(ge.__file__).parent / "build_site.py").read_text(encoding="utf-8")
         self.assertIn("needles = ontology.node_names(n)", src)
+        self.assertIn("ontology.findable_names(n)", src,
+                      "분류 확인도 같은 이름 규칙을 써야 한다")
         self.assertIn("names = ontology.node_names(node)",
                       Path(ge.__file__).read_text(encoding="utf-8"))
 
@@ -383,6 +385,45 @@ class ApplyTest(unittest.TestCase):
         src = (Path(ge.__file__)).read_text(encoding="utf-8")
         self.assertNotIn("call_claude", src)
         self.assertNotIn("from scripts import llm", src)
+
+
+class BelongsIsNotAClaimTest(unittest.TestCase):
+    """`belongs` 는 대화에서 찾은 주장이 아니라 노드의 분류 칸을 옮긴 것이다.
+
+    그러니 '그 분류의 말에 이 이름이 나오나' 를 물으면 분류가 어긋난 노드가 전부
+    근거 없음으로 나온다 — 못 찾은 것이 아니라 물음이 어긋난 것이다. 그래서 '왜
+    못 찾았나' 표에서 빼고 '분류를 다시 볼 목록' 으로 돌린다.
+    """
+
+    def gaps(self):
+        c = ctx()
+        c["cat_label"] = {"projects": "프로젝트", "infra": "인프라"}
+        rows = [
+            {"edge": {"source": "tool:bareun", "type": "belongs",
+                      "target": "topic:projects"},
+             "shape": "tool -belongs-> topic", "evidence": [], "by": "named-in"},
+            {"edge": {"source": "app:vague", "type": "uses",
+                      "target": "tool:bareun"},
+             "shape": "app -uses-> tool", "evidence": [], "by": "named-both"},
+        ]
+        return rows, c
+
+    def test_belongs_gets_its_own_section(self):
+        rows, c = self.gaps()
+        out = "\n".join(ge.gaps_belongs_section([rows[0]], BY_ID, c))
+        self.assertIn("분류가 어긋나 보이는 노드", out)
+        self.assertIn("바른도구", out)
+        self.assertNotIn("왜 못 찾았나", out)
+
+    def test_the_section_does_not_claim_the_filing_is_wrong(self):
+        """도구의 분류는 '어떤 것인가' 이고 언급 분포는 '어디서 이야기됐나' 다."""
+        rows, c = self.gaps()
+        out = "\n".join(ge.gaps_belongs_section([rows[0]], BY_ID, c))
+        self.assertIn("단정하지 않는다", out)
+
+    def test_nothing_is_written_when_there_is_no_belongs(self):
+        rows, c = self.gaps()
+        self.assertEqual([], ge.gaps_belongs_section([], BY_ID, c))
 
 
 class NodesMissingTest(unittest.TestCase):
