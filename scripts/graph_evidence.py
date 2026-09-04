@@ -151,12 +151,19 @@ def mentions_of(node: dict, ctx: dict) -> list[int]:
     """그 노드의 이름이 나온 메시지 자리들.
 
     짧은 이름(일반어)은 그 메시지의 주제가 그 노드와 이어질 때만 센다.
+
+    **짧아도 그것이 이름의 전부면 이름이다.** 방벽은 '상담'·'게임'·'토론' 처럼
+    긴 이름에서 잘라 온 조각을 막으려는 것이다 — '상담 실시간 질문 안내 도구' 의
+    query 가 '상담' 이면 상담 이야기 전부가 그 도구 언급이 된다. 그런데 길이만
+    보면 두 글자가 통째로 이름인 것들이 같은 그물에 걸린다(노션·슬랙 같은 것).
+    실측 2026-09-05: '슬랙' 30건을 찾아 놓고 버리고 있었다.
     """
-    names = [x.lower() for x in (node.get("query"), node.get("label")) if x]
+    names = ontology.node_names(node)
     if not names:
         return []
-    long_names = [n for n in names if len(n) >= SHORT_NAME_CHARS]
-    short_names = [n for n in names if len(n) < SHORT_NAME_CHARS]
+    label = (node.get("label") or "").lower()
+    long_names = [n for n in names if len(n) >= SHORT_NAME_CHARS or n == label]
+    short_names = [n for n in names if n not in long_names]
     backing = linked_threads(node, ctx) if short_names else set()
 
     out = []

@@ -420,7 +420,7 @@ def weigh_knowledge(knowledge: dict, messages: list[dict]) -> list[str]:
             n["value"] = round(8 + min(22, (c ** 0.5) * 1.1), 1)
             span(n, cat_on.get(n["category"], []))
             continue
-        needles = [x.lower() for x in (n.get("query"), n["label"]) if x]
+        needles = ontology.node_names(n)
         idx = [i for i, h in enumerate(hay) if any(nd in h for nd in needles)]
         if not idx:
             stale.append("%s(%s)" % (n["label"], n["type"]))

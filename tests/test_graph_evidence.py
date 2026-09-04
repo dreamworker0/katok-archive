@@ -18,6 +18,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from scripts import ontology
 from scripts import graph_evidence as ge
 
 NODES = [
@@ -26,7 +27,8 @@ NODES = [
     {"id": "person:라마바", "type": "person", "label": "라마바"},
     {"id": "app:sarangi", "type": "app", "label": "사랑이 앱", "query": "사랑이"},
     {"id": "app:vague", "type": "app", "label": "이야기 나누는 앱", "query": "이야기 나누는"},
-    {"id": "tool:short", "type": "tool", "label": "상담", "query": "상담"},
+    {"id": "tool:short", "type": "tool", "label": "상담 실시간 안내 도구", "query": "상담"},
+    {"id": "tool:slack", "type": "tool", "label": "슬랙", "query": "슬랙"},
     {"id": "tool:bareun", "type": "tool", "label": "바른도구", "query": "바른도구"},
 ]
 BY_ID = {n["id"]: n for n in NODES}
@@ -40,12 +42,13 @@ ROWS = [
     ("msg-4", "2026-04-01", "오늘 상담 다녀왔습니다", "라마바", "t-9", "chat"),
     ("msg-5", "2026-05-01", "상담 도구가 좋네요", "라마바", "t-2", "projects"),
     ("msg-6", "2026-06-01", "잡담입니다", "가나다", "t-9", "chat"),
+    ("msg-7", "2026-07-01", "슬랙에 붙였습니다", "가나다", "t-9", "chat"),
 ]
 
 # t-1 은 '사랑이 앱' 을 다룬 주제, t-2 는 '상담' 도구를 다룬 주제.
 THREADS = [
     {"id": "t-1", "title": "사랑이 앱 만들기", "tags": ["사랑이 앱"]},
-    {"id": "t-2", "title": "상담 도구 후기", "tags": ["상담"]},
+    {"id": "t-2", "title": "상담 도구 후기", "tags": ["상담 실시간 안내 도구"]},
     {"id": "t-9", "title": "잡담", "tags": []},
 ]
 
@@ -95,6 +98,37 @@ class RuleTest(unittest.TestCase):
         self.assertEqual(([], "named-it"), (ids, rule))
 
 
+class NodeNameTest(unittest.TestCase):
+    """라벨은 사람이 읽으라고 지은 표시용 이름이라 원문의 말과 다를 때가 많다."""
+
+    def test_the_original_spelling_in_brackets_is_a_name_too(self):
+        # 실측 2026-09-05: query 는 음역 두 글자인데 원문에는 로마자가 25건이었다.
+        got = ontology.node_names({"label": "버셀(Vercel)", "query": "버셀"})
+        self.assertIn("vercel", got)
+        self.assertIn("버셀", got)
+
+    def test_a_korean_bracket_is_a_description_not_a_name(self):
+        """'센터 홈페이지(웹접근성)' 의 '웹접근성' 을 이름으로 삼으면 접근성
+        이야기 전부가 그 홈페이지 언급이 된다."""
+        got = ontology.node_names({"label": "센터 홈페이지(웹접근성)",
+                                   "query": "센터 홈페이지"})
+        self.assertNotIn("웹접근성", got)
+
+    def test_the_middle_dot_is_not_split(self):
+        """이 방의 라벨에서 `·` 는 서로 다른 둘을 묶는 자리로 더 자주 쓰인다 —
+        '시놀로지 나스·도커' 를 갈라 '도커' 를 이름으로 삼으면 도커 이야기
+        전부가 그 나스 언급이 된다."""
+        got = ontology.node_names({"label": "시놀로지 나스·도커", "query": "시놀로지"})
+        self.assertNotIn("도커", got)
+
+    def test_both_readers_use_the_same_names(self):
+        """크기(build_site)와 근거(graph_evidence)가 다른 것을 세면 안 된다."""
+        src = (Path(ge.__file__).parent / "build_site.py").read_text(encoding="utf-8")
+        self.assertIn("needles = ontology.node_names(n)", src)
+        self.assertIn("names = ontology.node_names(node)",
+                      Path(ge.__file__).read_text(encoding="utf-8"))
+
+
 class ShortNameTest(unittest.TestCase):
     """일반어 이름은 그 주제가 그 노드와 이어질 때만 근거가 된다.
 
@@ -117,6 +151,17 @@ class ShortNameTest(unittest.TestCase):
         thin["threads"] = [{"id": t["id"], "title": "무제", "tags": []}
                            for t in THREADS]
         self.assertEqual([], ge.mentions_of(BY_ID["tool:short"], thin))
+
+    def test_a_short_name_that_is_the_whole_label_is_a_name(self):
+        """방벽은 긴 이름에서 잘라 온 조각을 막으려는 것이다. 두 글자가 통째로
+        이름인 것들이 같은 그물에 걸리면 안 된다 — 실측 2026-09-05: 두 글자가
+        통째로 이름인 노드 셋에서 43건을 찾아 놓고 버리고 있었다.
+        """
+        thin = ctx()
+        thin["threads"] = [{"id": t["id"], "title": "무제", "tags": []}
+                           for t in THREADS]
+        # 이어진 주제가 하나도 없어도 '슬랙' 은 제 이름으로 걸린다
+        self.assertEqual([6], ge.mentions_of(BY_ID["tool:slack"], thin))
 
 
 class TaggedRouteTest(unittest.TestCase):

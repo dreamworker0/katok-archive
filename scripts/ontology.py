@@ -38,6 +38,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from scripts import tags as taglib
@@ -251,6 +252,42 @@ def log(report: dict) -> None:
         print("[관계망] 뜻을 정할 수 없어 그대로 둔 관계 %d건 — 사람이 볼 일입니다: %s"
               % (len(report["invalid"]),
                  ", ".join("%s -%s-> %s" % x for x in report["invalid"][:5])))
+
+
+_PAREN = re.compile(r"[(（]([^)）]+)[)）]")
+_HANGUL = re.compile(r"[가-힣]")
+
+
+def node_names(node: dict) -> list[str]:
+    """이 노드를 원문에서 찾을 때 쓸 이름들 — 소문자로, 중복 없이.
+
+    라벨은 사람이 읽으라고 지은 표시용 이름이라 원문의 말과 다를 때가 많다.
+    실측 2026-09-05: '버셀(Vercel)' 의 query 는 '버셀'(원문 4건)인데 원문에는
+    'vercel' 이 25건이다. 괄호 안이 원래 표기인 꼴이 흔하다 — 코덱스(Codex)·
+    애저(Azure)·앱시트(AppSheet)·수노(Suno)·커서(Cursor)…
+
+    괄호 안은 **한글이 없을 때만** 쓴다. 원래 표기는 로마자로 적히고, 한글
+    괄호는 설명인 경우가 많아서다 — '센터 홈페이지(웹접근성)' 의 '웹접근성' 을
+    이름으로 삼으면 접근성 이야기 전부가 그 홈페이지 언급이 된다.
+
+    가운뎃점은 **가르지 않는다.** 이 방의 라벨에서 `·` 는 서로 다른 둘을 묶는
+    자리로 더 자주 쓰인다 — '시놀로지 나스·도커' 를 갈라 '도커' 를 이름으로
+    삼으면 도커 이야기 전부가 그 나스 언급이 된다.
+
+    두 곳이 같은 이름을 봐야 한다. `build_site.weigh_knowledge` 는 이것으로
+    노드 크기와 시점을 매기고 `graph_evidence` 는 근거를 찾는다 — 서로 다르면
+    크기와 근거가 다른 것을 세게 된다.
+    """
+    out = []
+    label = node.get("label") or ""
+    for raw in (node.get("query"), label):
+        if raw:
+            out.append(raw.lower())
+    for inner in _PAREN.findall(label):
+        inner = inner.strip()
+        if inner and not _HANGUL.search(inner):
+            out.append(inner.lower())
+    return list(dict.fromkeys(x for x in out if x))
 
 
 def load_node_tags(path: Path | None = None) -> dict[str, list[str]]:
