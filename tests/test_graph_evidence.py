@@ -126,8 +126,27 @@ class TaggedRouteTest(unittest.TestCase):
         self.assertEqual(([], "named-it"), (ids, rule), "이름으로는 못 찾는다")
         ids, rule = evidence("person:가나다", "made", "app:vague",
                              node_tags={"app:vague": ["사랑이 앱"]})
-        self.assertEqual("tagged", rule)
+        self.assertEqual("named-it+tagged", rule, "어느 길로 살아났는지 남는다")
         self.assertEqual(["msg-1", "msg-2"], ids)
+
+    def test_a_tagged_thread_alone_is_not_evidence_that_two_things_meet(self):
+        """`app uses tool` 은 도착 도구가 그 말에 나와야 근거다.
+
+        처음 판은 규칙이 비었을 때만 태그 길로 물러섰다. 그래서 출발 앱의 주제
+        메시지가 **도착 도구가 안 나와도** 근거가 됐다 — 관계를 보여 주지 않는
+        근거이고, 그건 없는 근거보다 나쁘다.
+        """
+        table = {"app:vague": ["사랑이 앱"]}
+        # t-1 의 말 가운데 '바른도구' 가 나오는 것은 msg-2 하나뿐이다.
+        ids, rule = evidence("app:vague", "uses", "tool:bareun", node_tags=table)
+        self.assertEqual(["msg-2"], ids)
+        self.assertEqual("named-both+tagged", rule)
+        # 그 주제에 아예 나오지 않는 도구는 근거가 없다.
+        nowhere = dict(BY_ID)
+        ids, _ = ge.find_evidence(
+            {"source": "app:vague", "type": "uses", "target": "tool:short"},
+            nowhere, ctx(node_tags=table), {})
+        self.assertEqual([], ids, "'상담' 은 t-1 의 말에 안 나온다")
 
 
 class PickTest(unittest.TestCase):

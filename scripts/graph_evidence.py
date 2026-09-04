@@ -33,10 +33,11 @@ LLM 을 부르지 않는다
       spoke-in     person → topic       그 사람이 그 분류에서 한 말
       named-it     person → app/tool    그 사람의 말 중 그 이름이 나온 것
       named-in     app/tool → topic     그 분류의 말 중 그 이름이 나온 것
-      named-both   app/tool → app/tool  두 이름이 한 메시지에 함께 나온 것
-      tagged       (위가 비었을 때)      `config/node_tags.json` 으로 짝지은 태그를
-                                        가진 주제의 말. 이름이 서술형인 앱이 제
-                                        근거를 찾는 유일한 길이다
+      named-both   app/tool → app/tool  두 이름이 한 메시지에서 만난 것
+
+    노드가 '나온 자리' 는 이름으로 찾은 것에 `config/node_tags.json` 으로 짝지은
+    태그를 가진 주제의 말을 **더한** 것이다. 뒤쪽이 없으면 이름이 서술형인 앱은
+    제 자리를 찾지 못한다. 그 길로 살아난 근거는 `by` 에 `+tagged` 가 붙는다.
 
 짧은 이름은 뒷받침을 요구한다
     `query` 가 두 글자인 노드가 17개다 — `상담`·`게임`·`토론`·`엑셀` 같은 일반어다.
@@ -46,8 +47,7 @@ LLM 을 부르지 않는다
 
     그렇다고 세 글자 미만을 통째로 막으면 `슬랙`(30회)·`노션`·`애저`·`버셀` 처럼
     진짜 이름까지 잃는다. 그래서 **짧은 이름은 그 메시지가 속한 주제가 그 노드와
-    이어질 때만** 근거로 인정한다(`linked_threads`). 뒷받침이 붙은 것은 `by` 에
-    `+thread` 를 달아 어느 판정이었는지 남긴다.
+    이어질 때만** 근거로 인정한다(`linked_threads`).
 
 사용
     python -m scripts.graph_evidence --report      # 모양별 표만 (원장에 안 쓴다)
@@ -198,42 +198,56 @@ def rule_for(src_type: str, dst_type: str) -> str:
 
 def find_evidence(edge: dict, nodes: dict, ctx: dict,
                   cache: dict) -> tuple[list[str], str]:
-    """(근거 message id 들, 규칙 이름). 못 찾으면 ([], 규칙 이름)."""
+    """(근거 message id 들, 규칙 이름). 못 찾으면 ([], 규칙 이름).
+
+    한 노드가 '나온 자리' 는 두 길의 합이다 — 이름이 나온 메시지(`mentions_of`)와
+    사람이 짝지어 둔 태그를 가진 주제의 메시지(`tagged_hits`). 뒤쪽은 이름이
+    서술형인 앱이 제 자리를 찾는 유일한 길이다.
+
+    **두 길을 합쳐 놓고 규칙을 걸어야 한다.** 처음에는 규칙이 비었을 때만 태그
+    길로 물러섰는데, 그러면 `app uses tool` 에서 출발 앱의 주제 메시지가 **도착
+    도구가 나오지 않아도** 근거가 됐다. 그건 관계를 보여 주지 않는 근거다.
+    합쳐 두면 '그 앱을 다룬 주제에서 누군가 그 도구를 말한 자리' 가 걸린다 —
+    그것은 실제로 그 관계를 보여 준다.
+    """
     src, dst = nodes.get(edge.get("source")), nodes.get(edge.get("target"))
     if not src or not dst:
         return [], ""
     rule = rule_for(src["type"], dst["type"])
 
-    def mentions(n):
+    def where(n):
+        """그 노드가 나온 자리들. 이름으로 찾은 것 + 표로 이은 주제의 말."""
         if n["id"] not in cache:
-            cache[n["id"]] = mentions_of(n, ctx)
+            by_name = mentions_of(n, ctx)
+            extra = [i for i in tagged_hits(n, ctx) if i not in set(by_name)]
+            cache[n["id"]] = (sorted(by_name + extra), set(extra))
         return cache[n["id"]]
 
+    tagged_only: set[int] = set()
     if rule == "spoke-in":
         hits = [i for i, w in enumerate(ctx["who"])
                 if w == src["label"] and ctx["cat"][i] == dst.get("category")]
     elif rule == "named-it":
-        hits = [i for i in mentions(dst) if ctx["who"][i] == src["label"]]
+        idx, tagged_only = where(dst)
+        hits = [i for i in idx if ctx["who"][i] == src["label"]]
     elif rule == "named-in":
-        hits = [i for i in mentions(src) if ctx["cat"][i] == dst.get("category")]
+        idx, tagged_only = where(src)
+        hits = [i for i in idx if ctx["cat"][i] == dst.get("category")]
     else:
-        other = set(mentions(dst))
-        hits = [i for i in mentions(src) if i in other]
+        a, ta = where(src)
+        b, tb = where(dst)
+        other = set(b)
+        hits = [i for i in a if i in other]
+        tagged_only = ta | tb
 
     if not hits:
-        # 두 번째 길 — 사람이 짝지어 둔 태그로. 이름이 서술형인 앱의 유일한 길이다.
-        side = dst if rule in ("named-it",) else src
-        tagged = tagged_hits(side, ctx)
-        if rule == "named-it":
-            tagged = [i for i in tagged if ctx["who"][i] == src["label"]]
-        elif rule == "named-in":
-            tagged = [i for i in tagged if ctx["cat"][i] == dst.get("category")]
-        if tagged:
-            return [ctx["ids"][i] for i in pick(tagged, ctx)], "tagged"
         return [], rule
-
-    # 뒷받침으로 살아난 짧은 이름이 섞였는지 표시한다 — 어느 판정이었는지 남긴다.
-    return [ctx["ids"][i] for i in pick(hits, ctx)], rule
+    chosen = pick(hits, ctx)
+    # 표로 이어 살아난 자리가 섞였으면 남긴다 — 어느 판정이었는지 알아야
+    # 나중에 규칙을 고칠 때 무엇이 흔들리는지 안다.
+    if any(i in tagged_only for i in chosen):
+        rule += "+tagged"
+    return [ctx["ids"][i] for i in chosen], rule
 
 
 def survey(knowledge: dict, ctx: dict) -> dict:
@@ -311,9 +325,11 @@ def gap_reason(edge: dict, nodes: dict, ctx: dict, cache: dict) -> str:
         if n["type"] not in ("app", "tool"):
             continue
         if n["id"] not in cache:
-            cache[n["id"]] = mentions_of(n, ctx)
-        if not cache[n["id"]]:
-            return "원문에 이름이 한 번도 안 나온다 (%s)" % n["label"]
+            by_name = mentions_of(n, ctx)
+            extra = [i for i in tagged_hits(n, ctx) if i not in set(by_name)]
+            cache[n["id"]] = (sorted(by_name + extra), set(extra))
+        if not cache[n["id"]][0]:
+            return "원문에 이름이 한 번도 안 나오고 표로도 이어지지 않는다 (%s)" % n["label"]
 
     rule = rule_for(src["type"], dst["type"])
     if rule == "named-both":

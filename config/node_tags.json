@@ -37,45 +37,148 @@
     "표 없이도 이어진다. 여기 적는 것은 '지금은 이대로 둔다' 는 기록이다."
   ],
   "no_tag": [
+    "app:ag-quota-tray",
     "app:agent-server",
     "app:apps-script-starter",
     "app:asset-mgmt",
+    "app:board-app",
     "app:budget-app",
+    "app:center-homepage",
+    "app:climb-application",
     "app:donghaeng",
+    "app:firebase-record",
     "app:jsh-site",
     "app:katok-archive",
+    "app:nas-backup",
     "app:notion-archive",
+    "app:ontology-tutorial",
+    "app:portal-system",
     "app:prepost-stats",
+    "app:prompt-expander",
     "app:rhwp-gwm",
+    "app:scrc-archive",
     "app:smartwork-site",
     "app:table-cleaner",
-    "app:vibecoding-wiki"
+    "app:vibecoding-book",
+    "app:vibecoding-wiki",
+    "app:youtube-downloader"
   ],
   "node_tags": {
-    "app:career-compass": ["career-compass"],
-    "app:care-insight": ["care-insight"],
-    "app:cloud-list-maker": ["cloud-list-maker"],
-    "app:job-hub": ["job-hub"],
-    "app:statagent": ["StatAgent"],
-    "app:wintime": ["WinTime"],
-    "app:agtool": ["AGTool"],
-    "app:welfareai": ["welfareai"],
-    "app:circle": ["circle"],
-    "app:hipo-game": ["Hipo"],
-    "app:debate-app": ["토론 앱"],
-    "app:mindmap": ["마인드맵"],
-    "app:ecomap-exe": ["생태도"],
-    "app:familytree-exe": ["가계도"],
-    "app:staff-schedule": ["주단위 배치"],
-    "app:pdf-flipbook": ["PDF 플립북", "플립북"],
-    "app:member-mgmt": ["협회 회원관리 앱"],
-    "app:minecraft-photo": ["사진 마인크래프트화 앱"],
-    "app:dd-support-web": ["발달장애인 일정 지원 웹앱"],
-    "app:file-copier": ["시간대별 파일 복사 도구", "파일 복사"],
-    "app:law-article-downloader": ["법령 조문 다운로드 프로그램", "법령 조문 다운로드"],
-    "app:paper-translator": ["논문 수집·번역 도구", "논문 수집"],
-    "app:sasw-election": ["서사협 선거 정보 사이트"],
-    "app:switworks": ["강의 아카이빙"],
-    "app:nfc-attendance": ["NFC 근태 관리", "NFC 근태"]
+    "app:agtool": [
+      "AGTool"
+    ],
+    "app:behaviour-checkup": [
+      "Behaviour CHECK UP"
+    ],
+    "app:care-insight": [
+      "care-insight"
+    ],
+    "app:career-compass": [
+      "career-compass"
+    ],
+    "app:circle": [
+      "circle"
+    ],
+    "app:cloud-list-maker": [
+      "cloud-list-maker"
+    ],
+    "app:dd-support-web": [
+      "발달장애인 일정 지원 웹앱"
+    ],
+    "app:debate-app": [
+      "토론 앱"
+    ],
+    "app:ecomap-exe": [
+      "생태도"
+    ],
+    "app:familytree-exe": [
+      "가계도"
+    ],
+    "app:file-copier": [
+      "시간대별 파일 복사 도구",
+      "파일 복사"
+    ],
+    "app:hipo-game": [
+      "Hipo"
+    ],
+    "app:idea-hub": [
+      "아이디어 허브"
+    ],
+    "app:job-hub": [
+      "job-hub"
+    ],
+    "app:law-article-downloader": [
+      "법령 조문 다운로드 프로그램",
+      "법령 조문 다운로드"
+    ],
+    "app:meal-worldcup": [
+      "이상형월드컵"
+    ],
+    "app:member-mgmt": [
+      "협회 회원관리 앱"
+    ],
+    "app:mindmap": [
+      "마인드맵"
+    ],
+    "app:minecraft-photo": [
+      "사진 마인크래프트화 앱"
+    ],
+    "app:nfc-attendance": [
+      "NFC 근태 관리",
+      "NFC 근태"
+    ],
+    "app:novel-app": [
+      "소설쓰기 앱"
+    ],
+    "app:onboarding": [
+      "온보딩 웹앱"
+    ],
+    "app:onscreen-keyboard": [
+      "화상키보드"
+    ],
+    "app:paper-translator": [
+      "논문 수집·번역 도구",
+      "논문 수집"
+    ],
+    "app:pdf-flipbook": [
+      "PDF 플립북",
+      "플립북"
+    ],
+    "app:salary-calculator": [
+      "월급계산기"
+    ],
+    "app:sasw-election": [
+      "서사협 선거 정보 사이트"
+    ],
+    "app:sasw40-game": [
+      "서사협 40주년"
+    ],
+    "app:shift-work-mgmt": [
+      "3교대 근무관리"
+    ],
+    "app:social-story": [
+      "소셜스토리"
+    ],
+    "app:staff-schedule": [
+      "주단위 배치"
+    ],
+    "app:statagent": [
+      "StatAgent"
+    ],
+    "app:switworks": [
+      "강의 아카이빙"
+    ],
+    "app:urimal": [
+      "우리말"
+    ],
+    "app:voice-note": [
+      "클로바 노트"
+    ],
+    "app:welfareai": [
+      "welfareai"
+    ],
+    "app:wintime": [
+      "WinTime"
+    ]
   }
 }
