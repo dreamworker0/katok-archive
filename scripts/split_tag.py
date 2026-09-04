@@ -249,23 +249,28 @@ def build_fill_prompt(items: list[dict], tag: str, kinds: dict[str, str],
 
 
 def screen_fill(reports: dict[str, dict], answers: dict[str, str],
-                kinds: dict[str, str], vocab: list[str],
-                counts: collections.Counter | None = None,
+                kinds: dict[str, str], spare_keys: set[str],
                 max_tags: int = TAG_COUNT_MAX) -> dict[str, dict]:
     """답을 제안으로 만든다 — 갈래를 **덧붙이거나** 한 자리를 바꾼다. 호출하지 않는다.
 
     태그는 한 편에 `max_tags` 개까지다(`topic_reports.TAG_COUNT_MAX`). 자리가
-    남으면 덧붙이고, 꽉 찼으면 **어휘 밖이고 한 번만 쓰인** 태그 하나를 갈래로
-    바꾼다 — 그 태그는 태그 목록에도 안 나오고 부모도 없어서, 사실상 그 편에만
-    있는 말이다(`tags.build_tag_index` 의 `min_count`). 그런 태그가 없으면
-    건너뛰고 로그만 남긴다. 잘 붙은 태그를 갈래 자리 때문에 버리지는 않는다.
+    남으면 덧붙이고, 꽉 찼으면 **입구가 없는 태그** 하나를 갈래로 바꾼다.
+
+    `spare_keys` 는 `tags.broader_candidates` 가 내놓는 고립 태그의 fold 다 —
+    부모도 없고 `min_count` 미만이라 태그 목록에도 안 나오는 말, 즉 검색 말고는
+    그 편으로 가는 길이 없는 태그다. 그런 것이 없으면 건너뛰고 로그만 남긴다.
+
+    처음에는 '어휘 밖이고 한 번만 쓰인' 것으로 골랐는데 그것은 **부모를 안 봤다.**
+    그래서 `도커`(→인프라) · `알리고`(→문자) · `Open Notebook`(→문서 처리 도구)
+    처럼 부모로 찾히던 태그를 버렸다(실측 2026-09-04, 세 편). 특히
+    `Open Notebook` 은 그 주제의 제목이기도 했다 — 그 편에서 가장 그 편다운 말을
+    갈래 자리 때문에 버린 셈이다. 고립 판정은 이 저장소에 이미 있고
+    (`broader_candidates`) 검사도 그것을 본다. 판정을 두 벌로 두면 갈라진다.
 
     뒤에서부터 고른다. keywords 의 순서에는 사람이 쓴 무게가 담겨 있어(앞이
     중심이다) 뒤가 가장 곁가지다.
     """
     by_key = {taglib.fold(k): k for k in kinds}
-    vocab_keys = {taglib.fold(v) for v in vocab}
-    counts = counts if counts is not None else tag_counts(reports)
 
     out: dict[str, dict] = {}
     for tid in sorted(answers):
@@ -283,9 +288,7 @@ def screen_fill(reports: dict[str, dict], answers: dict[str, str],
         if len(before) < max_tags:
             after, dropped = before + [kind], None
         else:
-            spare = [k for k in before
-                     if taglib.fold(k) not in vocab_keys
-                     and counts.get(taglib.fold(k), 0) <= 1]
+            spare = [k for k in before if taglib.fold(k) in spare_keys]
             if not spare:
                 print("  %s: 태그가 %d개인데 바꿀 만한 것이 없습니다 — 건너뜁니다"
                       % (tid, len(before)))
@@ -467,7 +470,8 @@ def main() -> int:
             return 1
 
     if fill:
-        # 어휘는 화면이 보는 것과 같게 잰다 — `retag_reports.load_state` 와 같은 꼴.
+        # 고립 판정은 화면이 보는 것과 같게 잰다 — `retag_reports.load_state` 와
+        # 같은 꼴이고, **승격 전에** 재야 한다(`broader_candidates` 의 이유).
         threads = jsonio.read_json(OUT / "topics.json")["threads"]
         for th in threads:
             r = reports.get(th["id"])
@@ -476,8 +480,11 @@ def main() -> int:
         parts_path = OUT / "participants.json"
         parts = jsonio.read_json(parts_path) if parts_path.is_file() else {}
         places, _ = taglib.load_places()
-        vocab = [name for name, _ in taglib.vocabulary(threads, parts, places)]
-        changes = screen_fill(reports, answers, kinds, vocab)
+        taglib.attach_tags(threads, parts)
+        spare = {taglib.fold(t) for t, _ in taglib.broader_candidates(
+            threads, participants=parts, places=places)}
+        print("  입구가 없는 태그 %d개 — 자리가 꽉 찬 편에서 이것만 바꿉니다." % len(spare))
+        changes = screen_fill(reports, answers, kinds, spare)
     else:
         changes = screen(reports, answers, args.tag, kinds)
     if not changes:

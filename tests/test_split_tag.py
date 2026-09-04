@@ -10,7 +10,6 @@
 """
 from __future__ import annotations
 
-import collections
 import json
 import tempfile
 import unittest
@@ -163,20 +162,22 @@ class FillTest(unittest.TestCase):
         self.assertEqual(["t-3", "t-4"],
                          fill_targets(reports, threads, "projects", keys))
 
+    def spare(self, *tags):
+        """고립 태그(부모도 없고 목록에도 안 나오는 것)의 fold 집합."""
+        return {taglib.fold(t) for t in tags}
+
     def test_a_spare_slot_gets_the_facet_appended(self):
         reports = {"t-3": {"keywords": ["C#", "안티그래비티"]}}
-        got = screen_fill(reports, {"t-3": "업무 앱"}, KINDS, ["안티그래비티"])
+        got = screen_fill(reports, {"t-3": "업무 앱"}, KINDS, self.spare())
         self.assertEqual(["C#", "안티그래비티", "업무 앱"], got["t-3"]["after"])
         self.assertNotIn("dropped", got["t-3"])
 
-    def test_a_full_line_swaps_the_last_tag_that_is_outside_the_vocabulary(self):
-        """어휘 안에 있는 태그는 잘 붙은 것이다 — 갈래 자리 때문에 버리지 않는다."""
+    def test_a_full_line_swaps_the_last_tag_with_no_entrance(self):
+        """입구가 있는 태그는 갈래 자리 때문에 버리지 않는다."""
         keywords = ["클로드", "안티그래비티", "가", "나", "다", "라"]
         reports = {"t-6": {"keywords": keywords}}
-        counts = collections.Counter(taglib.fold(k) for k in keywords)
-        got = screen_fill(reports, {"t-6": "업무 앱"}, KINDS,
-                          ["클로드", "안티그래비티", "라"], counts)
-        self.assertEqual("다", got["t-6"]["dropped"])
+        got = screen_fill(reports, {"t-6": "업무 앱"}, KINDS, self.spare("가", "다"))
+        self.assertEqual("다", got["t-6"]["dropped"], "뒤가 가장 곁가지다")
         self.assertEqual(["클로드", "안티그래비티", "가", "나", "업무 앱", "라"],
                          got["t-6"]["after"])
         self.assertEqual(6, len(got["t-6"]["after"]))
@@ -184,24 +185,30 @@ class FillTest(unittest.TestCase):
     def test_a_full_line_with_nothing_to_spare_is_skipped(self):
         keywords = ["클로드", "커서", "노션", "슬랙", "디스코드", "깃허브"]
         reports = {"t-7": {"keywords": keywords}}
-        got = screen_fill(reports, {"t-7": "업무 앱"}, KINDS, keywords)
+        got = screen_fill(reports, {"t-7": "업무 앱"}, KINDS, self.spare())
         self.assertEqual({}, got, "잘 붙은 태그를 갈래 자리 때문에 버리지 않는다")
 
-    def test_a_tag_used_elsewhere_too_is_not_spare(self):
-        keywords = ["가", "나", "다", "라", "마", "바"]
-        reports = {"t-8": {"keywords": keywords},
-                   "t-9": {"keywords": ["가", "나", "다", "라", "마"]}}
-        got = screen_fill(reports, {"t-8": "업무 앱"}, KINDS, [])
-        self.assertEqual("바", got["t-8"]["dropped"], "다른 편에도 쓰인 말은 1회짜리가 아니다")
+    def test_a_tag_that_has_a_parent_is_not_spare(self):
+        """`도커`→인프라 처럼 부모로 찾히는 태그는 그 편에만 있는 말이 아니다.
+
+        실측 2026-09-04: 부모를 안 보던 판에서 `도커`·`알리고`·`Open Notebook`
+        셋을 버렸고, `Open Notebook` 은 그 주제의 제목이기도 했다.
+        """
+        keywords = ["가", "나", "다", "라", "마", "도커"]
+        reports = {"t-8": {"keywords": keywords}}
+        self.assertEqual({}, screen_fill(reports, {"t-8": "업무 앱"}, KINDS,
+                                         self.spare()))
 
     def test_none_adds_nothing(self):
         reports = {"t-3": {"keywords": ["C#"]}}
-        self.assertEqual({}, screen_fill(reports, {"t-3": NONE}, KINDS, []))
-        self.assertEqual({}, screen_fill(reports, {"t-3": "복지 앱"}, KINDS, []))
+        self.assertEqual({}, screen_fill(reports, {"t-3": NONE}, KINDS, self.spare()))
+        self.assertEqual({}, screen_fill(reports, {"t-3": "복지 앱"}, KINDS,
+                                         self.spare()))
 
     def test_a_facet_already_present_is_left_alone(self):
         reports = {"t-1": {"keywords": ["업무 앱"]}}
-        self.assertEqual({}, screen_fill(reports, {"t-1": "업무 앱"}, KINDS, []))
+        self.assertEqual({}, screen_fill(reports, {"t-1": "업무 앱"}, KINDS,
+                                         self.spare()))
 
 
 class BroaderTableIsConsistentTest(unittest.TestCase):
