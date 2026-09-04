@@ -312,6 +312,80 @@ def findable_names(node: dict) -> list[str]:
             if len(n) >= SHORT_NAME_CHARS or n == label]
 
 
+_ASCII_NAME = re.compile(r"^[a-z0-9][a-z0-9 ._+#/-]*$")
+
+
+def latin_names(names: list[str]) -> list[str]:
+    """로마자·숫자·기호로만 된 이름 — 낱말 경계를 요구할 수 있는 것들."""
+    return [n for n in names if _ASCII_NAME.match(n)]
+
+
+def other_names(names: list[str]) -> list[str]:
+    """한글이 섞인 이름 — 조사가 붙어서 경계를 요구할 수 없다."""
+    return [n for n in names if not _ASCII_NAME.match(n)]
+
+
+def name_matcher(names: list[str]):
+    """이 이름들이 글에 나오는지 보는 함수. 로마자 이름은 낱말 경계를 지킨다.
+
+    글자만 겹치면 걸리던 사고가 실제로 있었다 — 실측 2026-09-05:
+
+      `aws` 가 `welfare-laws-portal` 에 걸려 복지법령 포털 이야기가 AWS 언급이 됐다
+      `make` 가 `cloud-list-maker`·`makes` 에 걸렸다
+      `notebook` 이 `notebooklm` 에 걸렸다
+
+    한글에는 이 잣대를 쓸 수 없다. 조사가 이름에 바로 붙기 때문이다 — '노션에',
+    '슬랙으로' 를 경계로 자르면 정작 진짜 언급을 다 놓친다. 그래서 로마자로만
+    이루어진 이름에만 경계를 요구하고, 한글이 섞인 이름은 그대로 찾는다.
+
+    노드마다 한 번 만들어 원문 전체에 쓴다 — 메시지마다 다시 만들면 느리다.
+    """
+    plain = other_names(names)
+    bounded = [re.compile(r"(?<![a-z0-9])%s(?![a-z0-9])" % re.escape(n))
+               for n in latin_names(names)]
+
+    def found(text: str) -> bool:
+        return (any(n in text for n in plain)
+                or any(rx.search(text) for rx in bounded))
+
+    return found
+
+
+def ambiguous_handles(nodes: list[dict]) -> list[tuple[dict, str, dict]]:
+    """제 이름이 아닌 손잡이가 **다른 노드 이름 안에** 든 것들.
+
+    노드의 `query` 는 분류 LLM 이 지어 넣는다. 긴 이름에서 흔한 조각을 떼어 오면
+    그 조각이 남의 대화를 통째로 끌어온다 — 실측 2026-09-05:
+
+      어느 앱의 손잡이가 '앱스스크립트'(도구 이름)여서 주제 13개가 걸렸다
+      '개인예산' 은 다른 노드 이름의 앞부분이라 그 노드 이야기를 다 가져왔다
+      '커뮤니티' 로는 주제 11개가, '대시보드' 로는 4개가 걸렸다
+
+    **틀린 근거는 없는 근거보다 나쁘다.** 이름이 겹치는 것 자체는 자연스럽다
+    (도구 이름은 그 도구로 만든 앱 이름 안에 있기 마련이다). 그래서 그 노드의
+    **온전한 이름**(라벨, 괄호를 뗀 라벨)은 세지 않고, 라벨에서 잘라 온 조각만
+    본다. 이름 견주기도 원문을 볼 때와 같은 잣대를 쓴다 — 로마자는 낱말 경계를
+    지키므로 `make` 는 `cloud-list-maker` 와 겹치지 않는다.
+    """
+    out = []
+    for a in nodes:
+        if a.get("type") in ("person", "topic"):
+            continue
+        label = (a.get("label") or "").lower()
+        bare = _PAREN.sub("", label).strip()
+        for name in findable_names(a):
+            if name in (label, bare):
+                continue
+            found = name_matcher([name])
+            for b in nodes:
+                if b is a or b.get("type") in ("person", "topic"):
+                    continue
+                if any(name != other and found(other) for other in findable_names(b)):
+                    out.append((a, name, b))
+                    break
+    return out
+
+
 def load_node_tags(path: Path | None = None) -> dict[str, list[str]]:
     """`config/node_tags.json` → {노드 id: 그 노드를 뜻하는 태그들}.
 

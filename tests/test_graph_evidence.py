@@ -124,14 +124,21 @@ class NodeNameTest(unittest.TestCase):
         got = ontology.node_names({"label": "시놀로지 나스·도커", "query": "시놀로지"})
         self.assertNotIn("도커", got)
 
-    def test_both_readers_use_the_same_names(self):
-        """크기(build_site)와 근거(graph_evidence)가 다른 것을 세면 안 된다."""
-        src = (Path(ge.__file__).parent / "build_site.py").read_text(encoding="utf-8")
-        self.assertIn("needles = ontology.node_names(n)", src)
-        self.assertIn("ontology.findable_names(n)", src,
+    def test_every_reader_uses_the_same_names_and_the_same_matcher(self):
+        """크기(build_site)·분류 확인·근거(graph_evidence)가 다른 것을 세면 안 된다.
+
+        이름 목록만 같아서는 모자란다. 찾는 **방법**도 같아야 한다 — 한쪽만 낱말
+        경계를 지키면 `aws` 가 `welfare-laws` 에 걸리는 자리가 그쪽에만 남는다.
+        """
+        site = (Path(ge.__file__).parent / "build_site.py").read_text(encoding="utf-8")
+        self.assertIn("ontology.name_matcher(ontology.node_names(n))", site,
+                      "노드 크기")
+        self.assertIn("ontology.name_matcher(names)", site, "분류 확인")
+        self.assertIn("ontology.findable_names(n)", site,
                       "분류 확인도 같은 이름 규칙을 써야 한다")
-        self.assertIn("names = ontology.node_names(node)",
-                      Path(ge.__file__).read_text(encoding="utf-8"))
+        src = Path(ge.__file__).read_text(encoding="utf-8")
+        self.assertIn("names = ontology.node_names(node)", src)
+        self.assertIn("ontology.name_matcher(long_names)", src, "근거 찾기")
 
 
 class ShortNameTest(unittest.TestCase):

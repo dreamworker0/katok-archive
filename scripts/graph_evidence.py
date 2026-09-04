@@ -176,12 +176,15 @@ def mentions_of(node: dict, ctx: dict) -> list[int]:
     long_names = ontology.findable_names(node)
     short_names = [n for n in names if n not in long_names]
     backing = linked_threads(node, ctx) if short_names else set()
+    # 로마자 이름은 낱말 경계를 지킨다 — `aws` 가 `welfare-laws` 에 걸리던 자리다.
+    is_long = ontology.name_matcher(long_names)
+    is_short = ontology.name_matcher(short_names)
 
     out = []
     for i, h in enumerate(ctx["hay"]):
-        if any(n in h for n in long_names):
+        if is_long(h):
             out.append(i)
-        elif short_names and ctx["thread"][i] in backing and any(n in h for n in short_names):
+        elif short_names and ctx["thread"][i] in backing and is_short(h):
             out.append(i)
     return out
 

@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from scripts import build_site  # noqa: E402
+from scripts import build_site, ontology  # noqa: E402
 from tests.realdata import needs_real_data  # noqa: E402
 
 
@@ -433,6 +433,39 @@ class KnowledgeTest(unittest.TestCase):
                   "query": "상담", "category": "infra"}]
         self.assertEqual([], build_site.filed_elsewhere(
             nodes, ["오늘 상담 다녀왔습니다"] * 5, ["welfare-practice"] * 5))
+
+    def test_a_handle_hiding_inside_another_name_is_reported(self):
+        """`query` 는 분류 LLM 이 지어 넣는다. 긴 이름에서 흔한 조각을 떼어 오면
+        그 조각이 남의 대화를 통째로 끌어온다 — 실측 2026-09-05: 어느 앱의 손잡이가
+        도구 이름이어서 주제 13개가 걸렸다.
+        """
+        nodes = [
+            {"id": "app:a", "type": "app", "label": "무슨무슨 대시보드 앱",
+             "query": "대시보드"},
+            {"id": "app:b", "type": "app", "label": "저기 대시보드 도구",
+             "query": "저기 대시보드 도구"},
+        ]
+        got = ontology.ambiguous_handles(nodes)
+        self.assertEqual(1, len(got))
+        self.assertEqual("대시보드", got[0][1])
+        self.assertEqual("app:b", got[0][2]["id"])
+
+    def test_a_whole_name_inside_a_longer_one_is_not_a_problem(self):
+        """도구 이름은 그 도구로 만든 앱 이름 안에 있기 마련이다."""
+        nodes = [
+            {"id": "tool:t", "type": "tool", "label": "바른도구(Bareun)", "query": "바른도구"},
+            {"id": "app:a", "type": "app", "label": "바른도구 연습 앱", "query": "바른도구 연습"},
+        ]
+        self.assertEqual([], ontology.ambiguous_handles(nodes))
+
+    def test_latin_handles_keep_word_boundaries(self):
+        """`make` 는 `cloud-list-maker` 와 겹치지 않는다 — 원문을 볼 때와 같은 잣대다."""
+        nodes = [
+            {"id": "tool:m", "type": "tool", "label": "Make 자동화", "query": "make"},
+            {"id": "app:c", "type": "app", "label": "cloud-list-maker",
+             "query": "cloud-list-maker"},
+        ]
+        self.assertEqual([], ontology.ambiguous_handles(nodes))
 
     def test_every_digest_says_when_it_was_tidied(self):
         """정리 시점이 없으면 낡았는지 알 수 없다 — 화면도, 밤 갱신도.

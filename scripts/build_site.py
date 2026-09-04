@@ -428,8 +428,8 @@ def weigh_knowledge(knowledge: dict, messages: list[dict]) -> list[str]:
             n["value"] = round(8 + min(22, (c ** 0.5) * 1.1), 1)
             span(n, cat_on.get(n["category"], []))
             continue
-        needles = ontology.node_names(n)
-        idx = [i for i, h in enumerate(hay) if any(nd in h for nd in needles)]
+        found = ontology.name_matcher(ontology.node_names(n))
+        idx = [i for i, h in enumerate(hay) if found(h)]
         if not idx:
             stale.append("%s(%s)" % (n["label"], n["type"]))
         n["mentions"] = len(idx)
@@ -468,9 +468,10 @@ def filed_elsewhere(nodes: list[dict], hay: list[str], cats: list[str | None],
         names = ontology.findable_names(n)
         if not names:
             continue
+        found = ontology.name_matcher(names)
         seen: Counter[str] = Counter()
         for i, h in enumerate(hay):
-            if cats[i] and any(x in h for x in names):
+            if cats[i] and found(h):
                 seen[cats[i]] += 1
         if sum(seen.values()) >= floor and not seen.get(n["category"]):
             out.append((n, seen))
@@ -906,6 +907,13 @@ def build_data(
         "[관계망] 제 분류에서는 한 번도 안 나오는 노드",
         advice="분류 칸을 다시 보세요 — 목록은 `python -m scripts.graph_evidence --gaps`",
         sample=6)
+    # 남의 이름 안에 든 손잡이. 그 조각이 남의 대화를 통째로 끌어온다.
+    warnlog.note(
+        "ambiguous_handles",
+        ["%s(%s)←%s" % (n["label"], name, other["label"])
+         for n, name, other in ontology.ambiguous_handles(knowledge.get("nodes", []))],
+        "[관계망] 다른 노드 이름과 겹치는 손잡이",
+        advice="원장의 query 를 그것만 가리키는 말로 바꾸세요", sample=5)
     # 관계망 노드와 태그를 짝지어 둔 표. 없으면 예전처럼 이름 글자로만 잇는다.
     node_tags = ontology.load_node_tags()
     node_cands = ontology.node_tag_candidates(
