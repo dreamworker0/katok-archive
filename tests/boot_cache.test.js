@@ -117,6 +117,17 @@ function archiveData(hash) {
   };
 }
 
+/** 조건이 될 때까지 기다린다.
+ *
+ * 캐시 쓰기·비우기는 화면을 기다리지 않는다(fire-and-forget). 고정 시간으로 재면
+ * 기계가 바쁜 밤에 우리가 먼저 재고 만다 — 2026-09-05 밤 갱신이 30ms 로 실패했다.
+ */
+async function settle(cond, why) {
+  const deadline = Date.now() + 2000;
+  while (!cond() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
+  assert.ok(cond(), why);
+}
+
 /** 한 번의 방문. boot.js 를 새 문맥에서 돌리고 로그인 콜백을 부른다. */
 async function visit(idb, data) {
   const reads = {};
@@ -204,9 +215,8 @@ test("로그아웃하면 캐시를 비운다 — 다음 사람은 서버에서 �
   const idb = fakeIndexedDB();
   const { got } = await visit(idb, archiveData("h1"));
   got.started.signOut();
-  await new Promise((r) => setTimeout(r, 30));
-  assert.equal(got.signedOut, true);
-  assert.equal(idb._stores.bundles.size, 0);
+  await settle(() => got.signedOut === true && idb._stores.bundles.size === 0,
+    "로그아웃은 캐시를 비운 뒤 끝나야 한다");
   const again = await visit(idb, archiveData("h1"));
   assert.deepEqual(again.reads, { ...ALWAYS, ...CORE, ...REST });
 });
@@ -225,8 +235,8 @@ test("스토어 없는 옛 DB 는 지우고 다시 만든다 — 캐시가 되�
   // 첫 방문은 어차피 서버에서 받는다. 중요한 것은 그 뒤에 캐시가 남았는가다.
   assert.deepEqual(first.reads, { ...ALWAYS, ...CORE, ...REST });
   assert.ok(idb._state.deleted >= 1, "망가진 DB 를 지웠어야 한다");
-  // 캐시 쓰기는 화면을 기다리지 않는다(fire-and-forget) — 도착할 틈을 준다.
-  await new Promise((r) => setTimeout(r, 30));
+  await settle(() => idb._stores.bundles && idb._stores.bundles.size >= 3,
+    "고친 DB 에 조각 셋이 남아야 한다");
   assert.deepEqual([...idb._stores.bundles.keys()].sort(), ["aiReports", "core", "digests"]);
   const second = await visit(idb, archiveData("h1"));
   assert.deepEqual(second.reads, ALWAYS, "재방문은 meta·members 만 읽어야 한다");
@@ -238,16 +248,14 @@ test("지우지도 못하면 서버에서 받아 화면은 뜬다 — 연결은 
   const { reads, got } = await visit(idb, archiveData("h1"));
   assert.deepEqual(reads, { ...ALWAYS, ...CORE, ...REST });
   assert.equal(got.ai.length, 1, "캐시가 죽어도 화면은 채워져야 한다");
-  await new Promise((r) => setTimeout(r, 30));
-  assert.equal(idb._state.opened, idb._state.closed, "연 만큼 닫아야 한다");
+  await settle(() => idb._state.opened === idb._state.closed, "연 만큼 닫아야 한다");
 });
 
 test("열고 나서 스토어가 사라져도 연결을 닫는다 — 삭제가 막히지 않는다", async () => {
   const idb = fakeIndexedDB({ vanish: true });
   const { reads } = await visit(idb, archiveData("h1"));
   assert.deepEqual(reads, { ...ALWAYS, ...CORE, ...REST });
-  await new Promise((r) => setTimeout(r, 30));
-  assert.equal(idb._state.opened, idb._state.closed, "연 만큼 닫아야 한다");
+  await settle(() => idb._state.opened === idb._state.closed, "연 만큼 닫아야 한다");
 });
 
 test("AI 주석이 안 열려도 화면은 뜬다 — 빈 목록으로 건넨다", async () => {
