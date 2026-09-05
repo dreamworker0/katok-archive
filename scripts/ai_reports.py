@@ -39,9 +39,11 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import urllib.error
@@ -210,7 +212,105 @@ def is_root(url: str) -> bool:
     return path.strip("/") == ""
 
 
-def open_url(url: str, timeout: int = FETCH_TIMEOUT_SEC) -> dict:
+# 리다이렉트를 몇 번까지 따라갈지. urllib 기본은 10 인데, 근거 주소 하나에 그만큼
+# 필요한 경우가 없고 길수록 검사할 목적지만 늘어난다.
+MAX_REDIRECTS = 5
+
+
+class BlockedURL(Exception):
+    """열지 않기로 한 주소. 못 연 것과 구분하려고 따로 둔다."""
+
+
+def _blocked_ip(ip) -> bool:
+    """바깥 인터넷이 아닌 대역인가.
+
+    사설(10./172.16./192.168.)·루프백(127.)·링크 로컬(169.254. — 클라우드
+    메타데이터 주소가 여기다)·예약·멀티캐스트를 모두 본다. IPv6 도 같은 판단이
+    ipaddress 에 들어 있다(::1, fc00::/7, fe80::/10).
+    """
+    return (ip.is_private or ip.is_loopback or ip.is_link_local
+            or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
+
+
+def url_guard(url: str, resolve=None) -> str | None:
+    """열어도 되는 주소인가. 괜찮으면 None, 아니면 **왜 안 되는지** 한 줄.
+
+    왜 필요한가: 여기 들어오는 주소는 **모델이 만들어 낸 것**이다. agy 의 검색
+    근거로 오고, 열리지 않으면 한 번 더 물어 새 주소를 받는다(recover_links).
+    사람이 고른 적이 없다. 그런데 이 코드는 수집 PC 에서 매일 밤 무인으로 돈다 —
+    그 PC 는 집·사무실 안쪽에 있고, 공유기 관리 화면이나 다른 기기가 같은 망에 있다.
+    모델이 `http://192.168.0.1/...` 를 대면 그대로 열러 갔다.
+
+    본문을 발행하지는 않으므로(2048바이트만 읽고 버린다) 내용이 새지는 않는다.
+    다만 **내부망에 요청이 나가고**, 끝 주소가 근거 목록에 적히고, 열렸다는 사실
+    자체가 "그 기기가 거기 있다" 를 말한다. 나갈 이유가 없는 요청이다.
+
+    막는 것 세 가지
+      ① http·https 가 아닌 것 — urllib 은 리다이렉트를 ftp 로도 따라간다
+      ② 이름이 가리키는 IP 가 내부망·로컬인 것
+      ③ 이름을 못 찾는 것 — 못 찾으면 열지 않는 쪽으로 기운다
+
+    `resolve` 는 검사에서 갈아 끼우는 자리다. 내부망에 진짜로 요청을 보내지 않고도
+    "192.168 로 풀리는 이름" 을 재현할 수 있어야 한다.
+    """
+    try:
+        sp = urllib.parse.urlsplit(url)
+    except ValueError:
+        return "주소를 읽을 수 없음"
+    if sp.scheme not in ("http", "https"):
+        return "http·https 가 아님(%s)" % (sp.scheme or "빈 스킴")
+    try:
+        host = sp.hostname
+    except ValueError:
+        return "호스트를 읽을 수 없음"
+    if not host:
+        return "호스트가 없음"
+    port = 443 if sp.scheme == "https" else 80
+    try:
+        port = sp.port or port
+    except ValueError:
+        return "포트를 읽을 수 없음"
+    try:
+        infos = (resolve or socket.getaddrinfo)(host, port, proto=socket.IPPROTO_TCP)
+    except Exception as e:
+        return "이름을 찾지 못함(%s)" % type(e).__name__
+    if not infos:
+        return "이름을 찾지 못함(빈 응답)"
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return "IP 를 읽을 수 없음"
+        # 하나라도 내부망이면 막는다. 바깥 IP 와 섞어 대는 수법이 있다.
+        if _blocked_ip(ip):
+            return "내부망·로컬 주소(%s)" % ip
+    return None
+
+
+class _GuardedRedirect(urllib.request.HTTPRedirectHandler):
+    """리다이렉트 목적지도 같은 잣대로 본다.
+
+    첫 주소만 보고 통과시키면 방어가 없는 것과 같다 — 바깥 주소가 내부망으로
+    넘겨주는 순간 그대로 따라간다. agy 의 근거는 애초에 경유 주소
+    (vertexaisearch.../grounding-api-redirect/…)로 오므로 리다이렉트는 예외가
+    아니라 기본값이다.
+    """
+
+    max_redirections = MAX_REDIRECTS
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        why = url_guard(newurl)
+        if why:
+            raise BlockedURL(why)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _opener():
+    """리다이렉트를 검사하는 opener. 기본 handler 를 갈아 끼운다."""
+    return urllib.request.build_opener(_GuardedRedirect)
+
+
+def open_url(url: str, timeout: int = FETCH_TIMEOUT_SEC, resolve=None) -> dict:
     """주소를 실제로 열어 본다. **이 함수가 이 모듈의 요점이다.**
 
     돌려주는 것: {url, final, ok, status, note}
@@ -242,24 +342,34 @@ def open_url(url: str, timeout: int = FETCH_TIMEOUT_SEC) -> dict:
     except Exception:
         pass          # 못 바꾸면 원래 주소로 시도한다 — 그쪽이 맞는 날도 있다
 
+    # 열기 전에 본다. 막힌 주소는 '못 열린 주소' 가 아니라 **열지 않은 주소**다 —
+    # recover_links 가 죽은 주소를 한 번 되짚는데, 막힌 것을 되짚어 봐야 소용없다.
+    why = url_guard(url, resolve=resolve)
+    if why:
+        return {"url": url, "final": url, "root": False, "ok": False, "status": 0,
+                "blocked": True, "note": "열지 않음 — " + why}
+
     req = urllib.request.Request(url, headers={
         "User-Agent": UA,
         "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
         "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
     })
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _opener().open(req, timeout=timeout) as r:
             code = getattr(r, "status", 200)
             r.read(2048)          # 연결이 실제로 열리는지까지 본다
             final = r.geturl() or url
             return {"url": url, "final": final, "root": is_root(final),
-                    "ok": 200 <= code < 400, "status": code, "note": ""}
+                    "ok": 200 <= code < 400, "status": code, "blocked": False, "note": ""}
+    except BlockedURL as e:
+        return {"url": url, "final": url, "root": False, "ok": False, "status": 0,
+                "blocked": True, "note": "리다이렉트를 따라가지 않음 — %s" % e}
     except urllib.error.HTTPError as e:
         return {"url": url, "final": url, "root": False, "ok": False, "status": e.code,
-                "note": "HTTP %d" % e.code}
+                "blocked": False, "note": "HTTP %d" % e.code}
     except Exception as e:                       # 인증서·DNS·타임아웃 전부
         return {"url": url, "final": url, "root": False, "ok": False, "status": 0,
-                "note": type(e).__name__ + ": " + str(e)[:120]}
+                "blocked": False, "note": type(e).__name__ + ": " + str(e)[:120]}
 
 
 def build_search_prompt(thread: dict, report: str) -> str:
@@ -353,7 +463,8 @@ def build_compose_prompt(thread: dict, report: str, findings: str,
     # 조문 번호·병상 수 같은 구체적인 주장을 거기 기대 적게 된다.
     opened = [l for l in links if l["ok"] and not l.get("root")]
     roots = [l for l in links if l["ok"] and l.get("root")]
-    failed = [l for l in links if not l["ok"]]
+    failed = [l for l in links if not l["ok"] and not l.get("blocked")]
+    blocked = [l for l in links if l.get("blocked")]
     lines = []
     if opened:
         lines.append("열린 주소(단정의 근거로 써도 되는 것):")
@@ -370,6 +481,13 @@ def build_compose_prompt(thread: dict, report: str, findings: str,
         lines.append("열리지 않은 주소(근거로 쓸 수 없다):")
         lines += ["  - %s  (%s)" % (l["url"], l["note"] or l["status"])
                   for l in failed]
+    if blocked:
+        # **왜 막았는지는 여기 적지 않는다.** note 에는 풀린 IP 가 들어 있고,
+        # 그것을 프롬프트에 넣으면 우리 망의 생김새를 바깥 모델에 알려주는 셈이다.
+        # 기록은 로컬에 남는다(open_url 의 note).
+        lines.append("우리가 열지 않기로 한 주소(바깥 인터넷 주소가 아니다 —"
+                     " 근거로 쓸 수 없다):")
+        lines += ["  - %s" % l["url"] for l in blocked]
 
     return (
         "너는 아카이브의 'AI 검증 주석'을 쓴다. 사람이 쓴 대화 요약 보고서 옆에\n"
@@ -460,7 +578,9 @@ def run_one(thread: dict, report: str, today: str, model: str,
 
     # 죽은 주소를 한 번 되짚는다. 검색 중계 주소는 일회성이라, 사실인 것까지
     # '확인하지 못한 것' 으로 밀려나는 일이 실제로 있었다.
-    failed = [l for l in links if not l["ok"]]
+    # 되짚는 것은 '못 연 것' 만이다. 우리가 **열지 않기로 한 것**(내부망 등)을
+    # 되물으면 모델이 비슷한 주소를 또 댈 뿐이다.
+    failed = [l for l in links if not l["ok"] and not l.get("blocked")]
     if failed:
         found = recover_links(findings, failed, {l["url"] for l in links})
         if found:

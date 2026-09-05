@@ -337,3 +337,176 @@ class WriteTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# 클래스 속성으로 두면 PUBLIC 이 메서드로 묶여 host 자리에 self 가 들어간다.
+def _resolver(mapping):
+    """이름 → IP 를 정해 주는 가짜 DNS.
+
+    내부망에 **진짜로 요청을 보내지 않고** "192.168 로 풀리는 이름" 을 재현한다.
+    없는 이름은 socket.gaierror 로 답한다 — 진짜 getaddrinfo 와 같은 모양이다.
+    """
+    import socket as _s
+
+    def resolve(host, port, *a, **kw):
+        if host not in mapping:
+            raise _s.gaierror("이름 없음: %s" % host)
+        return [(_s.AF_INET, _s.SOCK_STREAM, _s.IPPROTO_TCP, "", (ip, port))
+                for ip in mapping[host]]
+    return resolve
+
+
+PUBLIC = _resolver({"example.org": ["93.184.216.34"],
+                    "www.law.go.kr": ["223.130.195.200"]})
+
+
+class UrlGuardTests(unittest.TestCase):
+    """열기 전에 거르는 자리 — 여기 들어오는 주소는 모델이 만들어 낸 것이다.
+
+    이 코드는 수집 PC 에서 매일 밤 무인으로 돈다. 그 PC 는 집·사무실 안쪽에 있고,
+    모델이 사설 주소를 대면 예전에는 그대로 열러 갔다.
+    """
+
+    def test_ordinary_public_addresses_pass(self):
+        for url in ("https://example.org/a/b", "http://example.org",
+                    "https://www.law.go.kr/법령/저작권법"):
+            self.assertIsNone(ar.url_guard(url, resolve=PUBLIC), url)
+
+    def test_private_and_loopback_are_refused(self):
+        cases = {
+            "http://127.0.0.1/admin": ["127.0.0.1"],
+            "http://router.local/": ["192.168.0.1"],
+            "http://nas/": ["10.0.0.5"],
+            "http://x/": ["172.16.3.9"],
+            # 클라우드 메타데이터 — 링크 로컬
+            "http://metadata/": ["169.254.169.254"],
+        }
+        for url, ips in cases.items():
+            host = ar.urllib.parse.urlsplit(url).hostname
+            why = ar.url_guard(url, resolve=_resolver({host: ips}))
+            self.assertIsNotNone(why, url)
+            self.assertIn("내부망", why)
+
+    def test_ipv6_loopback_and_unique_local_are_refused(self):
+        for ip in ("::1", "fc00::1", "fe80::1"):
+            why = ar.url_guard("http://h/", resolve=_resolver({"h": [ip]}))
+            self.assertIsNotNone(why, ip)
+
+    def test_a_name_that_resolves_to_both_is_refused(self):
+        """바깥 IP 를 섞어 대도 하나라도 내부면 막는다."""
+        why = ar.url_guard("http://mixed/",
+                           resolve=_resolver({"mixed": ["93.184.216.34", "10.1.2.3"]}))
+        self.assertIn("내부망", why)
+
+    def test_only_http_and_https(self):
+        for url in ("file:///c:/windows/win.ini", "ftp://ftp.example.org/x",
+                    "gopher://example.org/", "data:text/html,hi", "javascript:1"):
+            why = ar.url_guard(url, resolve=PUBLIC)
+            self.assertIsNotNone(why, url)
+            self.assertIn("http", why)
+
+    def test_a_name_we_cannot_resolve_is_refused(self):
+        """못 찾으면 열지 않는 쪽으로 기운다."""
+        why = ar.url_guard("https://없는이름.example/", resolve=_resolver({}))
+        self.assertIn("찾지 못함", why)
+
+    def test_a_missing_host_is_refused(self):
+        for url in ("http:///path", "https://", "not a url"):
+            self.assertIsNotNone(ar.url_guard(url, resolve=PUBLIC), url)
+
+
+class OpenUrlGuardTests(unittest.TestCase):
+    """open_url 이 막힌 주소를 '못 연 것' 과 구분해 기록하는가."""
+
+    def test_a_blocked_address_is_never_requested(self):
+        called = []
+
+        class _Boom:
+            def open(self, *a, **kw):
+                called.append(a)
+                raise AssertionError("막힌 주소인데 요청이 나갔다")
+
+        old = ar._opener
+        ar._opener = lambda: _Boom()
+        try:
+            got = ar.open_url("http://192.168.0.1/",
+                              resolve=_resolver({"192.168.0.1": ["192.168.0.1"]}))
+        finally:
+            ar._opener = old
+        self.assertEqual(called, [])
+        self.assertFalse(got["ok"])
+        self.assertTrue(got["blocked"])
+        self.assertIn("열지 않음", got["note"])
+
+    def test_blocked_addresses_are_not_asked_again(self):
+        """recover_links 는 '못 연 것' 만 되짚는다 — 막은 것을 되물으면 또 막힌다."""
+        links = [
+            {"url": "http://a/", "ok": False, "blocked": True, "note": "열지 않음 — 내부망"},
+            {"url": "http://b/", "ok": False, "blocked": False, "note": "HTTP 404"},
+        ]
+        failed = [x for x in links if not x["ok"] and not x.get("blocked")]
+        self.assertEqual([x["url"] for x in failed], ["http://b/"])
+
+    def test_the_prompt_never_carries_our_internal_addresses(self):
+        """막은 이유(풀린 IP)는 로컬 기록에만 남고 프롬프트에는 안 들어간다."""
+        links = [
+            {"url": "http://nas.local/x", "ok": False, "blocked": True,
+             "note": "열지 않음 — 내부망·로컬 주소(10.0.0.5)", "status": 0},
+            {"url": "https://example.org/a", "final": "https://example.org/a",
+             "ok": True, "blocked": False, "root": False, "note": "", "status": 200},
+        ]
+        prompt = ar.build_compose_prompt({"title": "제목"}, "사람 보고서", "검색 결과", links)
+        self.assertIn("열지 않기로 한 주소", prompt)
+        self.assertIn("http://nas.local/x", prompt, "무엇을 안 열었는지는 알려준다")
+        self.assertNotIn("10.0.0.5", prompt, "우리 망의 IP 를 바깥 모델에 주지 않는다")
+        self.assertIn("https://example.org/a", prompt)
+
+
+class RedirectGuardTests(unittest.TestCase):
+    """리다이렉트 목적지도 같은 잣대로 본다.
+
+    agy 의 근거는 애초에 경유 주소로 오므로 리다이렉트는 예외가 아니라 기본값이다.
+    첫 주소만 보고 통과시키면 바깥 주소가 내부망으로 넘겨주는 순간 방어가 없다.
+    """
+
+    def _redirect_to(self, newurl, resolve):
+        handler = ar._GuardedRedirect()
+        old = ar.socket.getaddrinfo
+        ar.socket.getaddrinfo = resolve
+        try:
+            return handler.redirect_request(
+                ar.urllib.request.Request("https://example.org/"),
+                None, 302, "Found", {}, newurl)
+        finally:
+            ar.socket.getaddrinfo = old
+
+    def test_a_redirect_into_the_private_network_is_refused(self):
+        with self.assertRaises(ar.BlockedURL):
+            self._redirect_to("http://192.168.0.1/",
+                              _resolver({"192.168.0.1": ["192.168.0.1"]}))
+
+    def test_a_redirect_to_a_non_http_scheme_is_refused(self):
+        with self.assertRaises(ar.BlockedURL):
+            self._redirect_to("ftp://ftp.example.org/x",
+                              _resolver({"ftp.example.org": ["93.184.216.34"]}))
+
+    def test_an_ordinary_redirect_still_works(self):
+        req = self._redirect_to("https://example.org/b",
+                                _resolver({"example.org": ["93.184.216.34"]}))
+        self.assertEqual(req.full_url, "https://example.org/b")
+
+    def test_we_do_not_follow_forever(self):
+        self.assertLessEqual(ar._GuardedRedirect.max_redirections, 5)
+
+
+class FetchLimitTests(unittest.TestCase):
+    """이미 있던 두 가지 — 없어지면 알아채야 한다."""
+
+    def test_there_is_a_timeout(self):
+        self.assertGreater(ar.FETCH_TIMEOUT_SEC, 0)
+        self.assertLessEqual(ar.FETCH_TIMEOUT_SEC, 60, "야간 갱신을 붙들면 안 된다")
+
+    def test_the_body_read_is_capped(self):
+        src = Path(ar.__file__).read_text(encoding="utf-8")
+        self.assertIn("r.read(2048)", src,
+                      "본문을 통째로 받으면 안 된다 — 열리는지만 본다")
