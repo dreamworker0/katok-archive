@@ -200,6 +200,11 @@
         var e = ln._e;
         ln.style.display = (shown(e.s) && shown(e.t)) ? "" : "none";
       });
+      // 분류 이름은 노드와 딴 층(gLabels)에 있어서 위 두 줄로는 사라지지 않는다.
+      // 이름을 숨기는 것은 placeTopicLabels() 인데 그건 draw() 안에서만 돌고,
+      // draw() 는 시뮬레이션이 멎으면 더는 불리지 않는다 — 그래서 '주제'를 꺼도
+      // 동그라미만 없어지고 글자는 그대로 남아 있었다. 여기서 직접 부른다.
+      placeTopicLabels();
     }
 
     // ── 뷰(팬/줌) ──
