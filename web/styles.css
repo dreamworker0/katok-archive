@@ -372,7 +372,10 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 /* 이름 뒤에 바탕색 테두리를 둘러 준다. 관계선과 노드 위에 그대로 얹히면
    글자가 무늬에 묻혀 읽히지 않는다(실측 2026-09-05). paint-order 로 테두리를
    먼저 칠하고 글자를 그 위에 올린다 — 획이 가늘어지지 않는다. */
-.gnode text.topic-label { font-size: 11.5px; font-weight: 800; fill: var(--ink);
+/* `.gnode` 아래가 아니다 — 이름은 노드 위 제 층(gLabels)에 있다. 여기에 자손
+   선택자를 쓰면 규칙이 통째로 안 먹고 SVG 기본값(검정 16px)으로 떨어진다.
+   실측 2026-09-05: 그렇게 배포해서 어두운 테마에서 글자가 검게 나왔다. */
+#graphSvg text.topic-label { font-size: 11.5px; font-weight: 800; fill: var(--ink);
   paint-order: stroke; stroke: var(--surface); stroke-width: 3.5px;
   stroke-linejoin: round; pointer-events: none; }
 

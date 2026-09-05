@@ -1073,7 +1073,10 @@ class GraphLabelContractTests(unittest.TestCase):
 
     def test_labels_carry_a_halo(self):
         """관계선과 노드 위에 그대로 얹히면 글자가 무늬에 묻힌다."""
-        rule = self.css[self.css.index(".gnode text.topic-label {"):]
+        # 선택자가 이름의 실제 자리와 맞아야 한다 — `.gnode` 자손으로 두면
+        # 규칙이 통째로 안 먹고 검정 기본값으로 떨어진다(실측 2026-09-05).
+        self.assertNotIn(".gnode text.topic-label", self.css)
+        rule = self.css[self.css.index("#graphSvg text.topic-label {"):]
         rule = rule[:rule.index("}")]
         self.assertIn("paint-order: stroke", rule)
         self.assertIn("stroke: var(--surface)", rule)
