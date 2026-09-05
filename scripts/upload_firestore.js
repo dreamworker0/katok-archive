@@ -185,6 +185,75 @@ function chunkDocs(items, maxBytes) {
   return docs.map((items, i) => ({ id: String(i).padStart(3, "0"), items }));
 }
 
+/* ---------- 발행 순서 ---------- */
+
+/** 컬렉션을 어떤 차례로 쓸지 정한다. **meta 가 마지막인 것이 이 함수의 요점이다.**
+ *
+ * 왜 순서가 문제인가 (2026-09-05)
+ *   화면(boot.js)은 meta.content_hash 를 조각 캐시의 지문으로 쓴다. 지문이 같으면
+ *   조각을 받지 않는다. 그런데 적재는 meta 를 **먼저** 쓰고 나머지를 순차로 썼다.
+ *   그 사이(수십 초)에 들어온 멤버는 이렇게 된다.
+ *
+ *     meta → 새 지문      threads → 아직 옛 데이터
+ *     → 옛 데이터를 **새 지문으로** IndexedDB 에 박는다
+ *
+ *   이 캐시는 스스로 낫지 않는다. 다음 방문에 meta 를 읽어도 지문이 같으니
+ *   "최신이다" 로 판정하고 옛 조각을 계속 쓴다. 발행 사유는 데이터 변화만 보므로
+ *   (publish_state.WATCHED) 다음 지문이 언제 올지도 알 수 없다 — 하루 이상 옛
+ *   화면을 보는 사람이 생긴다.
+ *
+ *   순서를 뒤집으면 같은 사고가 **스스로 낫는 쪽**으로 틀린다.
+ *
+ *     threads → 새 데이터   meta → 아직 옛 지문
+ *     → 새 데이터를 **옛 지문으로** 둔다 → 다음 방문에 지문이 어긋나 다시 받는다
+ *
+ *   한 번 더 받는 낭비는 남지만, 틀린 것이 남지는 않는다. 끈적한 오염이
+ *   자가치유되는 낭비로 바뀐다. 그것이 이 저장소 규모에 맞는 답이다.
+ *
+ *   meta 를 쓰는 순간이 곧 **새 판을 켜는 순간**이다. 그래서 사진 업로드까지 끝난
+ *   뒤에 쓴다(main 참고) — 새 주제가 가리키는 사진이 아직 안 올라갔으면 그것도
+ *   반쪽이다.
+ */
+function publishPlan(p) {
+  return [
+    // 주제 하나에 문서 하나씩 두지는 않는다 — 그러면 전체 로드에 400회 읽기가
+    // 붙는다. 한 문서도 더는 안 된다(threadDocs 주석 참고). 그 사이가 여기다.
+    // 예전 threads/all 문서는 sync 가 '새 목록에 없는 문서' 로 보고 지운다.
+    { name: "threads", docs: p.threadDocs },
+    { name: "aiReports", docs: p.aiDocs },
+    // 예전 media/all 문서도 마찬가지로 지워진다.
+    { name: "media", docs: p.mediaDocs },
+    { name: "myMessages", docs: p.mineDocs },
+    // chunks 는 더 이상 발행하지 않는다. 예전 적재분을 지운다.
+    { name: "chunks", docs: [] },
+    { name: "digests", docs: p.digestDocs },
+    { name: "graph", docs: [
+      { id: "nodes", items: p.graph.nodes },
+      { id: "edges", items: p.graph.edges },
+    ] },
+    // members 는 여기 없다.
+    //
+    // 멤버 명부의 주인은 Firestore 다 — 관리자 페이지(approveClaim Function)와
+    // approve_claims.js 가 Admin SDK 로 직접 쓴다. 예전처럼 config/members.json 을
+    // 기준으로 동기화하면, 웹에서 승인한 사람이 그 파일에 없어 '구문서'로 판정되고
+    // 그날 밤 발행에서 조용히 삭제된다. 승인한 다음 날 권한이 사라지는 셈이다.
+    //
+    // config/members.json 은 로컬 거울이다. scripts/sync_members.js 가 Firestore
+    // 에서 끌어와 갱신하고, 파이프라인은 닉네임 대조용으로만 읽는다.
+    { name: "messagesSource", docs: p.sourceDocs },
+    // ── 여기부터가 새 판이다. 위가 다 끝나야 켠다. ──
+    // meta 의 updatedAt 은 매번 달라진다. 마지막 발행 시각을 남기는 자리다 (1건).
+    { name: "meta", docs: [{ id: "archive", ...p.meta, updatedAt: p.now }] },
+  ];
+}
+
+/** 발행을 켜는 단계와 그 앞 단계를 가른다. */
+function splitPlan(plan) {
+  const i = plan.findIndex((s) => s.name === "meta");
+  if (i === -1) throw new Error("발행 계획에 meta 가 없습니다.");
+  return { before: plan.slice(0, i).concat(plan.slice(i + 1)), activate: plan[i] };
+}
+
 function planWrites(prev, docs) {
   const next = {};
   const writes = [];
@@ -487,34 +556,24 @@ async function main() {
       { full: needFull, prev: prev(name) });
   };
 
-  // meta 의 updatedAt 은 매번 달라진다. 마지막 발행 시각을 남기는 자리라 그대로 둔다 (1건).
-  await sync("meta", [{ id: "archive", ...meta, updatedAt: new Date().toISOString() }]);
-  // 주제 하나에 문서 하나씩 두지는 않는다 — 그러면 전체 로드에 400회 읽기가
-  // 붙는다. 한 문서도 더는 안 된다(위 threadDocs 참고). 그 사이가 여기다.
-  // 예전 threads/all 문서는 sync 가 '새 목록에 없는 문서' 로 보고 지운다.
-  await sync("threads", threadDocs);
-  await sync("aiReports", aiDocs);
-  // 예전 media/all 문서는 sync 가 '새 목록에 없는 문서' 로 보고 지운다.
-  await sync("media", mediaDocs);
-  await sync("myMessages", mineDocs);
-  // chunks 는 더 이상 발행하지 않는다. 예전 적재분을 지운다.
-  await sync("chunks", []);
-  await sync("digests", digestDocs);
-  await sync("graph", [
-    { id: "nodes", items: graph.nodes },
-    { id: "edges", items: graph.edges },
-  ]);
-  // members 는 여기서 동기화하지 않는다.
-  //
-  // 멤버 명부의 주인은 Firestore 다 — 관리자 페이지(approveClaim Function)와
-  // approve_claims.js 가 Admin SDK 로 직접 쓴다. 예전처럼 config/members.json 을
-  // 기준으로 동기화하면, 웹에서 승인한 사람이 그 파일에 없어 '구문서'로 판정되고
-  // 그날 밤 발행에서 조용히 삭제된다. 승인한 다음 날 권한이 사라지는 셈이다.
-  //
-  // config/members.json 은 로컬 거울이다. scripts/sync_members.js 가 Firestore
-  // 에서 끌어와 갱신하고, 파이프라인은 닉네임 대조용으로만 읽는다.
-  await sync("messagesSource", sourceDocs);
+  /* 발행 순서 (2026-09-05 고침)
+   *
+   *   ① 내용을 다 쓴다 (meta 빼고)   ② 사진·첨부를 **올린다**
+   *   ③ meta 를 쓴다 ← 새 판을 켜는 순간   ④ 빠진 사진·첨부를 **지운다**
+   *
+   * 더하는 일은 켜기 전에, 지우는 일은 켠 뒤에. 어느 단계에서 터져도 meta 가 아직
+   * 옛 지문이므로 멤버는 **완성된 지난 판**을 그대로 본다. 다시 돌리면 이어서
+   * 마저 쓴다(문서 해시가 같은 것은 건너뛴다 — 재실행이 안전한 이유다).
+   * publishPlan 의 긴 주석을 함께 볼 것.
+   */
+  const { before, activate } = splitPlan(publishPlan({
+    meta, threadDocs, aiDocs, mediaDocs, mineDocs, digestDocs, graph, sourceDocs,
+    now: new Date().toISOString(),
+  }));
 
+  for (const step of before) await sync(step.name, step.docs);
+
+  let pruneLater = null;
   if (!SKIP_IMAGES) {
     console.log("Storage 업로드");
     const bucket = admin.storage().bucket();
@@ -532,15 +591,28 @@ async function main() {
     await uploadImages(bucket, images, imgSize);
     if (files.length) await uploadFiles(bucket, files, fileRemote.size);
 
-    // 발행본에서 빠진 것은 저장소에서도 지운다 (삭제 요청·수집 거부 반영)
+    // 발행본에서 빠진 것은 저장소에서도 지운다 (삭제 요청·수집 거부 반영).
+    // **켠 뒤에** 지운다 — 켜기 전에 지우면 지난 판을 보고 있는 사람의 사진이
+    // 먼저 사라진다. 켜는 것과 지우는 것 사이는 몇 초다.
     if (KEEP_ORPHANS) {
       console.log("  --keep-orphans: 저장소 정리를 건너뜁니다.");
     } else {
-      await pruneOrphans(bucket, "images/", images, "images", imgRemote.objects);
-      await pruneOrphans(bucket, "thumbs/", images, "thumbs", thumbRemote.objects);
-      await pruneOrphans(bucket, "videos/", images, "videos", videoRemote.objects);
-      await pruneOrphans(bucket, "files/", files, "files", fileRemote.objects);
+      pruneLater = async () => {
+        await pruneOrphans(bucket, "images/", images, "images", imgRemote.objects);
+        await pruneOrphans(bucket, "thumbs/", images, "thumbs", thumbRemote.objects);
+        await pruneOrphans(bucket, "videos/", images, "videos", videoRemote.objects);
+        await pruneOrphans(bucket, "files/", files, "files", fileRemote.objects);
+      };
     }
+  }
+
+  // ── 새 판을 켠다 ──
+  console.log("발행 전환 (meta)");
+  await sync(activate.name, activate.docs);
+
+  if (pruneLater) {
+    console.log("Storage 정리 (지난 판에서 빠진 것)");
+    await pruneLater();
   }
 
   /* 대장은 여기까지 다 성공했을 때만 쓴다. 중간에 터지면 옛 대장이 남고, 다음
@@ -555,7 +627,8 @@ async function main() {
 }
 
 module.exports = { stableStringify, docHash, planWrites, planUploads, loadState, staleState,
-                   syncCollection, cacheHashWarning, STATE_VERSION, STATE_PATH };
+                   syncCollection, cacheHashWarning, publishPlan, splitPlan,
+                   STATE_VERSION, STATE_PATH };
 
 if (require.main === module) {
   main().catch((e) => {
