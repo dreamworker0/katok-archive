@@ -138,7 +138,11 @@
 
     var vp = svg("g");
     var gEdges = svg("g"); var gNodes = svg("g", { filter: "url(#gsoft)" });
-    vp.appendChild(gEdges); vp.appendChild(gNodes);
+    // 분류 이름은 **맨 위 층**에 따로 둔다. 노드 안에 넣으면 뒤에 그려진 노드가
+    // 글자를 덮는다 — 테두리를 둘러도 소용없다(실측 2026-09-05: '인프라·클라우드·
+    // 하드웨어' 의 '하' 를 도구 하나가 가렸다).
+    var gLabels = svg("g");
+    vp.appendChild(gEdges); vp.appendChild(gNodes); vp.appendChild(gLabels);
     s.appendChild(vp);
     mount.appendChild(s);
 
@@ -165,9 +169,9 @@
       }
       g.appendChild(shape);
       if (n.type === "topic") {
-        var tx = svg("text", { "text-anchor": "middle", y: -n.r - 6,
-          class: "topic-label" });
-        tx.textContent = n.label; g.appendChild(tx);
+        var tx = svg("text", { "text-anchor": "middle", class: "topic-label" });
+        tx.textContent = n.label; gLabels.appendChild(tx);
+        n._topicLabel = tx; n._labelY = null;
       } else {
         var tx2 = svg("text", { "text-anchor": "middle", y: -n.r - 3, style: "display:none" });
         tx2.textContent = n.label; g.appendChild(tx2); n._label = tx2;
@@ -176,6 +180,8 @@
       gNodes.appendChild(g);
       bindNode(n);
     });
+    // 이름이 늘 떠 있는 것은 분류 열둘뿐이다 — 자리를 고를 때 이것만 견주면 된다.
+    var topics = nodes.filter(function (n) { return n.type === "topic"; });
 
     // 표에 없는 종류는 **감추지 않는다** — 끄는 단추도 없으니 감추면 다시 켤 수가
     // 없다. 종류를 새로 더한 발행본을 옛 화면이 열었을 때가 그 경우다.
@@ -351,8 +357,66 @@
         n.x += n.vx * alpha; n.y += n.vy * alpha;
       });
     }
+    /* 분류 이름 열둘은 늘 떠 있다. 두 분류가 가까이 앉으면 글자가 포개져 읽을 수
+     * 없다 — 실측 2026-09-05: '사회복지 실천·현장 적용' 과 '인프라·클라우드·하드웨어'
+     * 가 한 줄로 겹쳤다. 겹치면 위아래로 갈라 놓는다.
+     *
+     * 너비는 **한 번만 재서 둔다.** 글은 바뀌지 않으므로 한 번이면 되고, getBBox 는
+     * 부를 때마다 브라우저가 레이아웃을 다시 재게 만드는데 이 함수는 매 프레임 돈다.
+     * 화면에 붙기 전에는 0 이 나오므로 그때는 글자 수로 어림하고 다음 프레임에 잰다.
+     */
+    var LABEL_CHAR = 10.5;        // 한글 한 글자 너비 어림(11.5px bold)
+    /* 글자 상자는 **실제로 재서 둔다.** 어림으로 잡았더니 높이를 15px 로 봤는데
+     * 실측은 23px 이고 기준선 위로 19px 이었다 — 그만큼 상자가 작아서 '안 겹친다'
+     * 고 판정하고는 화면에서 겹쳤다(실측 2026-09-05). 글은 바뀌지 않으므로 한 번만
+     * 재면 되고, 화면에 붙기 전에는 0 이 나오므로 그때만 글자 수로 어림한다. */
+    function labelBox(n) {
+      if (!n._lbox) {
+        try {
+          var b = n._topicLabel.getBBox();
+          if (b.width) {
+            n._lbox = { w: b.width, h: b.height,
+                        dy: b.y - (Number(n._topicLabel.getAttribute("y")) || 0) };
+          }
+        } catch (e) { /* 아직 화면에 없다 */ }
+      }
+      return n._lbox || { w: n.label.length * LABEL_CHAR, h: 23, dy: -19 };
+    }
+    /* 분류 이름 열둘은 늘 떠 있다. 두 분류가 가까이 앉으면 글자가 포개져 읽을 수
+     * 없다 — 실측 2026-09-05: '사회복지 실천·현장 적용' 과 '인프라·클라우드·하드웨어'
+     * 가 한 줄로 겹쳤다. 겹치면 위아래로 한 줄씩 물려 놓는다. */
+    function placeTopicLabels() {
+      var placed = [];
+      topics.forEach(function (n) {
+        if (!n._topicLabel) return;
+        // 걸러내기로 숨은 분류는 이름도 함께 숨는다 — 이름이 딴 층에 있으니
+        // 노드를 숨기는 것만으로는 안 사라진다.
+        var on = shown(n);
+        n._topicLabel.style.display = on ? "" : "none";
+        if (!on) return;
+        var m = labelBox(n), half = m.w / 2 + 3;
+        // 위 → 아래 → 한 줄 더 위 → 한 줄 더 아래. 넷이 다 걸리면 첫 자리를 쓴다.
+        var tries = [-n.r - 8, n.r + 24, -n.r - 8 - m.h - 3, n.r + 24 + m.h + 3];
+        var pick = tries[0], box = null;
+        for (var k = 0; k < tries.length; k++) {
+          var top = n.y + tries[k] + m.dy;
+          var b = { x1: n.x - half, x2: n.x + half, y1: top, y2: top + m.h };
+          var hit = placed.some(function (p) {
+            return !(b.x2 < p.x1 || b.x1 > p.x2 || b.y2 < p.y1 || b.y1 > p.y2);
+          });
+          if (!hit) { pick = tries[k]; box = b; break; }
+          if (k === tries.length - 1) { pick = tries[0]; box = b; }
+        }
+        placed.push(box);
+        n._labelY = pick;
+        n._topicLabel.setAttribute("x", n.x);
+        n._topicLabel.setAttribute("y", n.y + pick);
+      });
+    }
+
     function draw() {
       nodes.forEach(function (n) { n._g.setAttribute("transform", "translate(" + n.x + "," + n.y + ")"); });
+      placeTopicLabels();
       edgeEls.forEach(function (ln) {
         var e = ln._e;
         // 두 점을 잇되 수직으로 살짝 밀어 곡선으로 그린다(거리의 12%).

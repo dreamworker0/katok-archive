@@ -1054,6 +1054,49 @@ class GraphEvidenceContractTests(unittest.TestCase):
         self.assertNotIn(".node-panel .np-rel { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px;", self.css)
 
 
+class GraphLabelContractTests(unittest.TestCase):
+    """분류 이름 열둘은 늘 떠 있다 — 읽히지 않으면 관계망의 지도가 없는 셈이다."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.graph = (ROOT / "web" / "graph.js").read_text(encoding="utf-8")
+        cls.css = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
+
+    def test_labels_are_drawn_above_every_node(self):
+        """노드 안에 넣으면 뒤에 그려진 노드가 글자를 덮는다 — 테두리를 둘러도
+        소용없다(실측 2026-09-05: '인프라·클라우드·하드웨어' 의 한 글자가 가려졌다).
+        """
+        self.assertIn("var gLabels = svg(\"g\");", self.graph)
+        self.assertIn("vp.appendChild(gEdges); vp.appendChild(gNodes); "
+                      "vp.appendChild(gLabels);", self.graph)
+        self.assertIn("gLabels.appendChild(tx);", self.graph)
+
+    def test_labels_carry_a_halo(self):
+        """관계선과 노드 위에 그대로 얹히면 글자가 무늬에 묻힌다."""
+        rule = self.css[self.css.index(".gnode text.topic-label {"):]
+        rule = rule[:rule.index("}")]
+        self.assertIn("paint-order: stroke", rule)
+        self.assertIn("stroke: var(--surface)", rule)
+
+    def test_labels_step_aside_instead_of_overlapping(self):
+        self.assertIn("function placeTopicLabels()", self.graph)
+        self.assertIn("placeTopicLabels();", self.graph)
+
+    def test_the_label_box_is_measured_not_guessed(self):
+        """어림으로 잡았더니 높이를 15px 로 봤는데 실측은 23px 이었다 — 그만큼
+        상자가 작아 '안 겹친다' 고 판정하고는 화면에서 겹쳤다.
+        """
+        self.assertIn("getBBox()", self.graph)
+        self.assertIn("n._lbox", self.graph)
+
+    def test_a_hidden_category_hides_its_name(self):
+        """이름이 딴 층에 있으니 노드를 숨기는 것만으로는 안 사라진다."""
+        block = self.graph[self.graph.index("function placeTopicLabels()"):]
+        block = block[:block.index("function draw()")]
+        self.assertIn("shown(n)", block)
+        self.assertIn('style.display = on ? "" : "none"', block)
+
+
 class FirebaseHostingContractTests(unittest.TestCase):
     def test_hosting_enables_oauth_popup_opener_compatibility(self):
         config = json.loads((ROOT / "firebase.json").read_text(encoding="utf-8"))

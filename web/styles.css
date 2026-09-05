@@ -369,7 +369,12 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .gnode text { font-size: 10px; font-weight: 600; fill: var(--ink-soft);
   paint-order: stroke; stroke: var(--surface); stroke-width: 3.5px; stroke-linejoin: round;
   pointer-events: none; letter-spacing: -0.01em; }
-.gnode text.topic-label { font-size: 11.5px; font-weight: 800; fill: var(--ink); }
+/* 이름 뒤에 바탕색 테두리를 둘러 준다. 관계선과 노드 위에 그대로 얹히면
+   글자가 무늬에 묻혀 읽히지 않는다(실측 2026-09-05). paint-order 로 테두리를
+   먼저 칠하고 글자를 그 위에 올린다 — 획이 가늘어지지 않는다. */
+.gnode text.topic-label { font-size: 11.5px; font-weight: 800; fill: var(--ink);
+  paint-order: stroke; stroke: var(--surface); stroke-width: 3.5px;
+  stroke-linejoin: round; pointer-events: none; }
 
 .node-panel { position: absolute; top: 54px; right: 12px; width: 250px; max-width: 72%;
   background: var(--surface); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow);
