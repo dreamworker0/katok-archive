@@ -16,6 +16,12 @@
  *   requestRefresh  관리자: '지금 갱신' — 실행이 아니라 요청만 적는다(아래 설명)
  *   ensureClaim     본인: members 에 있는데 클레임이 없으면 스스로 받아간다
  *
+ * 동시 조작 (2026-09-05)
+ *   관리자가 둘 이상이면 같은 문서를 동시에 고칠 수 있다. 판단과 쓰기는
+ *   guards.js 로 옮겨 **트랜잭션 안에서** 한다. 여기 남은 것은 인증 확인과
+ *   Auth 클레임처럼 트랜잭션 밖에서 해야 하는 일이다. 왜 그렇게 갈랐는지는
+ *   guards.js 의 머리말에 적어 두었다.
+ *
  * ensureClaim 이 필요한 이유
  *   멤버는 웹 승인 말고도 여러 경로로 생긴다 — config/members.json 을 손으로 고치고
  *   업로더를 돌리는 기존 방식이 그대로 남아 있다. 그렇게 들어온 사람은 클레임이
@@ -25,11 +31,22 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const admin = require("firebase-admin");
+const guards = require("./guards");
 
 admin.initializeApp();
 setGlobalOptions({ region: "asia-northeast3", maxInstances: 3 });
 
 const db = () => admin.firestore();
+
+/** guards.js 는 firebase 를 모른다. 그쪽 오류를 여기서 HttpsError 로 바꾼다. */
+async function guarded(run) {
+  try {
+    return await run();
+  } catch (e) {
+    if (e instanceof guards.GuardError) throw new HttpsError(e.code, e.message);
+    throw e;
+  }
+}
 
 /** 호출자가 로그인했고 이메일이 확인된 계정인지. */
 function callerEmail(request) {
@@ -70,65 +87,17 @@ async function applyClaim(email, isAdmin) {
   return { applied: true, uid: user.uid };
 }
 
-/** 대화방 표시명 목록을 정리한다.
- *
- *  한 사람이 표시명을 여러 개 가질 수 있다 — 카톡에서 이름을 바꾸면 그 시점을
- *  기준으로 참여자가 둘로 갈리기 때문이다. 하나만 잡으면 내 글의 절반이 사라진다.
- */
-function normalizeNicknames(value, fallback) {
-  var list = Array.isArray(value) ? value : (value ? [value] : []);
-  if (!list.length && fallback) list = [fallback];
-  const out = [];
-  for (const raw of list) {
-    const n = String(raw || "").trim();
-    if (n && n.length <= 40 && out.indexOf(n) === -1) out.push(n);
-  }
-  if (!out.length) {
-    throw new HttpsError("invalid-argument", "대화방 표시명이 없습니다.");
-  }
-  if (out.length > 10) {
-    throw new HttpsError("invalid-argument", "표시명은 10개까지만 묶을 수 있습니다.");
-  }
-  return out;
-}
-
-function normalizeEmail(value) {
-  const email = String(value || "").trim().toLowerCase();
-  if (!email || email.indexOf("@") === -1) {
-    throw new HttpsError("invalid-argument", "이메일이 올바르지 않습니다.");
-  }
-  return email;
-}
-
 exports.approveClaim = onCall(async (request) => {
-  const admins = await requireAdmin(request);
-  const email = normalizeEmail(request.data && request.data.email);
-  const role = request.data && request.data.role === "admin" ? "admin" : "user";
+  const caller = await requireAdmin(request);
+  // 명부·신청서 정리는 트랜잭션 안에서. 승인은 권한을 **올리기만** 한다 —
+  // 화면의 승인 단추가 늘 보내는 "user" 로 기존 관리자가 내려가지 않는다
+  // (guards.js 머리말 ③). 내리는 일은 setMemberRole 이 한다.
+  const done = await guarded(() =>
+    guards.approveClaim(db(), request.data, caller, new Date().toISOString()));
+  // Auth 는 트랜잭션 **밖**이다. 여기서 끊겨도 ensureClaim 이 다음 로그인에 맞춘다.
+  const claim = await applyClaim(done.email, done.role === "admin");
 
-  const claimSnap = await db().collection("claims").doc(email).get();
-  const claimed = claimSnap.exists ? claimSnap.data() : null;
-  const nicknames = normalizeNicknames(
-    (request.data && (request.data.nicknames || request.data.nickname)),
-    claimed && claimed.nickname
-  );
-
-  await db().collection("members").doc(email).set(
-    {
-      email,
-      name: nicknames[0],
-      // nickname 은 대표 표시명. 화면 표시와 하위호환용으로 남긴다.
-      nickname: nicknames[0],
-      nicknames,
-      role,
-      approvedBy: admins,
-      approvedAt: new Date().toISOString(),
-    },
-    { merge: true }
-  );
-  const claim = await applyClaim(email, role === "admin");
-  if (claimSnap.exists) await claimSnap.ref.delete();
-
-  return { ok: true, email, nicknames, role, claim };
+  return { ok: true, email: done.email, nicknames: done.nicknames, role: done.role, claim };
 });
 
 /** 표시명 연결을 다시 맞춘다.
@@ -138,8 +107,10 @@ exports.approveClaim = onCall(async (request) => {
  */
 exports.setMemberNicknames = onCall(async (request) => {
   const caller = await requireAdmin(request);
-  const email = normalizeEmail(request.data && request.data.email);
-  const nicknames = normalizeNicknames(request.data && request.data.nicknames);
+  const { email, nicknames } = await guarded(async () => ({
+    email: guards.normalizeEmail(request.data && request.data.email),
+    nicknames: guards.normalizeNicknames(request.data && request.data.nicknames),
+  }));
 
   const ref = db().collection("members").doc(email);
   if (!(await ref.get()).exists) {
@@ -160,7 +131,7 @@ exports.setMemberNicknames = onCall(async (request) => {
 
 exports.rejectClaim = onCall(async (request) => {
   await requireAdmin(request);
-  const email = normalizeEmail(request.data && request.data.email);
+  const email = await guarded(async () => guards.normalizeEmail(request.data && request.data.email));
   await db().collection("claims").doc(email).delete();
   return { ok: true, email };
 });
@@ -172,29 +143,14 @@ exports.rejectClaim = onCall(async (request) => {
  */
 exports.setMemberRole = onCall(async (request) => {
   const caller = await requireAdmin(request);
-  const email = normalizeEmail(request.data && request.data.email);
-  const role = request.data && request.data.role === "admin" ? "admin" : "user";
-
-  const ref = db().collection("members").doc(email);
-  const snap = await ref.get();
-  if (!snap.exists) {
-    throw new HttpsError("not-found", "멤버가 아닙니다: " + email);
-  }
-  const current = (snap.data() || {}).role || "user";
-  if (current === role) return { ok: true, email, role, changed: false };
-
-  if (current === "admin" && role !== "admin") {
-    const admins = await db().collection("members").where("role", "==", "admin").get();
-    if (admins.size <= 1) {
-      throw new HttpsError("failed-precondition",
-        "마지막 관리자는 내릴 수 없습니다. 다른 사람을 먼저 관리자로 지정하세요.");
-    }
-  }
-
-  await ref.set({ role, roleChangedBy: caller, roleChangedAt: new Date().toISOString() },
-    { merge: true });
-  const claim = await applyClaim(email, role === "admin");
-  return { ok: true, email, role, changed: true, claim };
+  // 세고-나서-쓰지 않는다. 둘이 동시에 서로를 내려도 관리자가 0명이 되지 않아야
+  // 한다 — 확인과 쓰기가 한 트랜잭션 안에 있다 (guards.js 머리말 ②).
+  const done = await guarded(() =>
+    guards.setMemberRole(db(), request.data, caller, new Date().toISOString()));
+  if (!done.changed) return { ok: true, ...done };
+  // Auth 는 트랜잭션 밖이다 — 다시 도는 콜백 안에서 클레임을 붙이면 안 된다.
+  const claim = await applyClaim(done.email, done.role === "admin");
+  return { ok: true, ...done, claim };
 });
 
 /** 멤버 자격 회수(탈퇴 처리).
@@ -208,24 +164,21 @@ exports.setMemberRole = onCall(async (request) => {
  */
 exports.removeMember = onCall(async (request) => {
   const caller = await requireAdmin(request);
-  const email = normalizeEmail(request.data && request.data.email);
+  const email = await guarded(async () => guards.normalizeEmail(request.data && request.data.email));
 
   if (email === caller) {
     throw new HttpsError("failed-precondition",
       "본인은 탈퇴 처리할 수 없습니다. 다른 관리자에게 부탁하세요.");
   }
 
-  const ref = db().collection("members").doc(email);
-  const snap = await ref.get();
+  const snap = await db().collection("members").doc(email).get();
   if (!snap.exists) throw new HttpsError("not-found", "멤버가 아닙니다: " + email);
 
   const data = snap.data() || {};
-  if (data.role === "admin") {
-    const admins = await db().collection("members").where("role", "==", "admin").get();
-    if (admins.size <= 1) {
-      throw new HttpsError("failed-precondition",
-        "마지막 관리자는 탈퇴 처리할 수 없습니다.");
-    }
+  // 미리 걸러낸다 — 어차피 거절될 요청이 아래의 부작용(수집 거부 기록)을 남기지
+  // 않게 한다. 확정은 아래 guards.removeMember 가 트랜잭션 안에서 다시 한다.
+  if ((data.role || "user") === "admin" && !(await guards.countOtherAdmins(db(), email))) {
+    throw new HttpsError("failed-precondition", "마지막 관리자는 탈퇴 처리할 수 없습니다.");
   }
 
   const nicknames = Array.isArray(data.nicknames) && data.nicknames.length
@@ -268,7 +221,13 @@ exports.removeMember = onCall(async (request) => {
     kept.push(name);
   }
 
-  await ref.delete();
+  // 지우는 것만 트랜잭션이다. 위의 표시명 박아두기는 **먼저** 끝나 있어야 한다 —
+  // 멤버 문서가 사라지면 이메일→표시명 고리가 끊긴다.
+  //
+  // 여기서 거절되는 경우(그 사이 다른 관리자가 나머지 관리자를 내렸다)에는 이미
+  // 수집 거부가 기록된 채로 멤버는 남는다. 드물고, 틀리는 방향이 안전한 쪽이다
+  // (덜 모으는 쪽). 화면에서 되돌릴 수 있다.
+  await guarded(() => guards.removeMember(db(), email, { expectNicknames: nicknames }));
 
   let claimCleared = false;
   try {
@@ -293,31 +252,12 @@ exports.removeMember = onCall(async (request) => {
  */
 exports.setThreadHidden = onCall(async (request) => {
   const caller = await requireAdmin(request);
-  const threadId = String((request.data && request.data.threadId) || "").trim();
-  const hidden = !(request.data && request.data.hidden === false);
-  if (!/^[A-Za-z0-9_-]{1,60}$/.test(threadId)) {
-    throw new HttpsError("invalid-argument", "주제 ID 가 올바르지 않습니다.");
-  }
-
-  const ref = db().collection("settings").doc("threads");
-  const snap = await ref.get();
-  const list = (snap.exists && Array.isArray(snap.data().hidden))
-    ? snap.data().hidden : [];
-  const rest = list.filter((t) => t && t.id !== threadId);
-
-  if (hidden) {
-    if (rest.length >= 500) {
-      throw new HttpsError("failed-precondition", "발행 제외 주제가 너무 많습니다.");
-    }
-    rest.push({
-      id: threadId,
-      title: String((request.data && request.data.title) || "").slice(0, 120),
-      hiddenBy: caller,
-      hiddenAt: new Date().toISOString(),
-    });
-  }
-  await ref.set({ hidden: rest, updatedAt: new Date().toISOString() }, { merge: true });
-  return { ok: true, threadId, hidden, count: rest.length };
+  // 한 문서(settings/threads)에 목록을 담으므로 읽고-고쳐-쓰면 동시 조작이
+  // 사라진다. 두 관리자가 서로 다른 주제를 동시에 숨겨도 둘 다 남아야 한다
+  // (guards.js 머리말 ①).
+  const done = await guarded(() =>
+    guards.setThreadHidden(db(), request.data, caller, new Date().toISOString()));
+  return { ok: true, ...done };
 });
 
 /* ---------- 지금 갱신 ----------
