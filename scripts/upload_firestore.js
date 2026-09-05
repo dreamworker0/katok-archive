@@ -495,7 +495,23 @@ async function main() {
 
   const digestDocs = Object.keys(digests).map((k) => ({ id: k, ...digests[k] }));
   const sourceDocs = source.map((m) => ({ id: m.id, ...m }));
-  const mineDocs = Object.keys(mine).map((email) => ({ id: email, items: mine[email] }));
+  /* '내 글' 문서에 **어떤 표시명으로 모았는지**를 함께 싣는다 (2026-09-05).
+   *
+   * 관리자가 표시명 연결을 고치면 setMemberNicknames 가 그 자리에서 이 문서를
+   * 지운다 — 고친 뒤에도 남의 원문이 하루 동안 계속 보이던 자리다. 그러면 다음
+   * 발행이 다시 만들어 채워야 하는데, 대장은 **페이로드의 해시**만 본다. 새로
+   * 묶은 표시명에 글이 한 건도 없으면 items 가 그대로라 해시도 그대로고, 지워진
+   * 문서는 전량 동기화(7일)까지 비어 있게 된다.
+   *
+   * 표시명을 문서에 실으면 연결이 바뀐 순간 해시도 바뀐다 — 글 목록이 그대로여도
+   * 다음 발행이 다시 쓴다. 이 표시명은 items 를 모을 때 쓴 바로 그 목록이다
+   * (둘 다 config/members.json 거울에서 나온다). 화면은 items 만 읽으므로
+   * 손댈 것이 없다.
+   */
+  const nicknamesOf = new Map(members.map((m) => [m.email, m.nicknames || []]));
+  const mineDocs = Object.keys(mine).map((email) => ({
+    id: email, items: mine[email], nicknames: nicknamesOf.get(email) || [],
+  }));
   /* 이번 실행이 전량인지 먼저 정한다 — 계획 출력에도 그대로 쓴다. */
   const prevState = loadState(STATE_PATH);
   const needFull = FORCE_FULL || !prevState || staleState(prevState, Date.now(), FULL_EVERY_DAYS);

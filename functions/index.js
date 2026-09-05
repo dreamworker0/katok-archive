@@ -100,33 +100,13 @@ exports.approveClaim = onCall(async (request) => {
   return { ok: true, email: done.email, nicknames: done.nicknames, role: done.role, claim };
 });
 
-/** 표시명 연결을 다시 맞춘다.
- *
- *  카톡에서 이름을 바꿨거나, 승인할 때 엉뚱한 참여자에 붙였을 때 쓴다.
- *  연결이 어긋나면 '내 글 관리'에 남의 글이 보이거나 내 글이 안 보인다.
- */
 exports.setMemberNicknames = onCall(async (request) => {
   const caller = await requireAdmin(request);
-  const { email, nicknames } = await guarded(async () => ({
-    email: guards.normalizeEmail(request.data && request.data.email),
-    nicknames: guards.normalizeNicknames(request.data && request.data.nicknames),
-  }));
-
-  const ref = db().collection("members").doc(email);
-  if (!(await ref.get()).exists) {
-    throw new HttpsError("not-found", "멤버가 아닙니다: " + email);
-  }
-  await ref.set(
-    {
-      name: nicknames[0],
-      nickname: nicknames[0],
-      nicknames,
-      nicknamesChangedBy: caller,
-      nicknamesChangedAt: new Date().toISOString(),
-    },
-    { merge: true }
-  );
-  return { ok: true, email, nicknames };
+  // 연결이 바뀌면 myMessages 를 같은 트랜잭션에서 지운다 — 고친 뒤에도 다음
+  // 발행까지 남의 원문이 계속 보이던 자리다. 왜 지우는지는 guards.js 에 적었다.
+  const done = await guarded(() =>
+    guards.setMemberNicknames(db(), request.data, caller, new Date().toISOString()));
+  return { ok: true, ...done };
 });
 
 exports.rejectClaim = onCall(async (request) => {

@@ -199,6 +199,63 @@ async function approveClaim(db, data, caller, now) {
   });
 }
 
+/* ---------- 표시명 연결 ---------- */
+
+/** 순서만 다른 같은 묶음인가. 연결이 실제로 바뀌었는지 보는 자다. */
+function sameNicknameSet(a, b) {
+  const x = (a || []).slice().sort(), y = (b || []).slice().sort();
+  return x.length === y.length && x.every((v, i) => v === y[i]);
+}
+
+/** 표시명 연결을 다시 맞춘다.
+ *
+ *  카톡에서 이름을 바꿨거나, 승인할 때 엉뚱한 참여자에 붙였을 때 쓴다.
+ *  연결이 어긋나면 '내 글 관리'에 **남의 원문이** 보인다.
+ *
+ *  **연결이 바뀌면 myMessages 를 같은 트랜잭션에서 지운다.** (2026-09-05)
+ *
+ *  myMessages/{이메일} 은 발행 때 표시명으로 모아 둔 원문 묶음이다. 연결을 고쳐도
+ *  그 문서는 다음 발행(매일 밤 23:40)까지 옛 연결 그대로 남는데, 규칙은 본인에게
+ *  읽기를 허용한다 — 즉 **잘못 연결된 것을 고친 뒤에도 최대 하루 동안 남의 원문이
+ *  계속 보인다.** 고치는 행위 자체가 "이건 저 사람 글이 아니다" 라는 판단이므로,
+ *  그 순간 무효가 되어야 한다.
+ *
+ *  지우면 다음 발행까지 '내 글 관리' 가 비어 보인다. 남의 원문을 보여주는 것보다
+ *  아무것도 안 보이는 편이 낫다. 발행이 다시 만들어 채운다 — 적재가 이 문서에
+ *  '어떤 표시명으로 만들었는지' 를 함께 싣기 때문에, 글 목록이 그대로여도
+ *  연결이 바뀌면 문서가 다시 쓰인다(scripts/upload_firestore.js 의 mineDocs).
+ *
+ *  이미 그 사람 브라우저에 내려간 것까지 거둘 수는 없다. 여기서 막는 것은
+ *  **이제부터의 읽기**다.
+ */
+async function setMemberNicknames(db, data, caller, now) {
+  const email = normalizeEmail(data && data.email);
+  const nicknames = normalizeNicknames(data && data.nicknames);
+  const ref = db.collection("members").doc(email);
+  const mineRef = db.collection("myMessages").doc(email);
+
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new GuardError("not-found", "멤버가 아닙니다: " + email);
+    const cur = snap.data() || {};
+    const before = Array.isArray(cur.nicknames) && cur.nicknames.length
+      ? cur.nicknames
+      : (cur.nickname ? [cur.nickname] : []);
+    const changed = !sameNicknameSet(before, nicknames);
+
+    tx.set(ref, {
+      name: nicknames[0],
+      nickname: nicknames[0],
+      nicknames,
+      nicknamesChangedBy: caller,
+      nicknamesChangedAt: now,
+    }, { merge: true });
+
+    if (changed) tx.delete(mineRef);
+    return { email, nicknames, before, changed, clearedMyMessages: changed };
+  });
+}
+
 /* ---------- 탈퇴 ---------- */
 
 /** 멤버 문서를 지운다. 표시명 박아두기·수집 거부·Auth 는 **부르는 쪽**이 한다.
@@ -231,6 +288,6 @@ async function removeMember(db, email, opts) {
 module.exports = {
   GuardError, HIDDEN_LIMIT,
   normalizeEmail, normalizeNicknames, normalizeThreadId, wantedRole,
-  nextHiddenList, requireAnotherAdmin, countOtherAdmins,
-  setThreadHidden, setMemberRole, approveClaim, removeMember,
+  nextHiddenList, requireAnotherAdmin, countOtherAdmins, sameNicknameSet,
+  setThreadHidden, setMemberRole, approveClaim, setMemberNicknames, removeMember,
 };

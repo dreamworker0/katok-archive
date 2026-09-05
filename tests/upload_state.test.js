@@ -282,3 +282,29 @@ test("중간에 실패하면 지난 판이 그대로 남는다 — 재실행이 
   assert.ok(!db.log.writes.includes("aiReports/000"),
     "이미 올라간 문서는 해시가 같아 다시 쓰지 않는다");
 }));
+
+/* ── '내 글' 문서와 표시명 연결 (2026-09-05) ──
+ *
+ * 관리자가 연결을 고치면 setMemberNicknames 가 그 자리에서 myMessages 를 지운다.
+ * 그러면 다음 발행이 다시 채워야 하는데, 대장은 **페이로드의 해시**만 본다 —
+ * 새로 묶은 표시명에 글이 한 건도 없으면 items 가 그대로라 해시도 그대로고,
+ * 지워진 문서는 전량 동기화(7일)까지 비어 있게 된다.
+ *
+ * 그래서 문서에 '어떤 표시명으로 모았는지' 를 함께 싣는다.
+ */
+test("연결이 바뀌면 글 목록이 그대로여도 '내 글' 문서를 다시 쓴다", () => {
+  const items = [{ id: "m-1", text: "같은 글" }];
+  const before = { id: "a@x.com", items: items, nicknames: ["옛이름"] };
+  const after = { id: "a@x.com", items: items, nicknames: ["옛이름", "새이름"] };
+  assert.notEqual(up.docHash({ items: before.items, nicknames: before.nicknames }),
+    up.docHash({ items: after.items, nicknames: after.nicknames }),
+    "표시명이 달라지면 해시도 달라져야 다시 쓴다");
+
+  const first = up.planWrites(null, [before]);
+  const second = up.planWrites(first.next, [after]);
+  assert.deepEqual(second.writes.map((d) => d.id), ["a@x.com"]);
+
+  // 연결도 글도 그대로면 다시 쓰지 않는다 — 증분 적재의 값어치는 지킨다
+  const third = up.planWrites(second.next, [after]);
+  assert.equal(third.writes.length, 0);
+});

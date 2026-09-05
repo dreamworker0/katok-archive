@@ -314,7 +314,79 @@ test("표시명이 하나도 없으면 승인하지 않는다", async () => {
   assert.equal(db.__data("members/new@x.com"), null);
 });
 
-/* ══════ ④ 탈퇴 ══════ */
+/* ══════ ④ 표시명 연결과 '내 글' ══════ */
+
+test("연결을 고치면 그 자리에서 myMessages 를 지운다", async () => {
+  const db = fakeDb({
+    "members/eul@x.com": member("user", ["엉뚱한사람"]),
+    "myMessages/eul@x.com": { items: [{ id: "m-1", text: "남의 글" }],
+                              nicknames: ["엉뚱한사람"] },
+  });
+  const done = await guards.setMemberNicknames(db,
+    { email: "eul@x.com", nicknames: ["제이름"] }, "gap@x.com", NOW);
+
+  assert.equal(done.changed, true);
+  assert.equal(done.clearedMyMessages, true);
+  assert.equal(db.__data("myMessages/eul@x.com"), null,
+    "고친 뒤에도 남의 원문이 남아 있으면 안 된다");
+  assert.deepEqual(db.__data("members/eul@x.com").nicknames, ["제이름"]);
+  assert.equal(db.__data("members/eul@x.com").nicknamesChangedBy, "gap@x.com");
+});
+
+test("연결이 그대로면 지우지 않는다 — 순서만 달라도 같은 묶음이다", async () => {
+  const db = fakeDb({
+    "members/eul@x.com": member("user", ["가", "나"]),
+    "myMessages/eul@x.com": { items: [{ id: "m-1" }] },
+  });
+  const done = await guards.setMemberNicknames(db,
+    { email: "eul@x.com", nicknames: ["나", "가"] }, "gap@x.com", NOW);
+  assert.equal(done.changed, false);
+  assert.ok(db.__data("myMessages/eul@x.com"), "괜히 비우지 않는다");
+});
+
+test("옛 문서에 nickname 하나만 있어도 견준다", async () => {
+  const db = fakeDb({
+    "members/eul@x.com": { email: "x", role: "user", nickname: "홑이름" },
+    "myMessages/eul@x.com": { items: [{ id: "m-1" }] },
+  });
+  const same = await guards.setMemberNicknames(db,
+    { email: "eul@x.com", nicknames: ["홑이름"] }, "gap@x.com", NOW);
+  assert.equal(same.changed, false);
+  const diff = await guards.setMemberNicknames(db,
+    { email: "eul@x.com", nicknames: ["다른이름"] }, "gap@x.com", NOW);
+  assert.equal(diff.changed, true);
+  assert.equal(db.__data("myMessages/eul@x.com"), null);
+});
+
+test("멤버 문서와 myMessages 삭제는 한 트랜잭션이다 — 반쪽이 남지 않는다", async () => {
+  const db = fakeDb({
+    "members/eul@x.com": member("user", ["옛이름"]),
+    "myMessages/eul@x.com": { items: [{ id: "m-1" }] },
+  });
+  // 읽은 직후 다른 관리자가 같은 멤버를 건드린다 → 충돌 → 다시 돈다
+  db.__interleave = async () => {
+    db.__put("members/eul@x.com", member("user", ["그사이바뀐이름"]));
+  };
+  const done = await guards.setMemberNicknames(db,
+    { email: "eul@x.com", nicknames: ["새이름"] }, "gap@x.com", NOW);
+  assert.equal(done.changed, true);
+  assert.ok(db.__log.conflicts >= 1, "충돌을 알아채고 다시 돌았어야 한다");
+  assert.deepEqual(db.__data("members/eul@x.com").nicknames, ["새이름"]);
+  assert.equal(db.__data("myMessages/eul@x.com"), null);
+});
+
+test("멤버가 아니면 연결을 고칠 수 없고, 표시명이 비면 거부한다", async () => {
+  const db = fakeDb({ "members/eul@x.com": member("user", ["가"]) });
+  await assert.rejects(() => guards.setMemberNicknames(db,
+    { email: "none@x.com", nicknames: ["가"] }, "gap@x.com", NOW),
+    (e) => e.code === "not-found");
+  await assert.rejects(() => guards.setMemberNicknames(db,
+    { email: "eul@x.com", nicknames: [] }, "gap@x.com", NOW),
+    (e) => e.code === "invalid-argument");
+  assert.deepEqual(db.__data("members/eul@x.com").nicknames, ["가"], "거부되면 그대로다");
+});
+
+/* ══════ ⑤ 탈퇴 ══════ */
 
 test("마지막 관리자는 탈퇴 처리할 수 없다", async () => {
   const db = fakeDb({ "members/gap@x.com": member("admin"), "members/eul@x.com": member("user") });
@@ -362,7 +434,7 @@ test("없는 멤버를 지우면 not-found", async () => {
     (e) => e.code === "not-found");
 });
 
-/* ══════ ⑤ 입력 다듬기 ══════ */
+/* ══════ ⑥ 입력 다듬기 ══════ */
 
 test("표시명 정리: 공백·중복·빈 것을 걸러내고 상한을 지킨다", () => {
   assert.deepEqual(guards.normalizeNicknames([" 가 ", "가", "", "나"]), ["가", "나"]);
