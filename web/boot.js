@@ -265,14 +265,52 @@
       .catch(function () { /* 없으면 없는 것 */ });
   }
 
-  /** 지문이 같은 조각은 캐시에서, 아니면 fetcher 로 받아 캐시에 둔다. */
+  /* ── 받는 사이에 발행이 지나갔을 때 (2026-09-05) ──
+   *
+   * 적재는 meta 를 **마지막**에 쓴다(upload_firestore.publishPlan). 그래서 우리가
+   * 처음 읽은 지문이 다 받고 나서도 그대로면, 받은 조각은 전부 같은 판의 것이다.
+   * 지문이 달라졌으면 우리가 받은 것은 판이 갈린 채 섞였을 수 있다.
+   *
+   * 그때는 **캐시에 두지 않는다.** 화면은 이미 그려진 것을 그대로 쓰고, 다음
+   * 방문에 다시 받는다. 섞인 것을 지문과 함께 박아 두면 다음 방문에도 "최신이다"
+   * 로 판정되어 스스로 낫지 못한다 — 한 번 더 받는 낭비가 훨씬 싸다.
+   *
+   * 조각마다 묻지 않고 **한 번만 묻는다.** 세 조각(core·digests·aiReports)을
+   * 손에 들고 있다가 마지막 것이 온 뒤 한 번 확인하고 함께 저장한다. 값은 조각을
+   * 실제로 받은 방문에서 meta 읽기 +1 회다. 재방문은 조각을 받지 않으므로 이 길로
+   * 오지 않는다 — 흔한 쪽은 그대로 2회다.
+   */
+  var pendingParts = [];
+
+  /** 지문이 같은 조각은 캐시에서, 아니면 fetcher 로 받는다.
+   *  받은 것은 바로 두지 않고 flushCache 가 확인한 뒤에 둔다. */
   function cachedOrFetch(key, hash, fetcher) {
     return readPart(key).then(function (c) {
       if (hash && c && c.content_hash === hash && c.data) return c.data;
       return fetcher().then(function (data) {
-        // put 은 그 시점의 값을 복제하므로 조립이 나중에 덧붙이는 것과 섞이지 않는다.
-        if (hash && data) writePart(key, { content_hash: hash, saved_at: new Date().toISOString(), data: data });
+        if (hash && data) pendingParts.push({ key: key, hash: hash, data: data });
         return data;
+      });
+    });
+  }
+
+  /** 이번 방문에 받은 조각을, 판이 그대로일 때만 캐시에 둔다. */
+  function flushCache(db, hash) {
+    var batch = pendingParts;
+    pendingParts = [];
+    if (!batch.length) return Promise.resolve();
+    return db.collection("meta").doc("archive").get().then(function (s) {
+      return !!(s.exists && (s.data() || {}).content_hash === hash);
+    }).catch(function () {
+      return false;         // 못 물으면 두지 않는다 — 안 두는 쪽이 안전하다
+    }).then(function (same) {
+      if (!same) {
+        console.warn("받는 사이에 발행이 지나갔습니다 — 이번 것은 캐시에 두지 않습니다.");
+        return;
+      }
+      // put 은 그 시점의 값을 복제하므로 조립이 나중에 덧붙이는 것과 섞이지 않는다.
+      batch.forEach(function (p) {
+        writePart(p.key, { content_hash: p.hash, saved_at: new Date().toISOString(), data: p.data });
       });
     });
   }
@@ -380,18 +418,25 @@
     });
   }
 
-  /** 화면이 뜬 뒤 나머지 둘을 받아 건넨다. 어느 쪽이 실패해도 화면은 이미 떠 있다. */
+  /** 화면이 뜬 뒤 나머지 둘을 받아 건넨다. 어느 쪽이 실패해도 화면은 이미 떠 있다.
+   *
+   *  둘 다 끝난 뒤에 flushCache 를 부른다 — 세 조각을 한 번의 확인으로 함께
+   *  저장하기 위해서다. 실패한 조각은 애초에 손에 들려 있지 않으니 저장되지 않는다.
+   */
   function loadRest(db, meta) {
     var app = window.ArchiveApp || {};
-    cachedOrFetch("digests", meta.content_hash, function () { return fetchDigests(db); })
+    var digests = cachedOrFetch("digests", meta.content_hash, function () { return fetchDigests(db); })
       .then(function (d) { if (app.attachDigests) app.attachDigests(d || {}); },
             function (e) {
               console.warn("요지를 불러오지 못했습니다.", e);
               if (app.attachDigests) app.attachDigests({});
             });
-    cachedOrFetch("aiReports", meta.content_hash, function () { return fetchAiReports(db); })
+    var ai = cachedOrFetch("aiReports", meta.content_hash, function () { return fetchAiReports(db); })
       .then(function (items) { if (app.attachAiReports) app.attachAiReports(items || []); },
             function (e) { console.warn("AI 보고서를 불러오지 못했습니다.", e); });
+    return Promise.all([digests, ai]).then(function () {
+      return flushCache(db, meta.content_hash);
+    });
   }
 
   /** 앱에 넘길 요청 API.

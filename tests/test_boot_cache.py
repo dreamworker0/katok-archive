@@ -2,7 +2,7 @@
 """번들 캐시·지연 로드 계약 — boot.js 와 app.js 의 글자를 본다.
 
 동작은 tests/boot_cache.test.js 가 가짜 Firestore·IndexedDB 로 실제로 돌려 본다
-(첫 방문 7회 읽기 → 재방문 2회). 여기서는 그 검사가 못 보는 모양을 지킨다.
+(첫 방문 8회 읽기 → 재방문 2회). 여기서는 그 검사가 못 보는 모양을 지킨다.
 """
 import unittest
 from pathlib import Path
@@ -37,7 +37,22 @@ class BundleCacheContractTest(unittest.TestCase):
 
     def test_without_a_hash_nothing_is_cached(self):
         """옛 발행본(content_hash 없음)에서는 예전처럼 매번 받는다 — 낡은 캐시를 못 알아보니까."""
-        self.assertIn("if (hash && data) writePart(", BOOT)
+        self.assertIn("if (hash && data) pendingParts.push(", BOOT)
+
+    def test_parts_are_stored_only_after_re_checking_the_version(self):
+        """받는 사이에 발행이 지나갔으면 두지 않는다 (2026-09-05).
+
+        적재가 meta 를 마지막에 쓰므로 갈린 조각은 옛 지문으로 남아 다음 방문에
+        스스로 낫는다. 그래도 한 방문 안에서 조각이 갈릴 수는 있어, 저장 직전에
+        판이 그대로인지 한 번 묻는다. 묻지 못하면 두지 않는다.
+        """
+        flush = BOOT[BOOT.index("function flushCache"):]
+        flush = flush[:flush.index(chr(10) + "  }")]
+        self.assertIn('collection("meta").doc("archive").get()', flush)
+        self.assertIn("content_hash === hash", flush)
+        self.assertIn("return false;", flush, "못 물으면 두지 않는다")
+        self.assertLess(flush.index("content_hash === hash"), flush.index("writePart("),
+                        "확인이 저장보다 먼저여야 한다")
 
 
 class LazyLoadContractTest(unittest.TestCase):

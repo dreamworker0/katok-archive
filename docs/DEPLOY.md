@@ -107,6 +107,48 @@ npm run deploy
 따로 돌리려면 `npm run test:rules` (59개 경우: 발행본 다섯 갈래·chunks·myMessages·
 settings·messagesSource·members·claims·deletionRequests·preferences·catch-all).
 
+### 적재는 어떤 차례로 도는가 (2026-09-05)
+
+`upload_firestore.js` 안에서 벌어지는 일의 순서다. 이 차례가 곧 "발행 도중에
+들어온 사람이 무엇을 보는가" 를 정한다.
+
+| 차례 | 하는 일 | 도중에 끊기면 |
+|---|---|---|
+| ① | `threads`·`aiReports`·`media`·`digests`·`graph`·`myMessages`·`messagesSource` 적재 | 멤버는 **지난 판**을 그대로 본다 (`meta` 가 아직 옛 지문) |
+| ② | 사진·첨부 **업로드** (더하기만) | 같음. 새 파일이 올라가 있어도 가리키는 것이 없다 |
+| ③ | **`meta` 적재 ← 새 판을 켜는 순간** | 여기서 끊기면 켜지지 않은 것이다 = 지난 판 |
+| ④ | 발행본에서 빠진 사진·첨부 **삭제** (삭제 요청·수집 거부 반영) | 다음 실행이 마저 지운다 |
+| ⑤ | 대장(`output/upload-state.json`) 저장 | 대장이 없으면 다음 실행이 **더 많이** 쓴다 |
+
+**왜 `meta` 가 마지막인가.** 화면(`web/boot.js`)은 `meta.content_hash` 를 조각
+캐시(IndexedDB)의 지문으로 쓴다. 지문이 같으면 3.5MB 를 받지 않는다. `meta` 를
+먼저 쓰면 그 사이에 들어온 사람이 **새 지문에 옛 데이터**를 박아 두는데, 다음
+방문에도 지문이 같으니 "최신이다" 로 판정되어 **스스로 낫지 못한다**. 순서를
+뒤집으면 반대로 옛 지문에 새 데이터가 남고, 다음 방문에 지문이 어긋나 다시
+받는다 — 한 번 더 받는 낭비는 남지만 틀린 것이 남지는 않는다.
+
+화면 쪽에도 같은 걸음이 있다. 조각을 다 받은 뒤 `meta` 를 **한 번 더 읽어** 판이
+그대로인지 확인하고, 그 사이 발행이 지나갔으면 이번 것은 캐시에 두지 않는다
+(`flushCache`). 그래서 조각을 받은 방문은 읽기가 7회가 아니라 8회다.
+
+**되돌리기.** 발행 자체에는 되돌리는 단추가 없다 — 되돌리는 방법은 **다시
+발행하는 것**이다.
+
+```bash
+# ① 무엇이 올라갔는지 먼저 본다
+node scripts/upload_firestore.js --dry-run
+
+# ② 지난 발행본으로 되돌리려면: output/ 을 그 상태로 되돌린 뒤 다시 만들어 적재
+python -m scripts.build_firestore_payload
+node scripts/upload_firestore.js --full     # 대장을 믿지 않고 전량으로 맞춘다
+```
+
+- 중간에 실패한 뒤 다시 돌리는 것은 **안전하다.** 문서 해시가 같은 것은 건너뛰고,
+  `meta` 는 여전히 마지막에 켜진다.
+- 대장이 어긋난 것 같으면 `--full`. 대장이 없거나 깨졌으면 알아서 전량으로 간다.
+- 사진을 실수로 지웠다면 `--keep-orphans` 로 정리를 멈춘 뒤 원인을 찾는다.
+  ④ 는 되돌릴 수 없는 삭제이므로, 발행 목록이 비면 아예 지우지 않게 되어 있다.
+
 ### 부분 배포
 ```bash
 firebase deploy --only hosting     # 프런트만

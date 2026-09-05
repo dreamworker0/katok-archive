@@ -73,13 +73,17 @@ function fakeIndexedDB(opts) {
 }
 
 /* ── 가짜 Firestore. 컬렉션·문서 읽기를 센다. ── */
-function fakeFirestore(data, reads) {
-  const snapOf = (id, d) => ({ id, exists: d !== undefined, data: () => d });
+function fakeFirestore(data, reads, onRead) {
+  // 진짜 SDK 처럼 스냅샷은 그 시점의 **복사본**이다. 참조를 그대로 주면 나중에
+  // 바뀐 값이 이미 읽은 스냅샷에도 비쳐, 발행이 지나간 것을 알아채지 못한다.
+  const snapOf = (id, d) => ({ id, exists: d !== undefined,
+    data: () => (d === undefined ? d : structuredClone(d)) });
   return {
     collection(name) {
       return {
         get() {
           reads[name] = (reads[name] || 0) + 1;
+          if (onRead) onRead(name, reads);
           const docs = Object.entries(data[name] || {}).map(([id, d]) => snapOf(id, d));
           return Promise.resolve({ forEach: (f) => docs.forEach(f) });
         },
@@ -87,6 +91,7 @@ function fakeFirestore(data, reads) {
           return {
             get() {
               reads[name] = (reads[name] || 0) + 1;
+              if (onRead) onRead(name, reads);
               return Promise.resolve(snapOf(id, (data[name] || {})[id]));
             },
             set: () => Promise.resolve(), delete: () => Promise.resolve(),
@@ -129,7 +134,7 @@ async function settle(cond, why) {
 }
 
 /** 한 번의 방문. boot.js 를 새 문맥에서 돌리고 로그인 콜백을 부른다. */
-async function visit(idb, data) {
+async function visit(idb, data, onRead) {
   const reads = {};
   const got = { started: null, digests: null, ai: null };
   const element = () => ({ innerHTML: "", hidden: false, classList: { add() {}, remove() {} }, onclick: null });
@@ -155,7 +160,7 @@ async function visit(idb, data) {
         onAuthStateChanged(cb) { authCb = cb; },
         signOut() { got.signedOut = true; },
       }), { Auth: { Persistence: { LOCAL: "local" } } }),
-      firestore: Object.assign(() => fakeFirestore(data, reads), { FieldValue: { serverTimestamp: () => 0 } }),
+      firestore: Object.assign(() => fakeFirestore(data, reads, onRead), { FieldValue: { serverTimestamp: () => 0 } }),
     },
   };
   sandbox.window = sandbox;
@@ -173,10 +178,12 @@ async function visit(idb, data) {
 const CORE = { threads: 1, media: 1, graph: 1 };
 const REST = { digests: 1, aiReports: 1 };
 const ALWAYS = { meta: 1, members: 1 };
+// 조각을 받은 방문은 저장 전에 판이 그대로인지 한 번 더 묻는다 (flushCache)
+const COLD = { meta: 2, members: 1 };
 
-test("첫 방문: 조각 셋을 전부 서버에서 받는다 — 읽기 7회", async () => {
+test("첫 방문: 조각 셋을 전부 서버에서 받는다 — 읽기 8회(저장 전 확인 1회 포함)", async () => {
   const { reads, got, sandbox } = await visit(fakeIndexedDB(), archiveData("h1"));
-  assert.deepEqual(reads, { ...ALWAYS, ...CORE, ...REST });
+  assert.deepEqual(reads, { ...COLD, ...CORE, ...REST });
   assert.deepEqual(plain(sandbox.ARCHIVE.threads.map((t) => t.id)), ["t-001", "t-002"], "id 순으로 이어 붙인다");
   assert.equal(sandbox.ARCHIVE.media.length, 1);
   assert.deepEqual(plain(sandbox.ARCHIVE.lazy), { digests: true, aiReports: true });
@@ -200,7 +207,7 @@ test("지문이 바뀐 날(밤 갱신 뒤): 전부 다시 받는다", async () =
   const data = archiveData("h2");
   data.threads["001"].items[0].title = "고쳐진 하나";
   const again = await visit(idb, data);
-  assert.deepEqual(again.reads, { ...ALWAYS, ...CORE, ...REST });
+  assert.deepEqual(again.reads, { ...COLD, ...CORE, ...REST });
   assert.equal(again.sandbox.ARCHIVE.threads[0].title, "고쳐진 하나");
 });
 
@@ -208,6 +215,7 @@ test("지문이 없는 옛 발행본: 캐시에 두지 않아 다음에도 서�
   const idb = fakeIndexedDB();
   await visit(idb, archiveData(undefined));
   const again = await visit(idb, archiveData(undefined));
+  // 지문이 없으면 손에 들지도 않으므로 되묻지도 않는다
   assert.deepEqual(again.reads, { ...ALWAYS, ...CORE, ...REST });
 });
 
@@ -218,7 +226,7 @@ test("로그아웃하면 캐시를 비운다 — 다음 사람은 서버에서 �
   await settle(() => got.signedOut === true && idb._stores.bundles.size === 0,
     "로그아웃은 캐시를 비운 뒤 끝나야 한다");
   const again = await visit(idb, archiveData("h1"));
-  assert.deepEqual(again.reads, { ...ALWAYS, ...CORE, ...REST });
+  assert.deepEqual(again.reads, { ...COLD, ...CORE, ...REST });
 });
 
 /* ── 스토어 없는 DB (2026-09-02 실측) ──
@@ -233,7 +241,7 @@ test("스토어 없는 옛 DB 는 지우고 다시 만든다 — 캐시가 되�
   const idb = fakeIndexedDB({ storeless: true });
   const first = await visit(idb, archiveData("h1"));
   // 첫 방문은 어차피 서버에서 받는다. 중요한 것은 그 뒤에 캐시가 남았는가다.
-  assert.deepEqual(first.reads, { ...ALWAYS, ...CORE, ...REST });
+  assert.deepEqual(first.reads, { ...COLD, ...CORE, ...REST });
   assert.ok(idb._state.deleted >= 1, "망가진 DB 를 지웠어야 한다");
   await settle(() => idb._stores.bundles && idb._stores.bundles.size >= 3,
     "고친 DB 에 조각 셋이 남아야 한다");
@@ -246,7 +254,7 @@ test("스토어 없는 옛 DB 는 지우고 다시 만든다 — 캐시가 되�
 test("지우지도 못하면 서버에서 받아 화면은 뜬다 — 연결은 새지 않는다", async () => {
   const idb = fakeIndexedDB({ storeless: true, stubborn: true });
   const { reads, got } = await visit(idb, archiveData("h1"));
-  assert.deepEqual(reads, { ...ALWAYS, ...CORE, ...REST });
+  assert.deepEqual(reads, { ...COLD, ...CORE, ...REST });
   assert.equal(got.ai.length, 1, "캐시가 죽어도 화면은 채워져야 한다");
   await settle(() => idb._state.opened === idb._state.closed, "연 만큼 닫아야 한다");
 });
@@ -254,7 +262,7 @@ test("지우지도 못하면 서버에서 받아 화면은 뜬다 — 연결은 
 test("열고 나서 스토어가 사라져도 연결을 닫는다 — 삭제가 막히지 않는다", async () => {
   const idb = fakeIndexedDB({ vanish: true });
   const { reads } = await visit(idb, archiveData("h1"));
-  assert.deepEqual(reads, { ...ALWAYS, ...CORE, ...REST });
+  assert.deepEqual(reads, { ...COLD, ...CORE, ...REST });
   await settle(() => idb._state.opened === idb._state.closed, "연 만큼 닫아야 한다");
 });
 
@@ -291,4 +299,45 @@ test("AI 주석이 안 열려도 화면은 뜬다 — 빈 목록으로 건넨다
   assert.ok(got.started);
   assert.deepEqual(plain(got.ai), []);
   assert.ok(!idb._stores.bundles.has("aiReports"), "실패한 조각은 캐시에 두지 않는다");
+});
+
+/* ── 발행이 읽는 도중에 지나갔을 때 (2026-09-05) ──
+ *
+ * 적재는 이제 meta 를 마지막에 쓴다(upload_firestore.publishPlan). 그래도 한 번의
+ * 방문 안에서는 조각이 갈릴 수 있다 — core 는 지난 판, digests 는 새 판. 그것을
+ * 지문과 함께 캐시에 박으면 다음 방문에도 "최신이다" 로 판정되어 스스로 낫지
+ * 못한다. 그래서 다 받은 뒤 판이 그대로인지 한 번 묻고, 갈렸으면 두지 않는다.
+ */
+test("받는 사이에 발행이 지나가면 캐시에 두지 않는다", async () => {
+  const idb = fakeIndexedDB();
+  const data = archiveData("h1");
+  let published = false;
+  // core 의 첫 컬렉션을 읽는 순간 밤 갱신이 끝나 새 판이 켜진다
+  const first = await visit(idb, data, function (name) {
+    if (name === "threads" && !published) {
+      published = true;
+      data.threads["001"].items[0].title = "고쳐진 하나";
+      data.meta.archive.content_hash = "h2";
+    }
+  });
+  assert.ok(first.got.started, "화면은 그대로 떠야 한다");
+  await settle(() => (first.reads.meta || 0) >= 2, "저장 전에 판을 한 번 더 물어야 한다");
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(idb._stores.bundles ? idb._stores.bundles.size : 0, 0,
+    "판이 갈렸으므로 한 조각도 캐시에 두지 않는다");
+
+  // 다음 방문은 서버에서 받아 새 판을 온전히 본다 — 스스로 나았다
+  const again = await visit(idb, data);
+  assert.deepEqual(again.reads, { ...COLD, ...CORE, ...REST });
+  assert.equal(again.sandbox.ARCHIVE.threads[0].title, "고쳐진 하나");
+  await settle(() => idb._stores.bundles && idb._stores.bundles.size === 3,
+    "판이 그대로인 방문은 세 조각을 다 둔다");
+});
+
+test("판이 그대로면 세 조각을 함께 둔다 — 확인은 한 번뿐이다", async () => {
+  const idb = fakeIndexedDB();
+  const { reads } = await visit(idb, archiveData("h1"));
+  assert.equal(reads.meta, 2, "처음 한 번, 저장 직전 한 번 — 조각마다 묻지 않는다");
+  await settle(() => idb._stores.bundles && idb._stores.bundles.size === 3, "세 조각");
+  assert.deepEqual([...idb._stores.bundles.keys()].sort(), ["aiReports", "core", "digests"]);
 });
