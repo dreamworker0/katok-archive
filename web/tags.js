@@ -152,11 +152,33 @@
           // 표기 차이를 무시해 맞춘다 — '바이브 코딩' 이라 쳐도 '바이브코딩' 이 나온다.
           var q = tagFold(input.value);
           var shown = 0;
-          Array.prototype.forEach.call(el.view.querySelectorAll(".tag-chip"), function (b) {
+          /* 걷는 것은 **구름 안의 칩만**이다. 좁히기는 구름을 좁히는 일이지 이미
+           * 고른 것을 건드릴 일이 아니다.
+           *
+           * 전부 걷으면 위 '고른 태그' 막대의 칩까지 걸린다 — 그 칩은 data-tag 가
+           * 없어(data-unpick 뿐) tagFold(null) 이 "" 이 되고, 무엇을 쳐도 안 맞아
+           * hidden 이 붙었다. 지금 화면에 티가 안 났던 것은 [hidden] 을 눌러 주는
+           * 규칙이 `.tag-cloud` 안으로만 걸려 있어 막대의 칩은 inline-flex 가
+           * 이겼기 때문이다(styles.css). CSS 를 손대는 순간 좁히는 동안 고른 태그가
+           * 사라진다 — 우연에 기대지 않고 여기서 끊는다. */
+          Array.prototype.forEach.call(el.view.querySelectorAll(".tag-cloud .tag-chip"), function (b) {
             var hit = !q || tagFold(b.getAttribute("data-tag")).indexOf(q) !== -1;
             b.hidden = !hit;
             if (hit) shown++;
           });
+          /* 절 제목은 칩과 **따로 있는 글**이라, 칩을 감추는 것만으로는 남는다.
+           * 관계망에서 분류 이름이 남던 것과 같은 자리다(graph.js applyVisibility).
+           * 안에 보이는 칩이 하나도 없으면 절째로 감춘다 — '👤 사람 이름으로 붙은
+           * 태그' 아래가 텅 빈 채 제목과 설명만 떠 있으면, 좁히기가 그 절을 아예
+           * 못 본 것처럼 읽힌다.
+           *
+           * `.doc-section` 에는 display 가 없으므로 브라우저 기본 [hidden] 이
+           * 그대로 듣는다 — 칩은 inline-flex 라 CSS 로 따로 눌러 줬다(styles.css). */
+          Array.prototype.forEach.call(el.view.querySelectorAll(".doc-section"),
+            function (sec) {
+              sec.hidden = !Array.prototype.some.call(
+                sec.querySelectorAll(".tag-chip"), function (b) { return !b.hidden; });
+            });
           if (hits) {
             hits.textContent = !q ? ""
               : (shown ? shown + "개" : "맞는 태그가 없습니다");
