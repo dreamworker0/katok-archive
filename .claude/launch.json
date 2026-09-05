@@ -2,9 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "_note": "http.server 를 쓰면 캐시 지시가 없어 고친 .js 가 반영되지 않고, 화면 주소(/tags)로 새로고침하면 404 다. serve_hosting 이 배포본과 같은 헤더·되돌리기를 준다.",
       "name": "site-preview",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8899", "--directory", "site"],
+      "runtimeArgs": ["-m", "scripts.serve_hosting", "8899", "site"],
       "port": 8899
     },
     {

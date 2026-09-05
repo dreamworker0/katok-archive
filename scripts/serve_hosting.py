@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""배포본(hosting/)을 로컬에서 그대로 열어 보는 정적 서버.
+"""발행본을 로컬에서 그대로 열어 보는 정적 서버. hosting/ 과 site/ 둘 다 받는다.
 
 설치형(PWA) 동작은 보안 컨텍스트에서만 켜진다. localhost 는 여기 해당하므로 서비스
 워커·설치·오프라인을 배포 전에 확인할 수 있다.
@@ -8,12 +8,19 @@
   - .webmanifest 의 MIME 을 모른다. firebase.json 이 주는 값과 같게 맞춰야 확인이
     의미가 있다.
   - sw.js 를 캐시하면 다음 확인 때 낡은 워커가 잡힌다. no-cache 를 준다.
+  - **고친 파일이 반영되지 않는다.** http.server 는 캐시 지시를 안 붙여서 브라우저가
+    Last-Modified 로 제 나름 판단하는데, 그 사이 고친 .js 를 옛것 그대로 계속 쓴다
+    (실측 2026-09-05: 강제 새로고침도 안 통해 "고쳤는데 안 먹는다" 로 볼 뻔했다).
+    배포본에는 no-cache 가 걸려 있으므로, 미리보기만 다르게 굴어서는 안 된다.
+  - 화면 주소(/tags, /graph)를 되돌리지 못해 새로고침하면 404 다.
 
 Firebase Hosting 예약 URL(/__/firebase/...)은 여기 없으므로 404 다. 로그인 게이트는
 못 지나가지만, 껍데기 캐시·오프라인 대체·매니페스트·아이콘은 그대로 확인된다.
 (서비스 워커의 SHELL_OPTIONAL 이 실패해도 설치가 되도록 만든 이유가 이것이다.)
 
-  python -m scripts.serve_hosting [포트]
+  python -m scripts.serve_hosting [포트] [폴더]
+
+폴더는 저장소 기준이며 기본값은 hosting 이다. 미리보기용 site/ 를 열려면 `site`.
 """
 from __future__ import annotations
 
@@ -24,9 +31,12 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-HOSTING = ROOT / "hosting"
 
 DEFAULT_PORT = 8900
+DEFAULT_DIR = "hosting"
+
+# 서빙할 폴더. main() 이 정한다 — 핸들러가 요청마다 읽는다.
+SERVE_ROOT = ROOT / DEFAULT_DIR
 
 # firebase.json 의 헤더와 같은 뜻으로 맞춘다.
 NO_CACHE_SUFFIXES = (".js", ".css", ".html", ".webmanifest")
@@ -39,7 +49,7 @@ def view_names() -> set[str]:
     """화면 이름(index.html 의 data-view). 한 번 읽어 둔다."""
     global _VIEWS
     if not _VIEWS:
-        html = (HOSTING / "index.html").read_text(encoding="utf-8")
+        html = (SERVE_ROOT / "index.html").read_text(encoding="utf-8")
         _VIEWS = set(re.findall(r'data-view="([a-z]+)"', html))
     return _VIEWS
 
@@ -81,13 +91,24 @@ class HostingHandler(SimpleHTTPRequestHandler):
             sys.stderr.write("  %s %s\n" % (args[1], args[0]))
 
 
+# 폴더마다 만드는 법이 다르다 — 없을 때 무엇을 돌리라고 할지 여기 적어 둔다.
+BUILD_HINT = {
+    "hosting": "python -m scripts.build_hosting",
+    "site": "python -m scripts.build_site",
+}
+
+
 def main() -> None:
-    if not HOSTING.is_dir():
-        raise SystemExit("hosting/ 이 없습니다. 먼저: python -m scripts.build_hosting")
+    global SERVE_ROOT
     port = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PORT
-    handler = partial(HostingHandler, directory=str(HOSTING))
+    name = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_DIR
+    SERVE_ROOT = ROOT / name
+    if not SERVE_ROOT.is_dir():
+        hint = BUILD_HINT.get(name)
+        raise SystemExit("%s/ 이 없습니다.%s" % (name, " 먼저: " + hint if hint else ""))
+    handler = partial(HostingHandler, directory=str(SERVE_ROOT))
     server = ThreadingHTTPServer(("127.0.0.1", port), handler)
-    print("hosting/ 서빙 중: http://127.0.0.1:%d (Ctrl+C 로 종료)" % port)
+    print("%s/ 서빙 중: http://127.0.0.1:%d (Ctrl+C 로 종료)" % (name, port))
     try:
         server.serve_forever()
     except KeyboardInterrupt:

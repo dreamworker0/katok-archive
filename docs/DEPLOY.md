@@ -470,7 +470,8 @@ node scripts/sync_member_requests.js --dry-run  # 내려받을 내용만 확인
 
 **로컬 미리보기** (로그인 없이, 배포와 무관)
 ```bash
-python scripts/build_site.py     # site/index.html 을 브라우저로 열기
+python -m scripts.build_site                  # site/ 를 만든다
+python -m scripts.serve_hosting 8899 site     # http://127.0.0.1:8899
 ```
 
 ### UI 일러스트
