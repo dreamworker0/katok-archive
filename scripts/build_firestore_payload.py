@@ -386,7 +386,40 @@ def check_member_nicknames(members: list[dict], participants: dict) -> list[str]
                 "%s: 표시명 %s 이 참여자 명단에 없음 (아직 발언이 없거나 오타)"
                 % (m["email"], ", ".join("'%s'" % n for n in missing))
             )
+    warnings.extend(shared_nickname_warnings(members))
     return warnings
+
+
+def shared_nickname_warnings(members: list[dict]) -> list[str]:
+    """한 표시명이 둘 이상에게 연결된 경우.
+
+    왜 중요한가: `build_my_messages` 는 표시명으로 글을 모은다. 같은 표시명이 두
+    계정에 붙어 있으면 **그 사람의 원문이 양쪽 모두에게 '내 글'로 간다.** 서로
+    남의 원문을 읽고, 남의 글에 삭제 요청을 걸 수 있다. 규칙은 이것을 막지 못한다 —
+    규칙이 보는 것은 "본인 문서를 본인이 읽는가" 까지이고, 그 문서에 무엇이 담기는지는
+    여기서 정해지기 때문이다.
+
+    **그런데 막지는 않는다.** 구글 계정을 바꾸는 절차(docs/DEPLOY.md '표시명 연결')가
+    새 이메일로 승인 → 같은 표시명 연결 → 옛 계정 회수 순서라, 그 사이에는 일부러
+    겹친다. 막으면 문서화된 길이 끊긴다. 대신 겹치는 동안 매 발행이 말한다.
+
+    `speaks: False` 계정도 함께 본다. 발언하지 않는 계정이라도 남의 표시명이
+    붙어 있으면 그 글을 읽게 되는 것은 마찬가지다.
+    """
+    owners: dict[str, list[str]] = {}
+    for m in members:
+        for n in m["nicknames"]:
+            owners.setdefault(n, []).append(m["email"])
+    out = []
+    for name in sorted(owners):
+        emails = sorted(set(owners[name]))
+        if len(emails) > 1:
+            out.append(
+                "표시명 '%s' 이 계정 %d개에 연결됨 (%s) — 그 사람의 원문이 양쪽 모두에게 "
+                "'내 글'로 갑니다. 계정 이관 중이 아니면 '연결 편집'에서 하나만 남기세요"
+                % (name, len(emails), ", ".join(emails))
+            )
+    return out
 
 
 def build_payload() -> dict:

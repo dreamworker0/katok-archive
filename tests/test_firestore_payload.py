@@ -395,3 +395,56 @@ class DocumentPlanTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SharedNicknameTest(unittest.TestCase):
+    """한 표시명이 두 계정에 붙었을 때 — 실제 데이터가 없어도 도는 검사다.
+
+    규칙은 이것을 막지 못한다. 규칙이 보는 것은 "본인 문서를 본인이 읽는가" 까지고,
+    그 문서에 무엇이 담기는지는 발행본을 만드는 여기서 정해지기 때문이다.
+    """
+
+    def test_a_shared_nickname_sends_the_same_posts_to_both(self):
+        """왜 경고가 필요한가 — 겹치면 실제로 양쪽에 같은 원문이 간다."""
+        messages = [
+            {"id": "m-1", "nickname": "홍길동", "date": "2026-01-01", "time": "10:00"},
+            {"id": "m-2", "nickname": "임꺽정", "date": "2026-01-01", "time": "10:01"},
+        ]
+        members = [
+            {"email": "a@x.com", "nicknames": ["홍길동"]},
+            {"email": "b@x.com", "nicknames": ["홍길동"]},
+        ]
+        mine = bfp.build_my_messages(messages, members)
+        self.assertEqual([i["id"] for i in mine["a@x.com"]], ["m-1"])
+        self.assertEqual([i["id"] for i in mine["b@x.com"]], ["m-1"],
+                         "겹친 표시명의 글은 양쪽 모두에게 간다 — 그래서 경고한다")
+
+    def test_it_warns_and_names_both_accounts(self):
+        members = [
+            {"email": "a@x.com", "nicknames": ["홍길동", "홍길동(사협)"]},
+            {"email": "b@x.com", "nicknames": ["홍길동"]},
+            {"email": "c@x.com", "nicknames": ["임꺽정"]},
+        ]
+        warnings = bfp.shared_nickname_warnings(members)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("'홍길동'", warnings[0])
+        self.assertIn("a@x.com", warnings[0])
+        self.assertIn("b@x.com", warnings[0])
+        self.assertNotIn("임꺽정", warnings[0])
+
+    def test_quiet_when_nothing_overlaps(self):
+        members = [
+            {"email": "a@x.com", "nicknames": ["홍길동", "홍길동(사협)"]},
+            {"email": "b@x.com", "nicknames": ["임꺽정"]},
+        ]
+        self.assertEqual(bfp.shared_nickname_warnings(members), [])
+
+    def test_accounts_that_never_speak_are_still_checked(self):
+        """발언하지 않는 계정이라도 남의 표시명이 붙어 있으면 그 글을 읽게 된다."""
+        members = [
+            {"email": "a@x.com", "nicknames": ["홍길동"]},
+            {"email": "bot@x.com", "nicknames": ["홍길동"], "speaks": False},
+        ]
+        participants = {"participants": [{"nickname": "홍길동"}]}
+        warnings = bfp.check_member_nicknames(members, participants)
+        self.assertTrue(any("홍길동" in w and "bot@x.com" in w for w in warnings))
