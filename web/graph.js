@@ -60,6 +60,8 @@
     }
     var typeState = {};
     TYPES.forEach(function (t) { typeState[t[0]] = true; });
+    // 검색이 걸러내기를 되돌릴 때(reveal) 단추 겉모습도 함께 바꿔야 하므로 기억해 둔다.
+    var typeBtn = {}, recentBtn = null;
     var toolbar = document.createElement("div");
     toolbar.className = "graph-toolbar";
     var legend = document.createElement("div");
@@ -75,6 +77,7 @@
     TYPES.forEach(function (t) {
       var b = document.createElement("button");
       b.className = "on"; b.textContent = t[1];
+      typeBtn[t[0]] = b;
       b.onclick = function () {
         typeState[t[0]] = !typeState[t[0]];
         b.classList.toggle("on", typeState[t[0]]);
@@ -116,6 +119,7 @@
         applyVisibility();
       };
       toolbar.appendChild(rb);
+      recentBtn = rb;
     }
 
     var resetBtn = document.createElement("button");
@@ -205,6 +209,13 @@
       // draw() 는 시뮬레이션이 멎으면 더는 불리지 않는다 — 그래서 '주제'를 꺼도
       // 동그라미만 없어지고 글자는 그대로 남아 있었다. 여기서 직접 부른다.
       placeTopicLabels();
+      /* 고른 노드가 숨었으면 선택도 놓는다.
+       * 선택은 노드 밖(selectedId·패널·흐림)에 얹혀 있어서 노드를 감추는 것만으로는
+       * 걷히지 않는다. 그대로 두면 패널은 없는 노드를 설명하고, 흐림은 걸린 채로 굳고,
+       * 이웃 이름표만 허공에 떠 있다 — 사람에게는 노드가 지워진 것과 같으므로
+       * 선택도 함께 놓는 것이 맞다. */
+      var sel = selectedId && byId[selectedId];
+      if (sel && !shown(sel)) clearSelect();
     }
 
     // ── 뷰(팬/줌) ──
@@ -462,9 +473,33 @@
     }
     applyView(); settle();
 
+    /* 걸러내기가 가리고 있는 노드를 도로 보이게 한다.
+     *
+     * 검색이 숨은 노드로 찾아가면 빈 자리로 확대해 들어가 패널만 뜬다(실측
+     * 2026-09-05: '도구' 를 끈 채 도구 이름을 치면 화면 한가운데가 비었다).
+     * 그렇다고 조용히 무시하면 "검색이 고장났다" 로 보인다 — 사람은 자기가 켜 둔
+     * 걸러내기를 기억하지 못한다. 그래서 가리고 있던 것만 풀고 찾아간다.
+     * 단추가 도로 켜지므로 무엇이 풀렸는지 화면이 말해 준다. */
+    function reveal(n) {
+      var changed = false;
+      if (!shownType(n.type) && typeBtn[n.type]) {
+        typeState[n.type] = true;
+        typeBtn[n.type].classList.add("on");
+        changed = true;
+      }
+      // '최근' 은 종류와 따로 걸린다 — 둘 다 가리고 있으면 둘 다 푼다.
+      if (recentOnly && !(n.last_seen && n.last_seen >= cutoff)) {
+        recentOnly = false;
+        if (recentBtn) recentBtn.classList.remove("on");
+        changed = true;
+      }
+      if (changed) applyVisibility();
+    }
+
     return {
       focus: function (nodeId) {
         var n = byId[nodeId]; if (!n) return;
+        reveal(n);
         selectedId = nodeId; highlight(nodeId);
         view.k = 1.4; view.x = -n.x * view.k; view.y = -n.y * view.k; applyView();
         if (opts.onSelect) opts.onSelect(n, adj[nodeId]);
@@ -473,8 +508,12 @@
         if (!q) return null;
         q = q.toLowerCase();
         var hit = nodes.filter(function (n) { return n.label.toLowerCase().indexOf(q) >= 0; });
-        if (hit.length) { this.focus(hit[0].id); return hit[0]; }
-        return null;
+        if (!hit.length) return null;
+        // 보이는 것을 먼저 고른다. 맞는 것이 여럿일 때 굳이 숨은 쪽을 골라
+        // 걸러내기를 풀면, 사람이 켜 둔 것을 이유 없이 되돌리는 셈이 된다.
+        var pick = hit.filter(shown)[0] || hit[0];
+        this.focus(pick.id);
+        return pick;
       },
       destroy: function () { cancelAnimationFrame(raf); window.removeEventListener("resize", sizeView); },
     };
