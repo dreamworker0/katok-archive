@@ -87,6 +87,17 @@ def best_match(quote: str, texts: list[str]) -> float:
     return best
 
 
+def _base_name(nick: str) -> str:
+    """별명에서 뒤에 붙은 방 표시를 뗀다 — `홍길동(가나복지관)` → `홍길동`.
+
+    같은 사람이 방 표시를 붙인 별명과 안 붙인 별명 둘로 존재한다(실측
+    2026-09-09 기준 세 사람. 이름은 여기 적지 않는다 — 저장소가 공개다).
+    말한 사람 쪽에서 이것을 떼지 않으면, 보고서가 그 사람을 제대로
+    인용해도 '이 주제에 없는 사람' 으로 걸린다 — t-145 가 그랬다.
+    """
+    return re.sub(r"\s*[(（].*?[)）]\s*$", "", nick).strip()
+
+
 def audit(ids: set[str] | None = None) -> dict:
     messages = build_site._read_jsonl(OUTPUT / "messages.jsonl")
     topics = build_site._read_json(OUTPUT / "topics.json")
@@ -110,6 +121,7 @@ def audit(ids: set[str] | None = None) -> dict:
         msgs = [by_id[i] for i in t["message_ids"] if i in by_id]
         texts = [m.get("text") or "" for m in msgs]
         here = {m["nickname"] for m in msgs}
+        here |= {_base_name(n) for n in here}
 
         for q in quotes_of(r["report"]):
             result["quotes"] += 1
@@ -120,13 +132,20 @@ def audit(ids: set[str] | None = None) -> dict:
                 result["unmatched"].append((tid, round(score, 2), q[:12]))
 
         # 보고서가 든 이름 중 이 주제에 없는 사람
+        #
+        # 이름(`base`)으로 모아 둔다. 별명이 둘인 사람(방 표시가 붙은 것과
+        # 안 붙은 것)이 같은 편에서 두 번 담기면, 세는 쪽은 중복을
+        # 포함하고 보여주는 쪽은 지워서 숫자가 어긋난다
+        # (실측 2026-09-09: 17건이라 적고 16줄을 보여 줬다).
         body = r["report"]
+        found: set[str] = set()
         for nick in all_nicks:
-            base = re.sub(r"\s*[(（].*?[)）]\s*$", "", nick).strip()
-            if len(base) < 2 or base in here or nick in here:
+            base = _base_name(nick)
+            if len(base) < 2 or base in found or base in here or nick in here:
                 continue
             if re.search(r"(?<![0-9A-Za-z가-힣])%s(?![0-9A-Za-z가-힣])"
                          % re.escape(base), body):
+                found.add(base)
                 result["stranger_names"].append((tid, base))
     return result
 
