@@ -46,6 +46,49 @@ class RunDailyReportsTest(unittest.TestCase):
         self.assertIn("-step $name", m.group(0))
         self.assertIn("-code $code", m.group(0))
 
+    def test_failure_reports_why_not_only_where(self):
+        """왜 죽었는지도 남긴다 — 단계 이름은 '어디서' 이고 사람의 다음 물음은 '왜' 다.
+
+        실측 2026-09-08: 알림에 "'테스트' 단계 (exit 1)" 만 있었다. 로그를 열어도
+        꼬리 490줄이 검사가 build_data 를 여러 번 부르며 찍은 발행 경고라, 실패를
+        말하는 줄(FAIL: 둘, FAILED 하나)이 가운데 묻혀 안 보였다.
+        """
+        line = next((l for l in self.ps1.splitlines()
+                     if "Report-Run -status 'failed'" in l), None)
+        self.assertIsNotNone(line, "실패 경로에 기록이 없다")
+        self.assertIn("-reason", line, "실패 경로가 사유를 안 넘긴다")
+
+    def test_failure_summary_picks_the_lines_that_say_why(self):
+        """고르개가 unittest 와 node --test 의 실패 줄을 둘 다 집는지.
+
+        정규식은 PowerShell 안에 있어 여기서 직접 못 돌린다. 대신 같은 패턴을
+        꺼내 파이썬으로 견줘 본다 — 패턴이 바뀌면 이 검사가 먼저 운다.
+        """
+        line = next((l for l in self.ps1.splitlines()
+                     if l.strip().startswith("$pat = ")), None)
+        self.assertIsNotNone(line, "Get-FailureSummary 의 패턴을 못 찾았다")
+        pat = re.compile(line.split("'")[1])
+
+        for text in ("FAIL: test_shared_documents_carry_no_maskable_pii (test_pii)",
+                     "ERROR: test_something (test_mod)",
+                     "AssertionError: Lists differ: [Hit()] != []",
+                     "Ran 1024 tests in 213.161s",
+                     "FAILED (failures=2)",
+                     "  ✖ failing test",
+                     "  ℹ fail 3"):
+            with self.subTest(text=text):
+                self.assertTrue(pat.search(text), "이 줄을 놓친다: %s" % text)
+
+        # 어제 로그를 덮었던 것들. 이것을 집으면 고르개가 없는 것과 같다.
+        for text in ("[AI보고서] 285개 주제에 얹었습니다",
+                     "[주의] 대화량에 비해 보고서가 얇은 주제 4개 — 지난번과 같음",
+                     "  t-251: 갈래를 못 고름 — '앱 제작' 를 그대로 둡니다",
+                     "  ℹ fail 0",
+                     "......................................"):
+            with self.subTest(text=text):
+                self.assertFalse(pat.search(text), "잡음을 집는다: %s" % text)
+
+
     def test_dry_run_does_not_write(self):
         """확인만 하는 실행이 화면의 '마지막 갱신'을 덮으면 그것이 곧 거짓말이 된다."""
         body = self.ps1.split("function Report-Run {", 1)[1].split("\n}", 1)[0]

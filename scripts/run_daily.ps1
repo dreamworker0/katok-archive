@@ -97,11 +97,13 @@ function Say { param([string]$m, [string]$lvl = 'INFO')
 # -DryRun 에서는 쓰지 않는다. 확인만 하는 실행이 화면의 '마지막 갱신' 을 덮으면
 # 그것이 곧 거짓말이 된다.
 function Report-Run {
-    param([string]$status, [string]$step, [int]$code = 0, [string]$why, [int]$added = -1)
+    param([string]$status, [string]$step, [int]$code = 0, [string]$why, [int]$added = -1,
+          [string]$reason)
     if ($DryRun) { return }
     $a = @('scripts\report_run.js', '--status', $status, '--exit', "$code")
     if ($step)      { $a += @('--step', $step) }
     if ($why)       { $a += @('--why', $why) }
+    if ($reason)    { $a += @('--reason', $reason) }
     if ($added -ge 0) { $a += @('--added', "$added") }
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
@@ -127,6 +129,24 @@ try {
     # 75 는 '실패'가 아니라 '겹쳐서 안 함'이라는 뜻이다. 부르는 쪽이 구분해야
     # 화면에 엉뚱한 실패로 뜨지 않는다.
     exit 75
+}
+
+# 검사 출력에서 '왜 죽었는지' 를 말하는 줄만 고른다.
+#
+# 실패하면 출력을 전부 남기지만, 그 전부가 단서인 것은 아니다. 실측 2026-09-08:
+# 테스트가 두 개 실패했는데 로그에 490줄이 들어갔고 그 가운데 실패를 말하는 줄은
+# `FAIL:` 두 개와 `FAILED (failures=2)` 하나뿐이었다. 나머지는 검사가 build_data 를
+# 여러 번 부르며 찍은 발행 경고였다. 사람이 보는 것은 로그의 꼬리와 디스코드
+# 알림인데, 꼬리는 그 잡음이 차지하고 알림에는 단계 이름밖에 없었다.
+#
+# unittest 는 `FAIL:`·`ERROR:`·`Ran N tests`·`FAILED (…)` 를, node --test 는
+# `fail N`·`✖` 을 쓴다. 둘 다 받는다.
+function Get-FailureSummary {
+    param($out, [int]$Max = 12)
+    $pat = '^(FAIL|ERROR):|^Ran \d+ tests?|^FAILED\b|^OK\b|AssertionError|^\s*(✖|not ok)|^\s*ℹ\s+fail\s+[1-9]'
+    $picked = @($out | ForEach-Object { "$_" } | Where-Object { $_ -match $pat })
+    if ($picked.Count -gt $Max) { $picked = $picked[0..($Max - 1)] + "… 그 밖 $($picked.Count - $Max)줄" }
+    , $picked
 }
 
 function Invoke-Step {
@@ -161,9 +181,18 @@ function Invoke-Step {
         foreach ($l in $out) { Say "    $l" }
     }
     if ($null -ne $code -and $code -ne 0) {
+        # 원인 줄을 **맨 끝에 한 번 더** 모은다. 위쪽에 이미 전부 남겼지만 그것은
+        # 증거이고, 사람이 읽는 것은 꼬리다. 꼬리에 원인이 있어야 로그를 열자마자
+        # 보인다.
+        $summary = Get-FailureSummary $out
+        if ($summary.Count -gt 0) {
+            Say "    ── 왜 죽었나 ──"
+            foreach ($l in $summary) { Say "    $l" }
+        }
         Say "$name 실패 (exit $code) — 중단합니다." 'ERROR'
         # 어느 단계에서 멈췄는지까지 남긴다. 로그를 열지 않고도 관리 탭에서 보인다.
-        Report-Run -status 'failed' -step $name -code $code
+        # 사유도 함께 — 단계 이름은 '어디서' 이고 사람의 다음 물음은 '왜' 다.
+        Report-Run -status 'failed' -step $name -code $code -reason ($summary -join "`n")
         exit $code
     }
     , $out

@@ -60,6 +60,28 @@ test("실패 알림에는 단계·exit·로그 경로·다시 돌리는 법이 �
   assert.ok(text.length < 1900, "디스코드 한도(2000자) 안");
 });
 
+test("실패 알림은 '왜' 까지 싣는다 — 단계 이름만으로는 로그를 열어야 안다", () => {
+  // 실측 2026-09-08: 알림에 "'테스트' 단계 (exit 1)" 만 있었고, 로그를 열어도
+  // 꼬리 490줄이 검사가 찍은 발행 경고라 실패 줄이 안 보였다.
+  const text = rr.buildNotice({
+    status: "failed", trigger: "scheduled", lastStep: "테스트", exitCode: 1,
+    reason: "FAIL: test_shared_documents_carry_no_maskable_pii\nFAILED (failures=2)",
+    finishedAt: "2026-09-01T14:52:57.000Z", host: "PC",
+  }, "logs\ndaily-20260901.log");
+  assert.match(text, /FAIL: test_shared_documents/);
+  assert.match(text, /FAILED \(failures=2\)/);
+  assert.ok(text.length < 1900, "디스코드 한도(2000자) 안");
+});
+
+test("사유가 없으면 사유 줄도 없다 — 빈 상자를 보이지 않는다", () => {
+  const text = rr.buildNotice({
+    status: "failed", trigger: "scheduled", lastStep: "테스트", exitCode: 1,
+    finishedAt: "2026-09-01T14:52:57.000Z", host: "PC",
+  }, "");
+  assert.ok(!text.includes("```"), "사유가 없는데 코드 상자가 들어갔다");
+});
+
+
 test("성공·건너뜀도 문장이 다르다 — 같은 글이면 채널이 읽히지 않는다", () => {
   const ok = rr.buildNotice({ status: "ok", trigger: "scheduled", why: "새 메시지 3건",
     finishedAt: "2026-09-01T14:52:57.000Z", host: "PC" }, "");

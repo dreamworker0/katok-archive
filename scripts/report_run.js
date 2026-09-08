@@ -20,7 +20,7 @@
  *
  *   node scripts/report_run.js --status ok      --why "새 메시지 3건" --added 3
  *   node scripts/report_run.js --status skipped --why "발행 사유 없음"
- *   node scripts/report_run.js --status failed  --step 테스트 --exit 1
+ *   node scripts/report_run.js --status failed  --step 테스트 --exit 1 --reason "FAIL: ..."
  *
  * **이 스크립트가 실패해도 갱신은 성공한 것이다.** 부르는 쪽(run_daily.ps1)이
  * 종료 코드를 무시한다 — 알림을 남기려는 코드가 그날 갱신을 실패로 만들어서는
@@ -76,6 +76,10 @@ function buildNotice(doc, logPath) {
   if (doc.status === "failed") {
     lines.push(head + " **실패** — " + (doc.lastStep ? "'" + doc.lastStep + "' 단계" : "단계 불명") +
       (doc.exitCode !== null && doc.exitCode !== undefined ? " (exit " + doc.exitCode + ")" : ""));
+    // 왜 죽었는지를 알림에 싣는다. 단계 이름만으로는 로그를 열어야 알 수 있고,
+    // 그 로그의 꼬리는 검사가 찍은 잡음으로 덮여 있어 열어도 안 보였다
+    // (실측 2026-09-08: 490줄 중 실패를 말하는 줄은 가운데 두 개뿐이었다).
+    if (doc.reason) lines.push("```\n" + doc.reason + "\n```");
     lines.push("고친 뒤 관리 탭 '지금 갱신' 을 누르거나 `powershell -File scripts\\run_daily.ps1 -SkipExport` 로 다시 돌립니다.");
   } else if (doc.status === "skipped") {
     lines.push(head + " 건너뜀 — " + (doc.why || "올릴 것이 없었습니다"));
@@ -146,6 +150,8 @@ async function main() {
     exitCode: n(args.exit),
     // 실패한 단계 이름. 로그를 열지 않고도 어디서 멈췄는지 보여주는 값이다.
     lastStep: s(args.step),
+    // 그 단계가 왜 죽었는지 — 검사 요약 줄 몇 개. 단계 이름의 다음 물음이다.
+    reason: s(args.reason),
     // 무엇 때문에 발행했는가(또는 왜 건너뛰었는가).
     why: s(args.why),
     added: n(args.added),
