@@ -286,14 +286,36 @@ def digest_stale_note(label: str, thread_count: int, digest: dict) -> str | None
     `select_stale` 의 두 기준 가운데 **주제가 쌓인 것**만 본다. 날짜로만 낡은
     것(30일)은 갱신이 알아서 따라잡을 일이고, 발행 로그가 조용한 분류를 두고
     매일 무언가 잘못됐다고 말하면 그 줄을 읽지 않게 된다.
+
+    절 문턱을 넘은 것은 **셋째 기준**으로 따로 본다 — 아래 참고.
     """
     as_of = (digest or {}).get("as_of") or {}
     if not as_of.get("date"):
         return "%s: 정리 시점 없음" % label
+    if digest_needs_sections(digest, thread_count):
+        return ("%s: 주제 %d개(%d개 이상)인데 절이 없음 (as_of %s)"
+                % (label, thread_count, DIGEST_SECTION_FROM, as_of["date"]))
     grown = thread_count - int(as_of.get("thread_count") or 0)
     if grown >= DIGEST_STALE_THREADS:
         return "%s: 정리 뒤 주제 +%d (as_of %s)" % (label, grown, as_of["date"])
     return None
+
+
+def digest_needs_sections(digest: dict, thread_count: int) -> bool:
+    """절 문턱을 넘었는데 절이 없는 요지인가 — 다시 써야 한다.
+
+    주제가 쌓인 양(`DIGEST_STALE_THREADS`=5)과 따로 두는 이유: 문턱을 넘는
+    걸음은 **한 개**일 수 있다. 실측 2026-09-09: news-articles 가 19→20 으로
+    늘어 `sections` 를 요구하는 테스트에 걸렸는데, 늘어난 수가 1 이고 as_of 도
+    닷새밖에 안 지나 낡음 판정에는 걸리지 않았다. 그래서 밤 갱신이 다시 쓰지
+    않은 요지를 그날 테스트가 막고, 다음 날도 같은 자리에서 막혔다 — 사람이
+    손으로 `--cat` 을 지정할 때까지 영영 발행이 멈춘다.
+
+    테스트가 막는 조건과 갱신이 다시 쓰는 조건은 같아야 한다. 어긋난 자리가
+    이 고장이었다.
+    """
+    return (thread_count >= DIGEST_SECTION_FROM
+            and not ((digest or {}).get("sections") or []))
 
 
 # 자리표를 받을 수 있는 메시지 종류. 동영상이 빠져 있던 동안, 본문이 짚어 둔

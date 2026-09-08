@@ -59,6 +59,7 @@ from scripts.topic_reports import (
     DIGEST_SECTION_FROM,
     DIGEST_STALE_DAYS,
     DIGEST_STALE_THREADS,
+    digest_needs_sections,
     load_reports,
 )
 
@@ -85,6 +86,10 @@ def select_stale(categories: list[dict], threads: list[dict], prose: dict,
 
       · 정리 뒤 주제가 `DIGEST_STALE_THREADS` 개 이상 늘었다 — 내용이 바뀐 것
       · `DIGEST_STALE_DAYS` 일이 지났고 새 주제가 하나라도 있다 — 오래된 것
+      · 절 문턱(`DIGEST_SECTION_FROM`)을 넘었는데 절이 없다 — 테스트가 막는 것
+        (`topic_reports.digest_needs_sections`. 한 걸음만 늘어도 넘을 수 있어
+        위의 '쌓인 양' 으로는 걸리지 않는다 — 실측 2026-09-09 news-articles
+        19→20)
 
     두 번째 기준에 '새 주제가 하나라도' 를 붙인 이유: 조용한 분류(hwp 12개)는
     한 달이 지나도 쓸 말이 그대로다. 그것을 다시 쓰면 같은 글에 값을 치른다.
@@ -109,6 +114,9 @@ def select_stale(categories: list[dict], threads: list[dict], prose: dict,
         p = prose.get(cid) or {}
         as_of = p.get("as_of") or {}
         if not p.get("overview") or not as_of.get("date"):
+            rows.append((now, cid))
+            continue
+        if digest_needs_sections(p, now):
             rows.append((now, cid))
             continue
         grown = now - int(as_of.get("thread_count") or 0)

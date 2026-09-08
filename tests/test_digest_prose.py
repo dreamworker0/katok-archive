@@ -44,7 +44,11 @@ def threads(**counts) -> list[dict]:
 
 
 def prose(cid: str, day: str, count: int, **extra) -> dict:
+    # `sections` 를 기본으로 채운다 — 절 문턱을 넘은 분류는 실제로 절이 있고,
+    # 없으면 그 자체가 낡음(`digest_needs_sections`)이다. 없는 경우를 시험할
+    # 때는 부르는 쪽에서 `sections=[]` 로 말한다.
     row = {"headline": "한 줄", "overview": "흐름", "keywords": ["가", "나"],
+           "sections": [{"title": "절", "body": "본문."}],
            "as_of": {"date": day, "thread_count": count, "last_thread_id": "t-001"}}
     row.update(extra)
     return {cid: row}
@@ -87,6 +91,23 @@ class SelectStaleTest(unittest.TestCase):
         got = self.stale(doc, projects=106, hwp=12)
         self.assertEqual(["hwp", "projects"], got)
 
+    def test_crossing_the_section_threshold_makes_it_stale(self):
+        """한 걸음만 늘어도 절 문턱을 넘으면 다시 써야 한다.
+
+        실측 2026-09-09: news-articles 가 19→20 으로 늘었다. 늘어난 수가 1 이고
+        as_of 도 닷새밖에 안 지나 낡음에는 걸리지 않았는데, 절을 요구하는
+        테스트가 발행을 막았다 — 갱신이 손대지 않는 것을 테스트가 막으니
+        사람이 `--cat` 을 칠 때까지 밤마다 같은 자리에서 멈춘다.
+        """
+        n = tr.DIGEST_SECTION_FROM
+        doc = prose("projects", "2026-09-03", n - 1, sections=[])
+        self.assertIn("projects", self.stale(doc, projects=n))
+
+    def test_a_small_category_without_sections_is_left_alone(self):
+        """문턱 아래는 절이 없는 것이 규칙이다 — 낡음이 아니다."""
+        doc = prose("hwp", "2026-09-03", 12, sections=[])
+        self.assertEqual([], self.stale(doc, hwp=12))
+
     def test_a_broken_as_of_date_counts_as_stale(self):
         doc = prose("projects", "어제", 3)
         self.assertIn("projects", self.stale(doc, projects=3))
@@ -99,16 +120,29 @@ class StaleNoteTest(unittest.TestCase):
         self.assertEqual("프로젝트·결과물: 정리 시점 없음",
                          tr.digest_stale_note("프로젝트·결과물", 106, {}))
 
+    SECTIONS = [{"title": "절", "body": "본문."}]
+
     def test_growth_is_reported_with_the_date(self):
         note = tr.digest_stale_note(
             "프로젝트·결과물", 106,
-            {"as_of": {"date": "2026-07-28", "thread_count": 94}})
+            {"sections": self.SECTIONS,
+             "as_of": {"date": "2026-07-28", "thread_count": 94}})
         self.assertEqual("프로젝트·결과물: 정리 뒤 주제 +12 (as_of 2026-07-28)", note)
+
+    def test_missing_sections_are_reported(self):
+        """테스트가 막는 조건은 발행 로그에도 한 줄로 보여야 한다."""
+        note = tr.digest_stale_note(
+            "뉴스·자료 공유", 20,
+            {"sections": [], "as_of": {"date": "2026-09-04", "thread_count": 19}})
+        self.assertEqual(
+            "뉴스·자료 공유: 주제 20개(%d개 이상)인데 절이 없음 (as_of 2026-09-04)"
+            % tr.DIGEST_SECTION_FROM, note)
 
     def test_a_fresh_digest_is_quiet(self):
         self.assertIsNone(tr.digest_stale_note(
             "프로젝트·결과물", 106,
-            {"as_of": {"date": "2026-09-04", "thread_count": 106}}))
+            {"sections": self.SECTIONS,
+             "as_of": {"date": "2026-09-04", "thread_count": 106}}))
 
 
 class PromptTest(unittest.TestCase):
