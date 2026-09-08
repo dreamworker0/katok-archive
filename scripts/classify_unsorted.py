@@ -756,6 +756,48 @@ def rewrite_long_quote_reports(threads: list[dict], model: str,
     return _write_reports(targets, model, examples, dry_run, timeout)
 
 
+def rewrite_unfound_quote_reports(threads: list[dict], model: str,
+                                  examples: list[dict], dry_run: bool,
+                                  limit: int = 5,
+                                  timeout: int = TIMEOUT_SEC) -> int:
+    """원문에서 찾을 수 없는 인용이 든 보고서를 다시 쓴다. 다시 쓴 편수를 돌려준다.
+
+    인용이 긴 것 다시 쓰기와 나란한 기능이고, 셋 가운데 가장 무겁다. 원문을
+    발행하지 않는 아카이브에서 보고서는 유일한 기록이고, 인용은 '이 사람이 이렇게
+    말했다' 는 가장 강한 주장이다. 원문에 없는 문자열이 인용으로 남으면 사람의
+    말을 왜곡해 남기는 것이고, 되돌리기가 가장 어렵다.
+
+    그런데도 이 자리만 오래 손 경로가 없었다 — 얇은 것·긴 인용·구조 어김에는
+    다시 쓰기가 있는데, 가장 무거운 이것만 사람이 손으로 `--rewrite-ids` 를
+    쳐야 했다(실측 2026-09-09: t-425 가 그렇게 걸렸고, 손으로 고쳤다).
+
+    **왜 자동으로 돌리지 않는가.** 판정에 애매한 구석이 있다 — 같은 사람의 연속
+    발언을 이어붙인 인용은 원문 어느 한 줄과도 안 맞지만 왜곡은 아니다. 밤 갱신에
+    넣지 않고 사람이 부를 때만 도는 이유다. 부를 때 목록을 보여 주고 무엇을 다시
+    쓰는지 말한다.
+    """
+    from scripts import audit_quotes
+
+    r = audit_quotes.audit()
+    bad_by_thread: dict[str, list[tuple[float, str]]] = {}
+    for tid, score, head in r["unmatched"]:
+        bad_by_thread.setdefault(tid, []).append((score, head))
+    if not bad_by_thread:
+        print("원문에서 못 찾은 인용이 없습니다.")
+        return 0
+
+    by_id = {t["id"]: t for t in threads}
+    # 덜 닮은 것부터 — 닮은정도가 낮을수록 지어냈을 가능성이 크다.
+    order = sorted(bad_by_thread.items(), key=lambda kv: min(s for s, _ in kv[1]))
+    print("원문에서 못 찾은 인용 %d건이 보고서 %d편에 있습니다 — 이번에 최대 %d편."
+          % (len(r["unmatched"]), len(bad_by_thread), limit))
+    for tid, hits in order[:limit]:
+        for score, head in hits:
+            print("  %s 닮은정도 %.2f — %s…" % (tid, score, head))
+    targets = [by_id[tid] for tid, _ in order[:limit] if tid in by_id]
+    return _write_reports(targets, model, examples, dry_run, timeout)
+
+
 def rewrite_unstructured_reports(threads: list[dict], model: str,
                                  examples: list[dict], dry_run: bool,
                                  limit: int = 5,
@@ -899,6 +941,8 @@ def main() -> int:
                     help="분류 대신, 대화량에 비해 얇은 보고서 N편을 다시 쓴다")
     ap.add_argument("--rewrite-long-quotes", type=int, metavar="N", default=0,
                     help="분류 대신, 인용이 40자를 넘는 보고서 N편을 다시 쓴다")
+    ap.add_argument("--rewrite-unfound-quotes", type=int, metavar="N", default=0,
+                    help="분류 대신, 원문에서 못 찾은 인용이 든 보고서 N편을 다시 쓴다")
     ap.add_argument("--rewrite-unstructured", type=int, metavar="N", default=0,
                     help="분류 대신, 구조 규칙(인용·절 나눔)을 어긴 보고서 N편을 다시 쓴다")
     ap.add_argument("--rewrite-ids", metavar="ID,ID", default="",
@@ -933,6 +977,19 @@ def main() -> int:
         n = rewrite_long_quote_reports(threads, args.model, examples, args.dry_run,
                                        limit=args.rewrite_long_quotes,
                                        timeout=args.timeout)
+        if n and not args.dry_run:
+            save_json(TOPICS, topics)
+        emit("REWRITTEN", n)
+        return 0
+
+    if args.rewrite_unfound_quotes:
+        topics = load_json(TOPICS)
+        threads = topics.get("threads", [])
+        examples = [t for t in threads
+                    if not UNSORTED_RE.match(str(t.get("id") or ""))][:12]
+        n = rewrite_unfound_quote_reports(threads, args.model, examples, args.dry_run,
+                                          limit=args.rewrite_unfound_quotes,
+                                          timeout=args.timeout)
         if n and not args.dry_run:
             save_json(TOPICS, topics)
         emit("REWRITTEN", n)

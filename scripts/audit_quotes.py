@@ -150,9 +150,42 @@ def audit(ids: set[str] | None = None) -> dict:
     return result
 
 
+def show_name_context(rows: list[tuple[str, str]]) -> None:
+    """걸린 이름마다 '어느 편에서·누가 말한 자리에·어떤 문장으로' 쓰였는지 보인다.
+
+    이 목록은 자동으로 고칠 것이 아니다 — 실측 2026-09-09 에 열여섯 건을 전수로
+    보니 전부 정상적인 3인칭 언급이었다('…가 ○○ 사무실을 다녀온 이야기로 열었다',
+    '강연자: …'). 그것을 다시 쓰면 멀쩡한 보고서를 흔들고 값만 든다.
+
+    그래서 손이 필요한데, 정작 판정에 드는 품이 컸다 — 보고서를 열고, 그 주제에서
+    말한 사람을 세고, 이름이 든 문장을 찾아야 비로소 '3인칭이구나' 를 안다. 열여섯
+    번 하면 반나절이다. 그 품을 여기로 옮긴다. 판정은 여전히 사람이 한다.
+    """
+    topics = build_site._read_json(OUTPUT / "topics.json")
+    messages = build_site._read_jsonl(OUTPUT / "messages.jsonl")
+    reports = topic_reports.load_reports()
+    by_id = {m["id"]: m for m in messages}
+    th = {t["id"]: t for t in topics["threads"]}
+
+    for tid, name in rows:
+        t, r = th.get(tid), reports.get(tid, {})
+        if not t:
+            continue
+        speakers = [by_id[i]["nickname"] for i in t["message_ids"] if i in by_id]
+        print("\n%s  %s" % (tid, r.get("title") or ""))
+        print("  말한 사람: %s" % ", ".join(dict.fromkeys(speakers)))
+        print("  걸린 이름: %s" % name)
+        pat = re.compile(r"(?<![0-9A-Za-z가-힣])%s(?![0-9A-Za-z가-힣])" % re.escape(name))
+        for sent in re.split(r"(?<=[.?!])\s+|\n", r.get("report") or ""):
+            if pat.search(sent):
+                print("   > %s" % sent.strip())
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ids", default="", help="특정 주제만 (t-286,t-330)")
+    ap.add_argument("--names", action="store_true",
+                    help="'그 주제에 없는 사람 이름' 을 문장까지 펼쳐 본다 (사람이 판정)")
     args = ap.parse_args()
     ids = {s.strip() for s in args.ids.split(",") if s.strip()} or None
 
@@ -174,10 +207,14 @@ def main() -> int:
         print("인용: 전부 원문에서 확인됨")
 
     if r["stranger_names"]:
-        # 참고용이다. 3인칭 언급('노민석 사무실을 다녀온')이 대부분이라 대체로 정상이고,
+        # 참고용이다. 3인칭 언급('○○ 사무실을 다녀온')이 대부분이라 대체로 정상이고,
         # 실제로 남의 말로 잘못 적은 경우만 걸러 보려면 사람이 그 줄을 봐야 한다.
         print("\n[그 주제에 없는 사람 이름] %d건 (참고 — 3인칭 언급이면 정상)"
               % len(r["stranger_names"]))
+        if args.names:
+            show_name_context(r["stranger_names"])
+            return 0
+        print("  문장까지 보려면: python -m scripts.audit_quotes --names")
         seen = set()
         for tid, nick in r["stranger_names"]:
             if (tid, nick) in seen:
