@@ -15,6 +15,9 @@
     · 미분류 스레드가 없으면 **호출 자체를 하지 않는다** (조용한 날 = 0원)
     · 하루 최대 1회, 그날 새 메시지만 보낸다 (전체 1,500건을 보내지 않는다)
     · `claude -p` 는 OAuth 로그인 계정의 요금제를 쓴다 — 종량 API 키가 아니다
+    · 규칙을 어긴 답에는 사유를 붙여 **한 번만** 다시 묻는다 (`--retries`).
+      되묻기는 값이 또 들지만, 안 되물으면 이미 쓴 값이 통째로 버려진다 —
+      실측 2026-09-17: 42건이 빈 message_ids 하나로 전부 날아가고 $0.43 만 나갔다.
 
 무엇을 고치고 무엇을 안 고치는가
     고침   topics.json      미분류 스레드를 실제 카테고리·제목·요지·태그로 교체
@@ -43,6 +46,7 @@
     python -m scripts.classify_unsorted --dry-run    # 호출은 하고 파일은 안 씀
     python -m scripts.classify_unsorted --model sonnet   # 더 싸게
     python -m scripts.classify_unsorted --no-graph   # 관계 그래프는 건드리지 않음
+    python -m scripts.classify_unsorted --retries 0  # 되묻지 않음 (값을 아낄 때)
 
     옛 백업을 합친 뒤처럼 미분류가 수백 건 밀려 있을 때만:
     python -m scripts.classify_unsorted --max 25 --timeout 900
@@ -96,6 +100,26 @@ UNSORTED_RE = re.compile(r"^t-unsorted-\d{4}-\d{2}-\d{2}$")
 # 폭발하지 않게 막는다. 넘치면 오래된 것부터 이만큼만 하고, 나머지는 다음 실행이
 # 이어서 한다 — 한 번에 다 못 해도 매일 줄어든다.
 MAX_MESSAGES_PER_RUN = 120
+
+# 규칙을 어긴 답에 사유를 붙여 다시 묻는 횟수. 한 번이면 충분한 것이 대부분이고,
+# 되물을 때마다 한 번 값이 더 든다 — 매일 도는 자리라 기본은 1 로 둔다.
+DEFAULT_RETRIES = 1
+
+# 되물을 때 덧붙이는 말. 검증기가 뱉은 사유를 그대로 얹고, 자주 어기는 규칙을
+# 다시 못박는다.
+RETRY_NOTE = """
+
+## 다시 요청합니다
+직전 답이 아래 규칙을 어겨 **하나도 반영하지 못했습니다**.
+{reasons}
+
+같은 실수를 반복하지 마세요. 특히:
+- 모든 스레드의 `message_ids` 에 실제 메시지 ID 가 **한 개 이상** 있어야 합니다.
+- 위에 준 메시지 ID 는 **빠짐없이, 정확히 한 스레드에만** 들어가야 합니다.
+- 없는 ID 를 지어내지 마세요. `category` 는 준 목록 안에서만 고르세요.
+- JSON 만 출력하세요 (산문·설명·코드펜스 없이).
+"""
+
 
 
 # 사람이 읽는 로그는 한국어로, 판단에 쓰는 신호는 ASCII 표식으로 준다.
@@ -268,44 +292,53 @@ JSON 만 출력하세요. 산문·설명·코드펜스 없이 이 형태 그대�
 
 
 def validate(data: dict, expected_ids: set[str],
-             valid_categories: set[str]) -> list[dict] | None:
+             valid_categories: set[str],
+             problems: list[str] | None = None) -> list[dict] | None:
     """불변식을 지키는지 확인한다. 하나라도 어긋나면 None (= 아무것도 적용 안 함).
 
     여기서 너그러우면 아카이브가 조용히 깨진다 — 메시지가 사라지거나, 없는 ID 를
     가리키는 스레드가 생기거나, 한 메시지가 두 스레드에 들어간다. 그중 어느 것도
     화면에서는 바로 눈에 띄지 않는다.
+
+    `problems` 를 주면 어긴 사유를 거기에도 담는다. 호출부가 그 문장을 그대로
+    LLM 에 되먹여 다시 묻기 위한 것이다 — 화면 로그(print)는 예전 그대로 둔다.
     """
+    def bad(msg: str) -> None:
+        print(msg)
+        if problems is not None:
+            problems.append(msg)
+
     threads = data.get("threads")
     if not isinstance(threads, list) or not threads:
-        print("threads 가 비었거나 목록이 아닙니다.")
+        bad("threads 가 비었거나 목록이 아닙니다.")
         return None
 
     seen: set[str] = set()
     clean = []
     for i, t in enumerate(threads):
         if not isinstance(t, dict):
-            print(f"threads[{i}] 가 객체가 아닙니다.")
+            bad(f"threads[{i}] 가 객체가 아닙니다.")
             return None
         cat = str(t.get("category") or "").strip()
         if cat not in valid_categories:
-            print(f"threads[{i}] 카테고리가 목록에 없습니다: {cat!r}")
+            bad(f"threads[{i}] 카테고리가 목록에 없습니다: {cat!r}")
             return None
         ids = t.get("message_ids")
         if not isinstance(ids, list) or not ids:
-            print(f"threads[{i}] message_ids 가 비었습니다.")
+            bad(f"threads[{i}] message_ids 가 비었습니다.")
             return None
         for mid in ids:
             if mid not in expected_ids:
-                print(f"threads[{i}] 에 모르는 메시지 ID: {mid!r}")
+                bad(f"threads[{i}] 에 모르는 메시지 ID: {mid!r}")
                 return None
             if mid in seen:
-                print(f"메시지가 두 스레드에 들어갔습니다: {mid}")
+                bad(f"메시지가 두 스레드에 들어갔습니다: {mid}")
                 return None
             seen.add(mid)
         title = str(t.get("title") or "").strip()
         summary = str(t.get("summary") or "").strip()
         if not title:
-            print(f"threads[{i}] 제목이 없습니다.")
+            bad(f"threads[{i}] 제목이 없습니다.")
             return None
         # 키워드(=태그). 프론트매터에서 쉼표로 갈리므로 쉼표를 지운다.
         kws = []
@@ -325,9 +358,67 @@ def validate(data: dict, expected_ids: set[str],
 
     missing = expected_ids - seen
     if missing:
-        print(f"분류에서 빠진 메시지 {len(missing)}건: {sorted(missing)[:5]}")
+        bad(f"분류에서 빠진 메시지 {len(missing)}건: {sorted(missing)[:5]}")
         return None
     return clean
+
+
+
+def retry_prompt(prompt: str, why: list[str]) -> str:
+    """어긴 사유를 붙여 다시 묻는 프롬프트.
+
+    사유를 빼고 그냥 한 번 더 부르면 같은 실수를 되풀이하기 쉽다. 어디가
+    어긋났는지는 검증기가 이미 문장으로 알고 있으니 그대로 넘긴다.
+    """
+    lines = ["- " + w for w in why] or ["- (사유 불명)"]
+    return prompt + RETRY_NOTE.format(reasons="\n".join(lines))
+
+
+def classify_with_retry(prompt: str, expected_ids: set[str],
+                        valid_categories: set[str], *, model: str,
+                        timeout: int, retries: int
+                        ) -> tuple[list[dict] | None, dict | None]:
+    """규칙을 지킨 답이 나올 때까지 사유를 붙여 다시 묻는다.
+
+    반환 (통과한 스레드 목록 or None, 마지막으로 읽어낸 답 or None).
+    둘째 값이 필요한 이유는 두 가지다 — 호출부가 graph 를 여기서 꺼내 쓰고,
+    실패했을 때 "답을 못 받았다"와 "답은 받았는데 규칙을 어겼다"를 갈라
+    말해야 하기 때문이다.
+
+    왜 되묻는가
+        규칙을 어긴 답은 사유가 구체적이다("message_ids 가 비었습니다"). 그
+        문장을 그대로 되먹이면 대부분 한 번에 고쳐 온다. 되묻기가 없던 동안에는
+        한 번 흔들린 답 때문에 하루치가 통째로 밀렸다 — 실측 2026-09-17: 42건이
+        threads[0] 의 빈 message_ids 하나로 전부 버려졌고, 비용 $0.43 은 나갔다.
+
+        다만 되물을 때마다 값이 또 든다. 그래서 기본은 한 번만 더 묻는다.
+
+    main 에서 떼어낸 이유
+        이 루프가 잘못 엮이면 되묻지 않거나(옛 버그 그대로), 사유를 안 실어
+        같은 답을 또 받거나, 성공하고도 한 번 더 부른다. 셋 다 화면에는 안
+        보이고 값만 나간다. 떼어 놔야 테스트가 붙잡을 수 있다.
+    """
+    clean: list[dict] | None = None
+    data: dict | None = None
+    why: list[str] = []      # 직전 답이 어긴 사유. 첫 호출에는 비어 있다.
+    attempts = 1 + max(0, retries)
+    for attempt in range(1, attempts + 1):
+        raw = call_claude(prompt if attempt == 1 else retry_prompt(prompt, why),
+                          model, timeout)
+        data = parse_reply(raw) if raw else None
+        if data is None:
+            why = ["JSON 을 읽지 못했습니다 — 산문·설명·코드펜스 없이 JSON 만 출력하세요."]
+        else:
+            why = []
+            clean = validate(data, expected_ids, valid_categories, why)
+            if clean is not None:
+                break
+        if attempt < attempts:
+            # 사유는 validate 가 이미 찍었지만, JSON 자체를 못 읽은 경우는
+            # 아무 말도 남지 않는다. 여기서 한 줄로 합쳐 둔다.
+            print(f"사유를 붙여 다시 묻습니다 ({attempt}/{attempts - 1}) — "
+                  f"{why[0] if why else '사유 불명'}")
+    return clean, data
 
 
 NEW_NODE_ID_RE = re.compile(r"^(app|tool):[a-z0-9][a-z0-9-]{1,39}$")
@@ -935,6 +1026,9 @@ def main() -> int:
                     help=f"claude -p 한 번의 제한 시간(초) (기본: {TIMEOUT_SEC})")
     ap.add_argument("--max", type=int, default=MAX_MESSAGES_PER_RUN, dest="max_messages",
                     help=f"한 번에 분류할 메시지 수 (기본: {MAX_MESSAGES_PER_RUN})")
+    ap.add_argument("--retries", type=int, default=DEFAULT_RETRIES,
+                    help=f"규칙을 어겼을 때 사유를 붙여 다시 묻는 횟수 "
+                         f"(기본: {DEFAULT_RETRIES}, 0 이면 안 물음)")
     # 매일 실행에는 넣지 않는다 — 기준을 겨우 넘긴 보고서를 매일 다시 쓰면 내용이
     # 흔들리기만 하고 값은 계속 든다. 사람이 필요할 때 부르는 일이다.
     ap.add_argument("--rewrite-thin", type=int, metavar="N", default=0,
@@ -1065,18 +1159,18 @@ def main() -> int:
                               if KNOWLEDGE.exists() else [])
                    if n.get("type") in ("app", "tool")]
     prompt = build_prompt(msgs, categories, examples, known_nodes)
-    raw = call_claude(prompt, args.model, args.timeout)
-    data = parse_reply(raw) if raw else None
-    if data is None:
-        print("분류 결과를 받지 못했습니다 — 미분류로 남깁니다(갱신은 계속됩니다).")
-        emit("CLASSIFIED", 0)
-        return 0
-
     handled = {m["id"] for m in msgs}
-    clean = validate(data, handled, valid_categories)
+
+    clean, data = classify_with_retry(
+        prompt, handled, valid_categories,
+        model=args.model, timeout=args.timeout, retries=args.retries)
+
     if clean is None:
-        print("분류 결과가 규칙을 어겨 아무것도 적용하지 않습니다"
-              "(갱신은 계속됩니다).")
+        if data is None:
+            print("분류 결과를 받지 못했습니다 — 미분류로 남깁니다(갱신은 계속됩니다).")
+        else:
+            print("분류 결과가 규칙을 어겨 아무것도 적용하지 않습니다"
+                  "(갱신은 계속됩니다).")
         emit("CLASSIFIED", 0)
         return 0
 

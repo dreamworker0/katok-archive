@@ -92,6 +92,124 @@ class InvariantTests(unittest.TestCase):
                 self.assertIsNone(validate(data, IDS, CATS))
 
 
+class RetryTests(unittest.TestCase):
+    """규칙을 어긴 답은 사유를 붙여 다시 묻는다.
+
+    실측 2026-09-17: threads[0] 의 빈 message_ids 하나 때문에 42건이 통째로
+    버려졌다. 되묻기가 없어 그날 분류는 다음 날까지 밀렸고 비용은 이미 나갔다.
+    여기서 못박는 것은 두 가지다 — 검증기가 사유를 돌려주는가, 그 사유가 다시
+    묻는 프롬프트에 실제로 실리는가.
+    """
+
+    def test_validate_hands_back_the_reason(self):
+        why: list[str] = []
+        data = {"threads": [{"category": "chat", "title": "제목",
+                             "message_ids": []}]}
+        self.assertIsNone(validate(data, IDS, CATS, why))
+        self.assertTrue(why, "사유를 담아 주지 않으면 되물어도 같은 실수를 한다")
+        self.assertIn("message_ids", why[0])
+
+    def test_validate_stays_silent_when_not_asked(self):
+        # 기존 호출부(인자 3개)는 그대로 동작해야 한다.
+        data = {"threads": [{"category": "chat", "title": "제목",
+                             "message_ids": []}]}
+        self.assertIsNone(validate(data, IDS, CATS))
+
+    def test_passing_answer_leaves_no_reason(self):
+        why: list[str] = []
+        data = {"threads": [{"category": "chat", "title": "제목",
+                             "summary": "요지", "message_ids": list(IDS)}]}
+        self.assertIsNotNone(validate(data, IDS, CATS, why))
+        self.assertEqual([], why)
+
+    def test_retry_prompt_carries_the_reason(self):
+        out = classify.retry_prompt("원래 프롬프트", ["threads[0] message_ids 가 비었습니다."])
+        self.assertIn("원래 프롬프트", out)          # 분류할 메시지를 다시 줘야 한다
+        self.assertIn("message_ids 가 비었습니다", out)   # 무엇을 어겼는지
+        self.assertIn("다시 요청합니다", out)
+
+    def test_retry_prompt_survives_empty_reason(self):
+        # 사유를 못 채운 경로(파싱 실패 등)에서도 터지지 않아야 한다.
+        out = classify.retry_prompt("원래 프롬프트", [])
+        self.assertIn("원래 프롬프트", out)
+        self.assertIn("사유 불명", out)
+
+
+class RetryLoopTests(unittest.TestCase):
+    """되묻기 루프의 배선.
+
+    루프가 잘못 엮이면 되묻지 않거나, 사유를 안 실어 같은 답을 또 받거나,
+    성공하고도 한 번 더 부른다. 셋 다 화면에는 안 보이고 값만 나간다 —
+    그래서 호출 횟수와 프롬프트 내용을 여기서 못박는다.
+    """
+
+    BAD = {"threads": [{"category": "chat", "title": "제목",
+                        "message_ids": []}]}          # 2026-09-17 의 그 답
+    GOOD = {"threads": [{"category": "chat", "title": "제목", "summary": "요지",
+                         "message_ids": ["msg-001", "msg-002", "msg-003"]}]}
+
+    def run_loop(self, replies, retries=1):
+        """replies 를 순서대로 돌려주는 가짜 LLM 으로 루프를 돌린다."""
+        seen: list[str] = []
+
+        def fake_call(prompt, model, timeout):
+            seen.append(prompt)
+            return replies[min(len(seen) - 1, len(replies) - 1)]
+
+        with mock.patch.object(classify, "call_claude", fake_call),              mock.patch.object(classify, "parse_reply", lambda raw: raw):
+            clean, data = classify.classify_with_retry(
+                "원래 프롬프트", IDS, CATS,
+                model="opus", timeout=60, retries=retries)
+        return clean, data, seen
+
+    def test_bad_answer_is_rescued_by_the_retry(self):
+        clean, data, seen = self.run_loop([self.BAD, self.GOOD])
+        self.assertIsNotNone(clean, "되물었으면 살아났어야 한다")
+        self.assertEqual(2, len(seen))
+        self.assertIs(self.GOOD, data)
+
+    def test_retry_prompt_carries_the_broken_rule(self):
+        _, _, seen = self.run_loop([self.BAD, self.GOOD])
+        self.assertNotIn("다시 요청합니다", seen[0])    # 첫 호출은 원래 프롬프트 그대로
+        self.assertIn("message_ids 가 비었습니다", seen[1])
+        self.assertIn("원래 프롬프트", seen[1])          # 분류할 메시지도 함께 가야 한다
+
+    def test_good_answer_does_not_pay_twice(self):
+        clean, _, seen = self.run_loop([self.GOOD, self.GOOD])
+        self.assertIsNotNone(clean)
+        self.assertEqual(1, len(seen), "통과했는데 또 부르면 값만 나간다")
+
+    def test_gives_up_after_the_budget(self):
+        clean, data, seen = self.run_loop([self.BAD, self.BAD])
+        self.assertIsNone(clean)
+        self.assertEqual(2, len(seen), "기본 재시도는 한 번뿐이다")
+        self.assertIsNotNone(data, "답은 받았다 — '못 받았다'와 구분돼야 한다")
+
+    def test_retries_zero_keeps_the_old_behaviour(self):
+        clean, _, seen = self.run_loop([self.BAD, self.GOOD], retries=0)
+        self.assertIsNone(clean)
+        self.assertEqual(1, len(seen), "--retries 0 이면 되묻지 않는다")
+
+    def test_unreadable_reply_is_told_apart(self):
+        # parse_reply 가 None → "답을 못 받았다". 호출부가 다른 말을 해야 한다.
+        clean, data, seen = self.run_loop([None, None])
+        self.assertIsNone(clean)
+        self.assertIsNone(data)
+        self.assertEqual(2, len(seen))
+        self.assertIn("JSON", seen[1])
+
+    def test_unreadable_then_good_recovers(self):
+        clean, _, seen = self.run_loop([None, self.GOOD])
+        self.assertIsNotNone(clean)
+        self.assertEqual(2, len(seen))
+
+    def test_extra_retries_are_honoured(self):
+        clean, _, seen = self.run_loop([self.BAD, self.BAD, self.GOOD],
+                                       retries=2)
+        self.assertIsNotNone(clean)
+        self.assertEqual(3, len(seen))
+
+
 class GraphMergeTests(unittest.TestCase):
     def test_new_node_gets_category_and_query(self):
         # category 가 없으면 발행본 생성이 KeyError 로 깨진다.
