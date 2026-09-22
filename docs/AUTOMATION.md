@@ -52,6 +52,9 @@ Firestore 적재 → 테스트까지 자동으로 진행된다.
 |---|---|
 | `scripts/kakao_export.ps1` | 카톡에 Ctrl+S 를 보내 대화 내보내기 → inbox 로 |
 | `scripts/kakao_ocr.ps1` | 화면 글자를 좌표와 함께 읽기(진단용) |
+| `scripts/kakao_replies.ps1` | 방 창을 거슬러 찍어 **답장 관계** 건져오기 — txt 가 버리는 것 (2026-09-22) |
+| `scripts/reply_bubbles.py` | 그 캡처에서 인용문·본문을 색으로 가르고 메시지 ID 로 확정 |
+| `scripts/apply_replies.py` | 확정된 답장 관계를 스레드 분류에 반영 — 옮길 것만 옮기고 나머지는 출처만 적는다 |
 | `scripts/ingest_incremental.py` | txt → 새 메시지만 추출해 아카이브 갱신 |
 | `scripts/kakao_drawer.ps1` | 카톡 '채팅방 서랍' 에서 사진·파일 원본을 내려받기 (2026-08-20) |
 | `scripts/drawer_grid.py` | 서랍 스크린샷에서 카드 사각형 찾기 — 위 스크립트가 누를 좌표 |
@@ -341,6 +344,7 @@ Unregister-ScheduledTask -TaskName '카톡아카이브-갱신감시' -Confirm:$f
 - `logs\daily-YYYYMMDD.log` — 전체 실행
 - `logs\kakao-export-YYYYMMDD.log` — 내보내기 단계(OCR 결과 포함)
 - `logs\kakao-drawer-YYYYMMDD.log` — 서랍 첨부 수집
+- `logs\kakao-replies-YYYYMMDD.log` — 답장 관계 수집
 
 ### 로그만으로는 부족했다 — 야간 갱신 결과를 화면에 남긴다 (2026-08-22)
 

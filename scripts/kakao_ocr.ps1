@@ -52,7 +52,14 @@ function Save-ScreenRegion {
 function Get-OcrLines {
     <#
       이미지 파일을 OCR 해서 줄 목록을 반환한다.
-      반환: @{ text; x; y }  — x,y 는 화면 절대좌표(원점·배율 보정 후) 중심
+      반환: @{ text; x; y; left; top; bottom; right }
+            x,y 는 화면 절대좌표(원점·배율 보정 후) 중심, 나머지는 글자 상자의 변.
+
+      상자의 네 변을 함께 돌려주는 이유(2026-09-22 추가): kakao_replies.ps1 이
+      답장 말풍선의 **인용문(회색)과 본문(검정)** 을 글자 색으로 가른다. 색을 보려면
+      그 줄이 그림의 어느 사각형인지 알아야 한다 — 중심점만으로는 못 본다.
+      필드를 더하기만 했으므로 기존 호출부(kakao_export.ps1·kakao_drawer.ps1)는
+      영향이 없다.
     #>
     param([string]$Path, [int]$OriginX = 0, [int]$OriginY = 0, [int]$Scale = 2)
 
@@ -84,9 +91,12 @@ function Get-OcrLines {
         if ($line.Words.Count -eq 0) { continue }
         $lines += [pscustomobject]@{
             text = $line.Text
-            x    = [int]($OriginX + (($minX + $maxX) / 2) / $Scale)
-            y    = [int]($OriginY + (($minY + $maxY) / 2) / $Scale)
-            left = [int]($OriginX + $minX / $Scale)
+            x      = [int]($OriginX + (($minX + $maxX) / 2) / $Scale)
+            y      = [int]($OriginY + (($minY + $maxY) / 2) / $Scale)
+            left   = [int]($OriginX + $minX / $Scale)
+            right  = [int]($OriginX + $maxX / $Scale)
+            top    = [int]($OriginY + $minY / $Scale)
+            bottom = [int]($OriginY + $maxY / $Scale)
         }
     }
     , $lines

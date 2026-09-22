@@ -6,7 +6,9 @@
   2. 멤버 명부 거울 갱신                       sync_members.js
   3. 멤버 요청(수집 동의·삭제) 내려받기        sync_member_requests.js
   4. inbox/*.txt 를 증분 반영                  ingest_incremental.py
+  4b. 답장 관계 건져오기 (비치명적)             kakao_replies.ps1 + reply_bubbles.py
   5. 주제 분류 (LLM, 비치명적)                 classify_unsorted.py
+  5a. 답장 관계를 분류에 반영 (비치명적)        apply_replies.py
   5c. 발행본이 로컬보다 뒤처졌나 확인           publish_state.py
   5d. 요지 산문 갱신 (LLM, 비치명적)            digest_prose.py
   5e. 관계망 근거 붙이기 (LLM 없음, 비치명적)  graph_evidence.py
@@ -314,6 +316,43 @@ try {
 }
 finally { $ErrorActionPreference = $prevEap }
 
+# 4b) 답장 관계 건져오기 — 실패해도 갱신을 멈추지 않는다
+#
+#     대화 내보내기(txt)는 답장 구조를 통째로 버린다. '누구에게 답장' 머리글도,
+#     인용문도 없이 본문만 남는다. 그래서 몇 시간·며칠 전 글에 단 답장이 분류에서
+#     바로 앞 화제에 흡수된다 — 실측 2026-09-21: 김철수의 '와~ 이거 스포 쪼끔만
+#     해주셔도 되나요?!!' 가 사흘 전 홍길동의 △△ 개편 글에 단 답장인데, txt 에는
+#     앞뒤 연결이 없어 혼자 떨어진 스레드가 됐다.
+#
+#     화면에는 남아 있으므로 방 창을 거슬러 올라가며 찍어 건져 온다.
+#     자세한 사정은 scripts/kakao_replies.ps1 머리말에 있다.
+#
+#     여기 두는 이유는 순서 때문이다. 앞의 증분 반영으로 그날 메시지가 원장에
+#     들어와 있어야 읽어 낸 글을 **원문과 맞춰** 메시지 ID 로 바꿀 수 있고,
+#     뒤의 주제 분류가 그 관계를 쓸 수 있다.
+#
+#     **실패해도 갱신을 멈추지 않는다.** Invoke-Step 을 쓰지 않는 이유다. 답장
+#     관계는 더해지는 것이고, 방 창이 닫혀 있으면 그날은 못 받을 뿐이다. 다만
+#     서랍 첨부와 달리 **만료가 없다** — 스크롤백이 남아 있는 한 나중에 -Days 를
+#     늘려 다시 받을 수 있다. 그래서 경고는 로그에만 남기고 화면에는 얹지 않는다.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    Say '답장 관계 수집'
+    $replyOut = & powershell -ExecutionPolicy Bypass -File scripts\kakao_replies.ps1 2>&1
+    $replyExit = $LASTEXITCODE
+    foreach ($l in $replyOut) {
+        if ($l -match '답장 말풍선|->|replies.jsonl|프레임 \d+장|WARN|ERROR') { Say "    $l" }
+    }
+    if ($replyExit -eq 2) {
+        Say '    방 창이 없어 답장 관계를 건너뛰었습니다 — 스크롤백이 남아 있으면 다음 실행이 이어갑니다.' 'WARN'
+    }
+    elseif ($replyExit -ne 0) {
+        Say "    답장 관계 수집 실패 (exit $replyExit) — 갱신은 계속합니다." 'WARN'
+    }
+}
+finally { $ErrorActionPreference = $prevEap }
+
 # 5) 주제 분류 (LLM) — 실패해도 갱신을 멈추지 않는다
 #
 #    파이프라인에서 유일하게 LLM 을 쓰는 칸이다. "이 대화가 어느 주제인가"는 코드가
@@ -364,6 +403,29 @@ if ($null -ne $classifyCode -and $classifyCode -ne 0) {
         }
     }
 }
+
+# 5a) 답장 관계를 분류에 반영 — 실패해도 갱신을 멈추지 않는다
+#
+#     4b 가 화면에서 건져 온 답장 관계(output/replies.jsonl)를 실제 스레드에
+#     얹는다. 분류 **뒤에** 두는 이유는 그날 새로 만들어진 스레드까지 보기
+#     위해서다 — 분류가 답장을 바로 앞 화제에 붙여 놓으면 여기서 바로잡는다.
+#
+#     무엇을 옮기고 무엇을 안 옮기는지는 scripts/apply_replies.py 머리말에 있다.
+#     요점만: 대화를 연 답장은 옮기지 않는다. 옮기면 뒤따르는 대화가 머리를
+#     잃는다(실측 2026-09-22: 그렇게 되면 t-429 는 22건이 고아가 됐다).
+#
+#     보고서 다시 쓰기는 **여기서 하지 않는다.** 편당 약 $0.44 이고 하룻밤에
+#     열여덟 편이 한꺼번에 나갈 수 있다. 손댄 주제는 output/replies-applied.json
+#     에 남으므로 사람이 보고 돌린다:
+#       python -m scripts.classify_unsorted --rewrite-ids <거기 적힌 목록>
+Say '--- 답장 관계 반영 ---'
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $applyOut = & { python -m scripts.apply_replies --apply } 2>&1
+    foreach ($l in $applyOut) { Say "    $l" }
+}
+finally { $ErrorActionPreference = $prevEap }
 
 # 5b-2) AI 검증 주석 (agy 검색 + 주소 열기 + LLM 작성)
 #
