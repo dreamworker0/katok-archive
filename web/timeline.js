@@ -502,6 +502,27 @@
       setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
     }
 
+    /** 이 대화가 다른 글에 단 답장에서 시작됐다면 그 뿌리를 한 줄로 보인다.
+     *
+     * 카톡 대화 내보내기는 답장 구조를 버리므로, 이 줄의 값은 방 창 화면에서
+     * 따로 건져 온 것이다(scripts/kakao_replies.ps1). 그런 대화는 카드만 보면
+     * 느닷없이 시작하는 것처럼 보인다 — 무엇에 답한 것인지가 어디에도 없다.
+     *
+     * 옮겨 붙이지 않고 줄로만 보이는 이유: 그 답장은 정말로 새 대화를 열었다.
+     * 주제를 합쳐 버리면 뒤따른 이야기가 통째로 남의 주제에 묻힌다.
+     */
+    function originLine(t) {
+      var og = t.reply_origin;
+      if (!og || !og.parent_thread) return "";
+      var src = ctx.data().THREAD_BY_ID[og.parent_thread];
+      if (!src) return "";      // 부모 주제가 발행에서 빠졌다 — 갈 데 없는 줄은 안 만든다
+      return '<p class="tc-origin">↩ ' +
+        esc(og.nickname || "") + (og.date ? " · " + esc(og.date) : "") +
+        ' 글에 단 답장에서 시작된 이야기입니다 · ' +
+        '<button class="linkish tc-origin-go" data-origin="' + esc(og.parent_thread) + '">' +
+        esc(src.title) + "</button></p>";
+    }
+
     function renderThreadCard(t) {
       var col = colorFor(t.category);
       var people = (t.participants || []).map(function (n) {
@@ -526,6 +547,7 @@
         (t.media_count ? " · 사진·첨부 " + t.media_count : "") + "</span></div>" +
         '<h3 class="tc-title">' + highlightText(esc(t.title), state.q) + "</h3>" +
         '<p class="tc-summary">' + highlightText(esc(t.summary || ""), state.q) + "</p>" +
+        originLine(t) +
         // 원본(`keywords`)이 아니라 발행 때 통일·승격한 `tags` 를 보여준다. '온톨로지
         // 모델링' 주제를 '온톨로지' 로 찾아 들어왔는데 카드에 '온톨로지' 가 없으면
         // "이게 왜 여기 있지" 가 된다. 표기도 카드마다 갈리지 않는다.
@@ -569,6 +591,9 @@
     function bindThreadCards(scope) {
       // 주제 카드의 태그도 같은 규칙으로 — 태그면 정확히, 아니면 글자 검색.
       bindKeywordChips(scope);
+      Array.prototype.forEach.call(scope.querySelectorAll(".tc-origin-go"), function (b) {
+        b.onclick = function () { jumpToTimeline("t-" + b.getAttribute("data-origin")); };
+      });
       observeOpenReports(scope);
       Array.prototype.forEach.call(scope.querySelectorAll(".tc-dl"), function (b) {
         b.onclick = function () {

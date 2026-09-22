@@ -793,6 +793,24 @@ def build_data(
         tmeta["start_time"] = msg_index[ids[0]].get("time", "")
         tmeta["end_time"] = msg_index[ids[-1]].get("time", "")
 
+        # 이 대화가 다른 글에 단 답장에서 시작됐다면 그 뿌리를 싣는다.
+        #
+        # apply_replies.py 가 topics.json 에 적어 둔 것이다. '옮기지 않고 자리를
+        # 지킨' 답장 — 옛 글에 답하면서 새 대화를 연 것들이다. 화면에서 그 줄이
+        # 없으면 카드가 느닷없이 시작하는 것처럼 보인다.
+        #
+        # 부모가 발행에서 빠졌으면(삭제 요청·제외) 통째로 뺀다. 눌러도 갈 데가
+        # 없는 단추를 남기는 것보다 아예 없는 편이 낫다.
+        og = t.get("reply_origin") or {}
+        parent = msg_index.get(og.get("parent"))
+        if parent and og.get("parent_thread"):
+            tmeta["reply_origin"] = {
+                "parent": og["parent"],
+                "parent_thread": og["parent_thread"],
+                "date": parent["date"],
+                "nickname": parent["nickname"],
+            }
+
     # 원문을 발행하지 않으므로 보고서가 원문을 대신해야 한다. 사람이 원문을 읽고
     # 쓴 마크다운을 얹는다. 없는 스레드는 한 줄 요약만 남는다.
     apply_reports(threads_meta, load_reports())
