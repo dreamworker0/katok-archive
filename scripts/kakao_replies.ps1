@@ -168,19 +168,30 @@ function Get-PaneHash { param([IntPtr]$Win, $Box)
     } finally { $bmp.Dispose() }
 }
 
-function Reset-ToBottom { param([IntPtr]$Win, [IntPtr]$Pane, $Rect, $Box, [int]$MaxRounds = 40)
+function Reset-ToBottom { param([IntPtr]$Win, [IntPtr]$Pane, $Rect, $Box,
+                               [int]$PerRound = 30, [int]$MaxRounds = 200)
     <# 고정 노치 수로 내리면 안 된다 - 실측 2026-09-22: 40노치(3600px)로는 바닥에
        닿지 못해 9/21~9/22 가 통째로 캡처에서 빠졌고, 그날 답장을 하나도 못 건졌다.
-       화면이 더 안 바뀔 때까지 내린다. #>
+       화면이 더 안 바뀔 때까지 내린다.
+
+       한도도 넉넉해야 한다. 실측 2026-09-22 밤: 한도가 40회(400노치)뿐이라
+       **꼭대기에 있던 창을 바닥까지 못 내리고 조용히 포기**했다. 그 자리에서
+       찍기 시작해 두 달 전 대화를 훑었고, 그날 새로 온 답장은 화면에 들어오지도
+       않았다. 스크롤백 전체가 약 1,200노치이므로 200회 x 30노치 = 6,000노치면
+       어디서 시작해도 닿는다.
+
+       돌려주는 것: 멎기까지 걸린 회차. **한도를 다 쓰고도 안 멎으면 -1** -
+       부른 쪽이 조용히 넘어가지 않고 경고를 남기게 한다. 조용한 실패가 이 일의
+       진짜 위험이다. #>
     $prev = -2
     for ($r = 1; $r -le $MaxRounds; $r++) {
-        [RP]::Wheel($Pane, $Rect, 10, $true)
+        [RP]::Wheel($Pane, $Rect, $PerRound, $true)
         Start-Sleep -Milliseconds 250
         $h = Get-PaneHash $Win $Box
         if ($h -eq $prev) { return $r }
         $prev = $h
     }
-    return $MaxRounds
+    return -1
 }
 
 function New-Scaled { param([string]$Path, [int]$Scale)
@@ -237,6 +248,11 @@ Write-Log ("목록 패널: 창 기준 {0},{1} {2}x{3}" -f $paneBox.x, $paneBox.y
 # 맨 아래로 - 시작 위치를 사람이 어디에 두었든 같은 곳에서 출발한다.
 Write-Log "맨 아래로 내립니다"
 $rounds = Reset-ToBottom $hRoom $pane $paneRect $paneBox
+if ($rounds -lt 0) {
+    # 바닥에 닿았는지 알 수 없으면 찍어 봐야 엉뚱한 구간이다. 멈추는 편이 낫다.
+    Write-Log "바닥까지 내리지 못했습니다 - 이 상태로 찍으면 엉뚱한 날짜를 훑습니다. 중단합니다." 'ERROR'
+    exit 3
+}
 Write-Log ("  {0}번 만에 바닥" -f $rounds)
 
 $frames = @()
@@ -306,7 +322,9 @@ Write-Log ("프레임 {0}장 확보" -f $frames.Count)
 # 사람이 보던 자리로 되돌린다 - 방 창은 맨 아래가 자연스러운 자리다.
 # 여기서도 고정 노치 수를 쓰지 않는다. 덜 내려가면 다음 실행이 바닥에서
 # 출발하지 못한다.
-[void](Reset-ToBottom $hRoom $pane $paneRect $paneBox)
+if ((Reset-ToBottom $hRoom $pane $paneRect $paneBox) -lt 0) {
+    Write-Log "끝내며 바닥으로 되돌리지 못했습니다 - 다음 실행이 여기서 출발합니다." 'WARN'
+}
 
 $manifest = Join-Path $WorkDir 'frames.json'
 Write-Utf8NoBom $manifest (@{ room = $Room; frames = $frames; pane = $paneBox } |

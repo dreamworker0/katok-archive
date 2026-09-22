@@ -46,6 +46,7 @@ ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
 TOPICS = OUTPUT / "topics.json"
 MESSAGES = OUTPUT / "messages.jsonl"
+REPLIES = OUTPUT / "replies.jsonl"
 RESULT = OUTPUT / "audit-thread-fit.json"
 
 DEFAULT_MODEL = "sonnet"   # 걸러내는 1차 훑기다. 의심 건만 사람이(또는 opus 로) 본다.
@@ -147,9 +148,43 @@ def audit_day(day: str, day_threads: list[dict], msgs_by_thread: dict[str, list[
     return found
 
 
+def facts_cover_from() -> str | None:
+    """답장 관계가 사실로 확정된 구간의 시작일. 없으면 None.
+
+    scripts/kakao_replies.ps1 이 화면에서 건져 온 구간이다. 그 안에서는 추론이
+    필요 없을 뿐 아니라 **해로우므로**(사실 위에 추측을 덧씌운다) 건너뛴다.
+    규칙을 머리말에만 적어 두면 지켜지지 않는다 — 코드가 지키게 한다.
+    """
+    if not REPLIES.exists():
+        return None
+    dates = [r.get("child_date") for r in read_jsonl(REPLIES) if r.get("child_date")]
+    return min(dates) if dates else None
+
+
+def merge_results(found: list[dict]) -> list[dict]:
+    """기존 목록과 **합쳐서** 쓴다.
+
+    예전에는 통째로 덮어썼다. --days 로 하루만 돌리면 그 전에 쌓은 것이 전부
+    날아갔다(실측: 2026-08-06 에 쌓은 73건). 같은 건(날짜·메시지·갈 곳)이 다시
+    나오면 새 판정으로 바꾸고, 나머지는 그대로 둔다.
+    """
+    old = read_json(RESULT) if RESULT.exists() else []
+    if not isinstance(old, list):
+        old = []
+    merged = {(r["date"], r["msg"], r["to"]): r for r in old}
+    for r in found:
+        merged[(r["date"], r["msg"], r["to"])] = r
+    out = sorted(merged.values(),
+                 key=lambda r: (r["confidence"] != "high", r["date"], r["msg"]))
+    write_json(RESULT, out)
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--days", help="쉼표로 나눈 날짜 목록(YYYY-MM-DD). 없으면 전체")
+    ap.add_argument("--all-days", action="store_true",
+                    help="답장으로 확정된 구간까지 억지로 다시 훑는다(권하지 않음)")
     ap.add_argument("--model", default=DEFAULT_MODEL,
                     help=f"claude -p 에 넘길 모델 (기본: {DEFAULT_MODEL})")
     ap.add_argument("--workers", type=int, default=WORKERS)
@@ -176,9 +211,14 @@ def main() -> int:
 
     by_id = {t["id"]: t for t in threads}
     wanted = set(args.days.split(",")) if args.days else None
+    covered = None if args.all_days else facts_cover_from()
+    if covered:
+        print(f"답장이 확정된 {covered} 이후는 건너뜁니다 — 그 구간은 추론할 일이 아닙니다.")
     jobs = []
     for day in sorted(per_day):
         if wanted and day not in wanted:
+            continue
+        if covered and day >= covered:
             continue
         tids = per_day[day]
         d = date.fromisoformat(day)
@@ -215,11 +255,9 @@ def main() -> int:
             note = f", 의심 {len(found)}건" if found else ""
             print(f"[{done}/{len(jobs)}] {day} 끝{note}")
             # 중간에 죽어도 그때까지의 결과는 남긴다
-            results.sort(key=lambda r: (r["confidence"] != "high", r["date"], r["msg"]))
-            write_json(RESULT, results)
+            merge_results(results)
 
-    results.sort(key=lambda r: (r["confidence"] != "high", r["date"], r["msg"]))
-    write_json(RESULT, results)
+    results = merge_results(results)
     high = sum(1 for r in results if r["confidence"] == "high")
     print(f"\n의심 {len(results)}건 (high {high} / medium {len(results) - high})")
     print(f"목록: {RESULT}")
