@@ -235,5 +235,40 @@ class TheOldBehaviourStaysReachableTests(unittest.TestCase):
         self.assertIn("-not $NoAutoOpen", DRAWER)
 
 
+
+class SaveIsNotCutShortTests(unittest.TestCase):
+    """저장 팝업을 진행 중에 닫으면 남은 것이 취소된다.
+
+    실측 2026-09-24: 팝업은 '저장하는 중' 진행 창으로 떴다가 같은 창이 '저장 결과'
+    로 바뀐다. 카톡은 오래된 것부터 받으므로, 3초 뒤에 닫던 예전 코드는 매일 밤
+    **가장 최근 사진** 5~8장을 취소시켰다(9/18~9/23). 로그에는 아무것도 없었다.
+    """
+
+    def _save_block(self) -> str:
+        start = DRAWER.index("[void](Invoke-Click $SAVE_BTN.X $SAVE_BTN.Y '저장')")
+        return DRAWER[start:DRAWER.index("선택 해제", start)]
+
+    def test_waits_for_the_result_before_closing(self):
+        block = self._save_block()
+        self.assertIn("Wait-SaveResult", block)
+        self.assertLess(block.index("Wait-SaveResult"), block.index("Close-ResultPopup"))
+
+    def test_no_fixed_sleep_between_save_and_close(self):
+        self.assertNotIn("Start-Sleep -Seconds 3", self._save_block())
+
+    def test_result_counts_are_read_and_failures_warned(self):
+        body = DRAWER[DRAWER.index("function Wait-SaveResult"):]
+        body = body[:body.index("\nfunction ")]
+        self.assertIn("저장\s*결과", body)
+        self.assertIn("실패", body)
+        self.assertIn("'WARN'", body)
+
+    def test_a_progress_popup_is_never_taken_for_the_end(self):
+        body = DRAWER[DRAWER.index("function Wait-SaveResult"):]
+        self.assertIn("-notmatch '저장하는\s*중'", body[:body.index("\nfunction ")])
+
+    def test_totals_are_logged_at_the_end(self):
+        self.assertIn("저장 결과 합계", DRAWER)
+
 if __name__ == "__main__":
     unittest.main()

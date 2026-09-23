@@ -118,6 +118,38 @@ class PlaceDocumentsTests(unittest.TestCase):
         self.assertEqual(self._placed(), [])
         self.assertEqual((added, existing), (1, 1))
 
+    def test_photo_sent_as_a_file_lands_with_the_documents(self):
+        """사진을 '파일' 로 보내면 원래 이름으로 온다 — 첨부 목록에 붙어야 한다.
+
+        실측 2026-09-23: 'Screenshot_20260910_084207_Drive.jpg' 가 확장자 때문에 사진
+        쪽으로 넘어가 unrecognized_filename 으로 버려졌다.
+        """
+        items = [
+            self._incoming_file("Screenshot_20260910_084207_Drive.jpg", b"\xff\xd8shot"),
+            self._incoming_file("KakaoTalk_20260923_084934055.png", b"\x89PNGchat"),
+        ]
+        added, existing = collect_drawer.place_documents(items, dry_run=False)
+
+        self.assertEqual(self._placed(), ["Screenshot_20260910_084207_Drive.jpg"])
+        self.assertEqual((added, existing), (1, 0))
+
+
+class ChatMediaTests(unittest.TestCase):
+    """대화에 사진·동영상으로 올라온 것과 '파일' 로 보낸 것을 가른다."""
+
+    def test_kakao_named_photo_and_video_are_chat_media(self):
+        self.assertTrue(collect_drawer.is_chat_media("KakaoTalk_20260923_084934055.png"))
+        self.assertTrue(collect_drawer.is_chat_media("KakaoTalk_20260917_110419904_01 (1).png"))
+        self.assertTrue(collect_drawer.is_chat_media("KakaoTalk_20260916_115751309.mp4"))
+
+    def test_other_named_image_is_a_file(self):
+        self.assertFalse(collect_drawer.is_chat_media("Screenshot_20260910_084207_Drive.jpg"))
+
+    def test_documents_are_not_chat_media(self):
+        # 이름에 KakaoTalk_ 가 들어가도 문서는 문서다
+        self.assertFalse(collect_drawer.is_chat_media("KakaoTalk_20260923_2340_17_099_group.txt"))
+        self.assertFalse(collect_drawer.is_chat_media("보고서.pdf"))
+
 
 if __name__ == "__main__":
     unittest.main()

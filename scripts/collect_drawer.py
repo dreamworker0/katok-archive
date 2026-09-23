@@ -28,6 +28,7 @@ from datetime import datetime
 from pathlib import Path
 
 from scripts.import_images import (
+    KAKAO_IMAGE_RE,
     PHOTO_EXTENSIONS,
     VIDEO_EXTENSIONS,
     import_image_files,
@@ -43,6 +44,22 @@ INBOX = ROOT / "inbox" / "drawer"
 # 않지만 붙지도 않고, 아무도 그 사실을 못 듣는다.
 IMAGE_EXT = PHOTO_EXTENSIONS
 VIDEO_EXT = VIDEO_EXTENSIONS
+
+
+def is_chat_media(name: str) -> bool:
+    """대화에 '사진'·'동영상' 으로 올라온 것인가 — 아니면 '파일' 로 보낸 것인가.
+
+    확장자만으로는 못 가른다. 사진을 **파일로** 보내면 서랍 [파일] 탭에 원래 이름
+    그대로 뜬다(실측 2026-09-23: 'Screenshot_20260910_084207_Drive.jpg'). 대화에는
+    '파일: …jpg' 로 남으므로 사진 대장이 아니라 첨부 목록에 붙어야 한다. 그런데
+    확장자만 보고 사진 쪽으로 넘기면 import_images 가 이름을 못 읽어
+    unrecognized_filename 으로 버리고, 첨부 목록은 그것을 끝내 못 받는다 — 유효기간
+    안에 받아 놓고도 어디에도 안 붙는다.
+
+    카톡이 사진·동영상으로 올린 것은 늘 'KakaoTalk_YYYYMMDD_HHMMSSmmm' 이름이다.
+    """
+    ext = Path(name).suffix.lower()
+    return ext in (IMAGE_EXT | VIDEO_EXT) and bool(KAKAO_IMAGE_RE.search(name))
 
 
 def _digest(path: Path) -> str:
@@ -96,7 +113,7 @@ def place_documents(items: list[tuple[Path, str]], dry_run: bool) -> tuple[int, 
 
     (새로 놓은 수, 이미 있던 수)
     """
-    docs = [(p, name) for p, name in items if p.suffix.lower() not in IMAGE_EXT | VIDEO_EXT]
+    docs = [(p, name) for p, name in items if not is_chat_media(name)]
     if not docs:
         return 0, 0
     if not dry_run:
@@ -191,8 +208,9 @@ def main() -> int:
 
     # 사진과 동영상을 **한 번에** 넘긴다. 짝짓기는 import_images 가 종류를 갈라
     # 하므로(같은 분에 둘이 섞여도 엇갈리지 않는다) 여기서 나눠 부를 이유가 없다.
-    imgs = [p for p, _ in moved if p.suffix.lower() in IMAGE_EXT]
-    videos = [p for p, _ in moved if p.suffix.lower() in VIDEO_EXT]
+    # 이름 규칙에 안 맞는 사진은 위에서 문서로 놓았다(is_chat_media).
+    imgs = [p for p, n in moved if is_chat_media(n) and p.suffix.lower() in IMAGE_EXT]
+    videos = [p for p, n in moved if is_chat_media(n) and p.suffix.lower() in VIDEO_EXT]
     media = imgs + videos
     if media and not args.dry_run:
         result = import_image_files(IMAGES_MANIFEST, media, ROOT)

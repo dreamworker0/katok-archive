@@ -26,7 +26,9 @@
   · 선택 바가 뜨면 격자 패널이 86px 줄어든다(780→694). **맨 위로 올려둔 상태**에서
     선택을 시작하면 스크롤 위치가 그대로라 카드 좌표가 안 밀린다
   · 저장은 대화상자 없이 '내 문서\카카오톡 받은 파일' 로 떨어지고, 끝나면 제목 없는
-    '저장 결과' 팝업이 뜬다 → WM_CLOSE 로 닫는다
+    '저장 결과' 팝업이 뜬다 → WM_CLOSE 로 닫는다. 이 팝업은 처음엔 '저장하는 중'
+    진행 창이고 다 받으면 결과로 바뀐다 — **진행 중에 닫으면 남은 것이 취소된다**
+    (실측 2026-09-24, Wait-SaveResult 참고)
   · 하단 바에 **삭제 버튼은 없다** (오조작으로 지울 경로가 없다)
   · Ctrl+A·Shift+↓ 는 듣지 않는다 — 이 컨트롤에 키보드 모델이 없다
 
@@ -495,6 +497,99 @@ function Close-ResultPopup {
     $popups.Count
 }
 
+function Read-PopupText { param([IntPtr]$h)
+    <# 팝업을 PrintWindow 로 찍어 OCR 한 글자를 한 줄로 돌려준다. 못 읽으면 ''. #>
+    if (-not $script:OcrReady) { return '' }
+    $bmp = [DW]::Shoot($h)
+    if ($null -eq $bmp) { return '' }
+    $tmp = [System.IO.Path]::Combine($env:TEMP, "drawer-pop-$([guid]::NewGuid().ToString('N')).png")
+    try {
+        # OCR 은 작은 글자에 약하다 — Get-BoxOcr 와 같은 2배.
+        $big = New-Object System.Drawing.Bitmap ($bmp.Width * 2), ($bmp.Height * 2)
+        try {
+            $g = [System.Drawing.Graphics]::FromImage($big)
+            $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+            $g.DrawImage($bmp, 0, 0, $big.Width, $big.Height)
+            $g.Dispose()
+            $big.Save($tmp, [System.Drawing.Imaging.ImageFormat]::Png)
+        } finally { $big.Dispose() }
+        $lines = Get-OcrLines -Path $tmp -Scale 2
+        return (($lines | ForEach-Object { $_.text }) -join ' ')
+    } catch {
+        return ''
+    } finally {
+        $bmp.Dispose()
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# 저장 버튼 뒤에 뜨는 팝업은 **한 창**이다. 처음에는 '파일 저장 — 선택한 파일을
+# 저장하는 중입니다 7/7'(진행)이고, 다 받으면 같은 창이 '저장 결과 — 저장 완료 : 7개
+# / 실패 : 0개' 로 바뀐다(실측 2026-09-24).
+#
+# 예전에는 저장을 누르고 3초 뒤 이 창을 닫았다. 진행 중에 닫으면 **남은 것이
+# 취소된다.** 카톡은 오래된 것부터 받으므로 잘려 나가는 것은 늘 끝, 곧 가장 최근
+# 사진이었다. 9/18~9/23 엿새 동안 매일 밤 최근 5~8장이 이렇게 빠졌고, 창을 읽지
+# 않았으니 로그는 조용했다. 21장 + 동영상이면 3초로 모자라고, 7장은 1초면 끝난다.
+#
+# 그래서 '저장 결과' 가 뜰 때까지 기다리고 그 숫자를 읽는다. OCR 이 안 되면 받은
+# 파일 수가 한동안 멈춘 것을 끝으로 본다.
+$script:SaveDone = 0
+$script:SaveFailed = 0
+$script:SaveUnsure = 0
+
+function Wait-SaveResult { param([int]$TimeoutSec = 180, [int]$QuietSec = 10)
+    $t0 = Get-Date
+    $lastCount = Count-Saved
+    $lastChange = Get-Date
+    $seenPopup = $false
+    $expired = $false
+    while ($true) {
+        $elapsed = ((Get-Date) - $t0).TotalSeconds
+        $pops = [DW]::NamelessPopups([uint32]$pidOut, 700)
+        $text = ''
+        if ($pops.Count -gt 0) {
+            $seenPopup = $true
+            $text = Read-PopupText $pops[0]
+            # 파일 탭에서 만료된 것을 같이 고르면 '원본 파일이 만료된 일부 파일을 저장할
+            # 수 없습니다' 가 뜬다(실측 2026-08-21). 고장이 아니라 예정된 일이다.
+            if ($text -match '만료') { $expired = $true }
+            if ($text -match '저장\s*결과|완료되었') {
+                $elapsed = ((Get-Date) - $t0).TotalSeconds   # OCR 에 걸린 시간까지
+                $done = if ($text -match '완료\s*[:：]?\s*(\d+)') { [int]$Matches[1] } else { -1 }
+                $fail = if ($text -match '실패\s*[:：]?\s*(\d+)') { [int]$Matches[1] } else { -1 }
+                if ($done -ge 0) { $script:SaveDone += $done }
+                if ($fail -gt 0) {
+                    $script:SaveFailed += $fail
+                    Write-Log ("    저장 결과: 완료 {0} / 실패 {1} ({2:N0}초)" -f $done, $fail, $elapsed) 'WARN'
+                } else {
+                    Write-Log ("    저장 결과: 완료 {0} / 실패 {1} ({2:N0}초)" -f $done, $fail, $elapsed)
+                }
+                return $true
+            }
+        }
+        $n = Count-Saved
+        if ($n -ne $lastCount) { $lastCount = $n; $lastChange = Get-Date }
+        $quiet = ((Get-Date) - $lastChange).TotalSeconds
+        # 결과를 못 읽는 경우의 끝 — 팝업은 떴고, 받은 파일이 한동안 늘지 않는다.
+        if ($seenPopup -and $quiet -ge $QuietSec -and ($text -notmatch '저장하는\s*중')) {
+            if ($expired) {
+                Write-Log '    만료된 파일은 받을 수 없다는 안내가 떴습니다 — 받을 수 있는 것은 다 받았습니다'
+                return $true
+            }
+            $script:SaveUnsure++
+            Write-Log ("    저장 결과를 읽지 못했습니다 — 받은 파일이 {0}초째 그대로라 끝난 것으로 봅니다" -f $QuietSec) 'WARN'
+            return $false
+        }
+        if ($elapsed -ge $TimeoutSec) {
+            $script:SaveUnsure++
+            Write-Log ("    {0}초가 지나도 저장이 끝나지 않았습니다 — 닫으면 남은 것은 취소됩니다" -f $TimeoutSec) 'WARN'
+            return $false
+        }
+        Start-Sleep -Milliseconds 700
+    }
+}
+
 function Count-Saved {
     if (-not (Test-Path $SaveDir)) { return 0 }
     (Get-ChildItem $SaveDir -File -ErrorAction SilentlyContinue).Count
@@ -742,7 +837,8 @@ try {
                 $totalClicked += $clicked
 
                 [void](Invoke-Click $SAVE_BTN.X $SAVE_BTN.Y '저장')
-                Start-Sleep -Seconds 3
+                # 진행 중에 닫으면 남은 것(= 가장 최근 것)이 취소된다 — Wait-SaveResult 참고.
+                [void](Wait-SaveResult)
                 [void](Close-ResultPopup)
                 [void](Invoke-Click $CLEAR_BTN.X $CLEAR_BTN.Y '선택 해제')
 
@@ -766,6 +862,12 @@ finally {
 $after = Count-Saved
 Write-Log ("받은 파일 {0}개 → {1}개 (새로 {2}개)" -f $before, $after, ($after - $before))
 Write-Log ("선택한 항목 누적 {0}개" -f $totalClicked)
+if ($script:SaveFailed -gt 0 -or $script:SaveUnsure -gt 0) {
+    Write-Log ("저장 결과 합계: 완료 {0} / 실패 {1} / 결과를 못 읽은 저장 {2}번" -f `
+        $script:SaveDone, $script:SaveFailed, $script:SaveUnsure) 'WARN'
+} else {
+    Write-Log ("저장 결과 합계: 완료 {0} / 실패 0" -f $script:SaveDone)
+}
 
 # 두 탭 모두 빈 것은 '오늘 새 첨부가 없다' 가 아니다.
 #
