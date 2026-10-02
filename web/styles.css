@@ -218,7 +218,10 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 
 .doc { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
   box-shadow: var(--shadow-sm); padding: 26px 28px; margin-bottom: 24px; scroll-margin-top: 150px; }
-.doc-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+/* 줄을 바꿔 감싼다. 감싸지 않으면 늘 한 줄인 doc-meta 가 자리를 먼저 차지해
+   좁은 화면에서 제목이 '프로젝 / 트·결 / 과물' 처럼 세 줄로 쪼그라들었다
+   (2026-10-03). 감싸면 넘칠 때 메타가 제목 아래로 내려간다. */
+.doc-head { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; margin-bottom: 4px; }
 .doc-bar { width: 6px; align-self: stretch; border-radius: 4px; background: var(--c, var(--accent)); }
 .doc-title { font-size: 18px; font-weight: 800; margin: 0; }
 .doc-headline { color: var(--ink-soft); font-size: 14px; margin: 0 0 12px; }
@@ -974,6 +977,12 @@ img.img-error {
     padding: 0 16px 6px; scrollbar-width: none; }
   .cat-nav::-webkit-scrollbar { display: none; }
   .cat-nav button, .cat-nav-item { flex: 0 0 auto; min-height: 36px; }
+  /* 묶음으로 나눈 뒤로는 줄마다 2~4개뿐이라 감싸도 된다. 옆으로 밀게 두었더니
+     잘린 끝을 '밀 수 있다' 가 아니라 '잘렸다' 로 읽었다(2026-10-03). 감싸면
+     첫 화면이 383px → 661px 로 길어지는 값을 치른다. */
+  .cat-nav-groups .cat-nav { flex-wrap: wrap; overflow-x: visible; margin: 0; padding: 0; }
+  /* 제목 아래로 내려간 메타가 오른쪽에 붙어 떠 보이지 않게 왼쪽에 둔다. */
+  .doc-meta { margin-left: 0; }
   .empty-state { grid-template-columns: 1fr; min-height: 0; }
   .empty-state__art { min-height: 160px; }
   .empty-state__copy { padding: 30px 24px; }
