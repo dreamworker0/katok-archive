@@ -79,6 +79,10 @@ def _month(date: str) -> str:
 # 만료된 일부 파일을 저장할 수 없습니다' 라고 알려 줬다. 그래서 경계는 >= 다.
 FILE_RETENTION_DAYS = 14
 
+# 요지 문서(digests/{분류})의 주제 목록에 남기는 칸. web/summary.js 가 목록 한 줄을
+# 그릴 때 읽는 것뿐이다 — 갈래·보조 분류 목록은 THREAD_BY_ID 에서 찾아 그린다.
+DIGEST_THREAD_KEYS = ("id", "title", "category", "start_date", "end_date", "count")
+
 
 def file_share_expired(share_date: str, today: date | None = None) -> bool:
     """원본을 못 구한 파일 공유가 **되살릴 수 없는 것**인지.
@@ -328,7 +332,10 @@ def build_digests(
             "apps": apps_by_cat.get(cid, []),
             "links": links_by_cat.get(cid, []),
             "participants": top_nicks,
-            "threads": mine,
+            # 목록에 그릴 칸만 담는다. 주제를 통째로 넣었더니 보고서·AI 검증 주석까지
+            # 따라와 projects 한 장이 548KB 가 되어 80% 선을 넘었다(2026-10-03, 그중
+            # 505KB 가 이 목록). 본문은 threads 컬렉션에 이미 있고 화면은 거기서 읽는다.
+            "threads": [{k: t.get(k) for k in DIGEST_THREAD_KEYS} for t in mine],
             "also_threads": [
                 {"id": t["id"], "category": t["category"]}
                 for t in also_by_cat.get(cid, [])
