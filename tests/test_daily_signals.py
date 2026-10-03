@@ -191,7 +191,7 @@ class RunnerStillGuardsPublishingTests(unittest.TestCase):
     def test_truly_quiet_day_still_skips(self):
         self.assertIn(
             "if ($added -eq 0 -and -not $requestsChanged -and $classified -eq 0 "
-            "-and -not $stale) {",
+            "-and $merged -eq 0 -and -not $stale) {",
             DAILY)
 
     def test_request_change_alone_is_a_reason_to_publish(self):

@@ -9,6 +9,7 @@
   4b. 답장 관계 건져오기 (비치명적)             kakao_replies.ps1 + reply_bubbles.py
   5. 주제 분류 (LLM, 비치명적)                 classify_unsorted.py
   5a. 답장 관계를 분류에 반영 (비치명적)        apply_replies.py
+  5a-2. 같은 날 갈린 주제 합치기 (LLM, 비치명적) audit_same_day.py + merge_threads.py
   5c. 발행본이 로컬보다 뒤처졌나 확인           publish_state.py
   5d. 요지 산문 갱신 (LLM, 비치명적)            digest_prose.py
   5e. 관계망 근거 붙이기 (LLM 없음, 비치명적)  graph_evidence.py
@@ -427,6 +428,46 @@ try {
 }
 finally { $ErrorActionPreference = $prevEap }
 
+# 5a-2) 같은 날 한 대화가 둘로 갈린 주제 합치기 — 실패해도 갱신을 멈추지 않는다
+#
+#     대화 중간에 새 멤버 인사·링크 하나가 끼면 분류가 거기서 끊어, 끼어든 화제 뒤에
+#     이어진 말이 새 주제가 된다. 사용자 결정(2026-10-03): 하루 대화 안에서 맥락이
+#     같으면 하나로 합친다. 분류·답장 반영 **뒤**에 두어 그날 새로 생긴 주제까지 본다.
+#
+#     최근 이틀만, 그것도 지난 감사 뒤로 주제 구성이 바뀐 날만 묻는다(조용한 날 0원,
+#     하루 약 $0.19). **high 만 자동으로 합친다.** medium 은 실측 18개 중 4개가 통째로
+#     합치면 안 되는 것이었다 — 로그에 '확인 필요'로 남기고 사람이 정한다.
+#     합친 주제는 보고서와 AI 주석을 그 자리에서 다시 쓴다(묶음 하나에 약 $0.6).
+#     옛 보고서를 그대로 두면 화면이 반쪽 이야기를 한다.
+Say '--- 같은 날 주제 합치기 ---'
+$merged = 0
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $auditOut = & { python -m scripts.audit_same_day --recent 2 } 2>&1
+    foreach ($l in $auditOut) { Say "    $l" }
+    $mergeOut = & { python -m scripts.merge_threads --apply } 2>&1
+    $rewriteIds = ''
+    foreach ($l in $mergeOut) {
+        if ($l -match '^MERGE_REWRITE=(.*)$') { $rewriteIds = $Matches[1].Trim(); continue }
+        if ($l -match '^PENDING_MEDIUM=(\d+)$') {
+            if ([int]$Matches[1] -gt 0) {
+                Say "    합칠지 사람이 정할 묶음(medium) $($Matches[1])개 — python -m scripts.merge_threads 로 보세요." 'WARN'
+            }
+            continue
+        }
+        Say "    $l"
+    }
+    if ($rewriteIds) {
+        $merged = ($rewriteIds -split ',').Count
+        Say "    합친 주제 $merged 개의 보고서를 다시 씁니다: $rewriteIds"
+        foreach ($l in (& { python -m scripts.classify_unsorted --rewrite-ids $rewriteIds } 2>&1)) { Say "    $l" }
+        foreach ($l in (& { python -m scripts.ai_reports --ids $rewriteIds } 2>&1)) { Say "    $l" }
+    }
+}
+catch { Say "같은 날 주제 합치기가 실패했습니다 — 없이 계속합니다: $_" 'WARN' }
+finally { $ErrorActionPreference = $prevEap }
+
 # 5b-2) AI 검증 주석 (claude 웹 검색 + 주소 열기 + LLM 작성)
 #
 #     사람 보고서 옆에 붙는 기계의 주석이다. 사람 보고서가 쓰인 **뒤**에 돌아야
@@ -478,7 +519,7 @@ if ($null -eq $stale) {
 }
 
 # 발행할지 판단 — 분류 뒤에 둔다(위 주석 참고)
-if ($added -eq 0 -and -not $requestsChanged -and $classified -eq 0 -and -not $stale) {
+if ($added -eq 0 -and -not $requestsChanged -and $classified -eq 0 -and $merged -eq 0 -and -not $stale) {
     Say "새 메시지도 멤버 요청 변경도 분류 변경도 없고 발행본도 최신이라 발행을 건너뜁니다."
     # 건너뛴 것은 실패가 아니다. 그래도 남긴다 — 이 기록이 없으면 화면은 '실패'와
     # '조용한 날'을 구분하지 못하고, 둘 다 '소식 없음'으로 보인다.
@@ -487,7 +528,7 @@ if ($added -eq 0 -and -not $requestsChanged -and $classified -eq 0 -and -not $st
     exit 0
 }
 if ($added -eq 0) {
-    if (-not $requestsChanged -and $classified -eq 0) {
+    if (-not $requestsChanged -and $classified -eq 0 -and $merged -eq 0) {
         Say "새 메시지는 없지만 발행본이 로컬보다 뒤처져 있어 발행합니다."
     } else {
         Say "새 메시지는 없지만 멤버 요청 변경 또는 주제 분류가 있어 발행합니다."
@@ -612,6 +653,7 @@ $why = @()
 if ($added -gt 0) { $why += "새 메시지 $added 건" }
 if ($requestsChanged) { $why += "멤버 요청 변경" }
 if ($classified -gt 0) { $why += "분류 $classified 건" }
+if ($merged -gt 0) { $why += "주제 합치기 $merged 묶음" }
 if ($stale) { $why += "뒤처진 발행본 따라잡기" }
 # 발행 사유는 아니지만 같은 줄에 얹는다 — 여기가 사람이 실제로 보는 유일한 자리다.
 if ($script:drawerWarn) { $why += "⚠ $($script:drawerWarn)" }

@@ -66,8 +66,13 @@ class MergeThreadsTest(unittest.TestCase):
         self.assertEqual(todo, [])
         self.assertIn("t-012", skipped[0]["why"])
 
-    def test_unknown_ids_are_dropped(self):
+    def test_already_merged_group_is_quiet(self):
+        """하나만 남은 묶음은 이미 합친 것이다 — 밤마다 '건너뜀' 으로 떠들면 안 된다."""
         todo, skipped = mt.plan(_topics(), [_g(["t-010", "t-999"])])
+        self.assertEqual((todo, skipped), ([], []))
+
+    def test_group_with_nothing_left_is_reported(self):
+        todo, skipped = mt.plan(_topics(), [_g(["t-998", "t-999"])])
         self.assertEqual(todo, [])
         self.assertTrue(skipped)
 

@@ -17,6 +17,7 @@ t-534 가 끼어 있었다. 한 사람의 사진과 그 사진을 설명하는 �
 
     python -m scripts.audit_same_day                       # 전체
     python -m scripts.audit_same_day --days 2026-10-02     # 특정 날짜만
+    python -m scripts.audit_same_day --recent 2            # 밤 갱신: 최근 이틀, 바뀐 날만
 
 출력: output/same-day-merge.json — 날짜별로 **합쳐 쓴다**(다시 돌린 날만 바뀐다).
 반영은 scripts.merge_threads 가 한다. 원문은 출력에 싣지 않는다(저장소가 공개다).
@@ -122,16 +123,45 @@ def audit_day(day: str, day_threads: list[dict], msgs: dict[str, list[dict]],
     return out
 
 
-def save(by_day: dict[str, list[dict]]) -> None:
+def day_signature(msgs: dict[str, list[dict]]) -> str:
+    """그날의 주제 구성. 같으면 다시 물어도 같은 답이 나올 것이므로 묻지 않는다."""
+    return ",".join(f"{tid}:{len(ms)}" for tid, ms in sorted(msgs.items()))
+
+
+def load() -> dict:
     old = read_json(RESULT) if RESULT.exists() else {}
-    days = dict(old.get("days") or {}) if isinstance(old, dict) else {}
-    days.update(by_day)
-    write_json(RESULT, {"days": dict(sorted(days.items()))})
+    return old if isinstance(old, dict) else {}
+
+
+def save(by_day: dict[str, list[dict]], sigs: dict[str, str]) -> None:
+    """날짜별로 덮어쓰되, 사람이 뺀 묶음(rejected)은 살려 둔다.
+
+    밤마다 같은 날을 다시 감사하면 그날 목록이 새로 쓰인다. 사람이 읽고 뺀 묶음이
+    같은 주제들로 다시 제안되면 그 표시를 옮겨 붙인다 — 안 그러면 다음 날 밤 자동
+    합치기가 사람이 거절한 것을 되살린다.
+    """
+    old = load()
+    days = dict(old.get("days") or {})
+    for day, groups in by_day.items():
+        rejected = {frozenset(g["threads"]): g for g in days.get(day, [])
+                    if g.get("confidence") == "rejected"}
+        for g in groups:
+            r = rejected.get(frozenset(g["threads"]))
+            if r:
+                g["confidence"] = "rejected"
+                g["rejected_why"] = r.get("rejected_why", "")
+        days[day] = groups
+    all_sigs = dict(old.get("sigs") or {})
+    all_sigs.update(sigs)
+    write_json(RESULT, {"days": dict(sorted(days.items())),
+                        "sigs": dict(sorted(all_sigs.items()))})
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--days", help="쉼표로 나눈 날짜(YYYY-MM-DD). 없으면 주제가 둘 이상인 날 전부")
+    ap.add_argument("--recent", type=int, default=0,
+                    help="최근 N일만, 그것도 지난 감사 뒤로 주제 구성이 바뀐 날만 (밤 갱신용)")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--workers", type=int, default=WORKERS)
     ap.add_argument("--timeout", type=int, default=TIMEOUT_SEC)
@@ -149,9 +179,13 @@ def main() -> int:
                 per_day[m["date"]][t["id"]].append(m)
 
     wanted = set(args.days.split(",")) if args.days else None
+    if args.recent:
+        seen = load().get("sigs") or {}
+        recent = sorted(per_day)[-args.recent:]
+        wanted = {d for d in recent if seen.get(d) != day_signature(per_day[d])}
     jobs = [(d, [by_id[i] for i in sorted(tids)], dict(tids))
             for d, tids in sorted(per_day.items())
-            if len(tids) > 1 and (not wanted or d in wanted)]
+            if len(tids) > 1 and (wanted is None or d in wanted)]
     print(f"감사 대상 {len(jobs)}일 (모델 {args.model}, 동시 {args.workers})")
 
     done_days: dict[str, list[dict]] = {}
@@ -169,7 +203,7 @@ def main() -> int:
                 continue
             g = done_days[d]
             print(f"[{n}/{len(jobs)}] {d} 끝" + (f", 묶음 {len(g)}" if g else ""))
-            save({d: done_days[d]})     # 중간에 죽어도 그때까지는 남긴다
+            save({d: done_days[d]}, {d: day_signature(per_day[d])})   # 중간에 죽어도 남긴다
 
     groups = [g for gs in done_days.values() for g in gs]
     hi = sum(g["confidence"] == "high" for g in groups)

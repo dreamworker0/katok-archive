@@ -53,12 +53,12 @@ def load_retired() -> list[str]:
     return list(read_json(RETIRED)) if RETIRED.exists() else []
 
 
-def proposed_groups(want_medium: bool) -> list[dict]:
+def proposed_groups(want_medium: bool, only: str | None = None) -> list[dict]:
     if not PROPOSAL.exists():
         return []
     # 사람이 읽고 뺀 묶음은 confidence 를 'rejected' 로 바꿔 둔다 — 지우지 않는 것은
     # 감사를 다시 돌려도 같은 제안이 되살아날 때 왜 뺐는지 남기려는 것이다.
-    take = {"high", "medium"} if want_medium else {"high"}
+    take = {only} if only else ({"high", "medium"} if want_medium else {"high"})
     out = []
     for gs in (read_json(PROPOSAL).get("days") or {}).values():
         for g in gs:
@@ -90,7 +90,10 @@ def plan(topics: dict, groups: list[dict]) -> tuple[list[dict], list[dict]]:
         ids = sorted((i for i in c["ids"] if i in by_id),
                      key=lambda i: by_id[i]["message_ids"][0])
         if len(ids) < 2:
-            skipped.append({"ids": sorted(c["ids"]), "why": "지금은 없는 주제"})
+            # 하나만 남았으면 이미 합친 묶음이다(밤마다 같은 제안 파일을 다시 읽는다).
+            # 둘 다 없을 때만 알린다 — 그건 다른 일로 주제가 사라진 것이다.
+            if not ids:
+                skipped.append({"ids": sorted(c["ids"]), "why": "지금은 없는 주제"})
             continue
         if hidden & set(ids):
             skipped.append({"ids": ids, "why": "발행에서 뺀 주제가 들어 있음: "
@@ -204,11 +207,23 @@ def main() -> int:
             print(f"      · {r}")
     for s in skipped:
         print(f"\n  [건너뜀] {', '.join(s['ids'])}: {s['why']}")
+    # 자동으로 합치지 않는 medium 가운데 아직 남은 것 — 사람이 읽고 정할 몫이다.
+    # 실측 2026-10-03: medium 18개 중 4개는 통째로 합치면 안 되는 것이었다
+    # (메시지 한두 건만 잘못 붙은 경우). 정했으면 그 묶음을 'rejected' 로 바꾸거나
+    # --confidence medium --apply 로 합친다.
+    if not args.groups and args.confidence == "high":
+        pending, _ = plan(topics, proposed_groups(False, only="medium"))
+        for g in pending:
+            print(f"\n  [확인 필요·medium] {' + '.join(g['ids'])} → '{g['title']}'")
+            for r in g["reasons"]:
+                print(f"      · {r}")
+        print(f"PENDING_MEDIUM={len(pending)}")
 
     if not args.apply:
         print("\n(--apply 를 주면 실제로 고칩니다. 지금은 아무것도 쓰지 않았습니다.)")
         return 0
     if not todo:
+        print("MERGE_REWRITE=")
         return 0
 
     bak = OUTPUT / f"backup-merge-{date.today():%Y%m%d}"
@@ -234,6 +249,7 @@ def main() -> int:
     print(f"  보고서 다시 쓰기 {len(rewrite)}편:")
     print(f"    python -m scripts.classify_unsorted --rewrite-ids {','.join(rewrite)}")
     print(f"    python -m scripts.ai_reports --ids {','.join(rewrite)}")
+    print(f"MERGE_REWRITE={','.join(rewrite)}")     # run_daily.ps1 이 읽는 표식
     return 0
 
 
