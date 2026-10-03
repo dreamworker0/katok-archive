@@ -413,9 +413,13 @@
           var isAdm = m.role === "admin";
           return '<div class="adm-member" data-email="' + esc(m.id) + '"' +
             ' data-names="' + esc(names.join(", ")) + '">' +
+            // 굵은 글씨는 사람 이름(구글 계정명), 그 뒤가 계정과 연결된 카톡 표시명이다.
+            // 예전에는 굵은 글씨가 카톡 표시명이라 구글 이름으로 잘못 읽혔다.
             '<div class="adm-main"><b>' +
-            (names.length ? esc(names.join(", ")) : "(표시명 없음)") + "</b> " +
+            esc(m.googleName || "(구글 이름 없음)") + "</b> " +
             '<span class="adm-mail">' + esc(m.id) + "</span>" +
+            ' <span class="adm-kakao">· 카톡: ' +
+            (names.length ? esc(names.join(", ")) : "(연결 없음)") + "</span>" +
             (isAdm ? ' <span class="adm-tag">관리자</span>' : "") +
             (unlinked.length
               ? ' <span class="bad">· ' + esc(unlinked.join(", ")) + " 은 아직 발언 없음</span>"

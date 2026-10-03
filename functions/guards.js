@@ -183,8 +183,14 @@ async function approveClaim(db, data, caller, now) {
     const nicknames = normalizeNicknames(
       (data && (data.nicknames || data.nickname)), claimed && claimed.nickname);
 
+    // 구글 계정명은 신청서에만 있다. 승인하면서 신청서를 지우므로 여기서 옮겨 둔다 —
+    // 관리 탭에서 '이 카톡 표시명이 누구 계정인가' 를 사람 이름으로 확인하는 자리다.
+    const googleName = claimed && typeof claimed.displayName === "string"
+      ? claimed.displayName.trim().slice(0, 60) : "";
+
     tx.set(memberRef, {
       email,
+      ...(googleName ? { googleName } : {}),
       name: nicknames[0],
       // nickname 은 대표 표시명. 화면 표시와 하위호환용으로 남긴다.
       nickname: nicknames[0],

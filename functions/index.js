@@ -325,6 +325,12 @@ exports.ensureClaim = onCall(async (request) => {
     return { member: false };
   }
   const role = (snap.data() || {}).role || "user";
+  // 구글 계정명을 명부에 맞춰 둔다. 관리 탭이 카톡 표시명 옆에 사람 이름을 보여주는
+  // 자리다. 이름을 바꿨으면 다음 로그인에 따라간다. 같으면 쓰지 않는다.
+  const googleName = String(request.auth.token.name || "").trim().slice(0, 60);
+  if (googleName && googleName !== (snap.data() || {}).googleName) {
+    await snap.ref.set({ googleName }, { merge: true });
+  }
   const existing = (request.auth.token.member === true)
     && (request.auth.token.admin === (role === "admin"));
   if (existing) return { member: true, refreshed: false, role };

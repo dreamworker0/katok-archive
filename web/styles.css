@@ -868,6 +868,7 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .adm-row:last-of-type { border-bottom: none; }
 .adm-main { font-size: 14.5px; }
 .adm-mail { color: var(--ink-faint); font-size: 12.5px; }
+.adm-kakao { color: var(--ink-soft); font-size: 12.5px; }
 .adm-meta { font-size: 12.5px; color: var(--ink-soft); }
 .adm-meta .ok { color: #16a34a; font-weight: 600; }
 .adm-meta .bad, .adm-line .bad { color: #dc2626; font-weight: 600; }

@@ -307,6 +307,19 @@ test("새 사람 승인: user 로 들어가고 표시명은 신청서에서 가�
   assert.equal(db.__data("claims/new@x.com"), null);
 });
 
+test("승인하면 신청서의 구글 계정명을 명부로 옮긴다 — 신청서는 지워지므로", async () => {
+  const db = fakeDb({
+    "members/gap@x.com": member("admin"),
+    "claims/new@x.com": { nickname: "새사람", displayName: "  홍길동  " },
+    "claims/non@x.com": { nickname: "이름없음" },
+  });
+  await guards.approveClaim(db, { email: "new@x.com" }, "gap@x.com", NOW);
+  await guards.approveClaim(db, { email: "non@x.com" }, "gap@x.com", NOW);
+  assert.equal(db.__data("members/new@x.com").googleName, "홍길동");
+  assert.equal("googleName" in db.__data("members/non@x.com"), false,
+    "없으면 빈 값으로 덮지 않는다");
+});
+
 test("표시명이 하나도 없으면 승인하지 않는다", async () => {
   const db = fakeDb({ "members/gap@x.com": member("admin") });
   await assert.rejects(() => guards.approveClaim(db, { email: "new@x.com" }, "gap@x.com", NOW),
