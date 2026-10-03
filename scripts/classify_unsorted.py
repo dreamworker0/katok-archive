@@ -1002,9 +1002,16 @@ def _write_reports(targets: list[dict], model: str, examples: list[dict],
 
 
 def next_thread_id(threads: list[dict]) -> int:
-    """t-001 형식의 다음 번호. 미분류 스레드는 이 형식이 아니라 섞이지 않는다."""
+    """t-001 형식의 다음 번호. 미분류 스레드는 이 형식이 아니라 섞이지 않는다.
+
+    합치면서 사라진 번호(merge_threads 가 적는 retired-thread-ids.json)도 센다.
+    맨 끝 번호가 사라진 뒤 새 주제가 그 번호를 받으면, 예전에 건넨 주제 주소가
+    엉뚱한 주제를 가리킨다.
+    """
+    retired = OUT / "retired-thread-ids.json"
+    old = load_json(retired) if retired.exists() else []
     top = 0
-    for t in threads:
+    for t in list(threads) + [{"id": i} for i in old]:
         m = re.match(r"^t-(\d+)$", str(t.get("id") or ""))
         if m:
             top = max(top, int(m.group(1)))
