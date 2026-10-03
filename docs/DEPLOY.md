@@ -35,8 +35,11 @@ Firestore에서 전송된다. `getDownloadURL`(공개 URL)을 쓰지 않고 ID �
 
 ### 2. 서비스 계정 키
 콘솔 → 프로젝트 설정 → 서비스 계정 → **새 비공개 키 생성** →
-프로젝트 루트에 `serviceAccountKey.json`으로 저장.
-(`.gitignore`에 있어 커밋되지 않음. 절대 공유하지 말 것)
+`%USERPROFILE%\.katok-archive\serviceAccountKey.json` 으로 저장하고 본인만 읽게 권한을 좁힌다
+(`icacls <폴더> /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F" "SYSTEM:(OI)(CI)F"`).
+프로젝트 폴더에 두지 않는다 — 이 폴더에서 AI 도구를 돌리고, 그 프롬프트에는 단톡방
+글이 들어간다. 다른 곳에 두려면 `KATOK_SA_KEY` 환경변수로 경로를 준다(`scripts/sa_key.js`).
+절대 공유하지 말 것.
 
 ### 3. Storage CORS 설정 (1회, 필수)
 ```bash

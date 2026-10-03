@@ -119,7 +119,7 @@ output/                 원장·주제·보고서·관계망 (전부)
 config/members.json     멤버 이메일
 config/pii_allow.json   감추지 않을 연락처 — 그 자체가 연락처 목록이다
 assets/*                사진·동영상·첨부 (통째로 무시 — 열거하면 샌다)
-serviceAccountKey.json  Firebase 서비스 계정 키
+serviceAccountKey.json  Firebase 서비스 계정 키 (예전 자리 — 지금은 %USERPROFILE%\.katok-archive\ 에 둔다)
 KakaoTalk_*.txt         내보내기 원문
 ```
 

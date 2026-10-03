@@ -32,7 +32,7 @@ const path = require("path");
 const admin = require("firebase-admin");
 
 const ROOT = path.resolve(__dirname, "..");
-const KEY = path.join(ROOT, "serviceAccountKey.json");
+const KEY = require("./sa_key");   // 프로젝트 밖으로 옮겼다 — sa_key.js 참고
 const NOTIFY = path.join(ROOT, "config", "notify.json");
 
 /* ── 밖으로 알리기 (2026-09-02) ──

@@ -42,6 +42,23 @@ SERVE_ROOT = ROOT / DEFAULT_DIR
 NO_CACHE_SUFFIXES = (".js", ".css", ".html", ".webmanifest")
 
 
+def every_path_headers() -> list[tuple[str, str]]:
+    """firebase.json 이 모든 경로('**')에 붙이는 헤더 — 보안 헤더(CSP 등)가 여기 있다.
+
+    손으로 두 벌 적으면 어긋난다. 미리보기에서 CSP 위반이 안 보이면 배포본에서도
+    안 보일 거라고 믿을 수 있어야 하므로, 배포 설정을 그대로 읽는다.
+    """
+    import json
+    conf = json.loads((ROOT / "firebase.json").read_text(encoding="utf-8"))
+    site = conf["hosting"][0] if isinstance(conf["hosting"], list) else conf["hosting"]
+    for block in site.get("headers", []):
+        if block.get("source") == "**":
+            return [(h["key"], h["value"]) for h in block["headers"]]
+    return []
+
+
+EVERY_PATH_HEADERS = every_path_headers()
+
 _VIEWS: set[str] = set()
 
 
@@ -66,7 +83,8 @@ class HostingHandler(SimpleHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path.endswith(NO_CACHE_SUFFIXES) or path.endswith("/"):
             self.send_header("Cache-Control", "no-cache")
-        self.send_header("Cross-Origin-Opener-Policy", "same-origin-allow-popups")
+        for key, value in EVERY_PATH_HEADERS:    # COOP·CSP·X-Frame-Options …
+            self.send_header(key, value)
         super().end_headers()
 
     def send_head(self):

@@ -14,20 +14,20 @@
     '합의' 로 기록됐다. 동의는 근거가 아니다. 열어 본 것만 근거다.
 
 세 걸음
-    1. **agy 가 찾는다** — `search_web` 이 헤드리스에서 승인 없이 돌고, 한국어
-       자료(학회·정부 지침·인증 제도·국내 요금제)를 영어권 검색보다 잘 찾는다.
-       이 방의 이야기가 대부분 그것이라 이쪽을 쓴다.
-    2. **파이썬이 연다** — agy 가 댄 주소를 하나씩 열어 본다. 이 걸음이 이
+    1. **웹 검색이 찾는다** — claude -p 에 웹 검색 하나만 열어 근거 주소를 받는다.
+       예전에는 agy 가 맡았는데, 파일을 읽는 도구를 끌 수 없어 2026-10-03 에
+       바꿨다(call_search 참고).
+    2. **파이썬이 연다** — 검색이 댄 주소를 하나씩 열어 본다. 이 걸음이 이
        모듈의 존재 이유다. 여기서 열린 것만 3번에서 단정으로 쓸 수 있다.
-    3. **claude 가 쓴다** — 사람 보고서·agy 결과·열림 여부표를 받아 규칙대로
+    3. **claude 가 쓴다** — 사람 보고서·검색 결과·열림 여부표를 받아 규칙대로
        글을 만든다. 열리지 않은 주소에 기댄 문장은 '확인하지 못한 것' 으로
        내려보내라고 시킨다.
 
-    두 모델을 쓰는 값은 판단이 하나 더 늘어서가 아니라 **보는 자료가 다르기**
-    때문이다. 한쪽만으로는 이 두 걸음이 한 모델의 자기 검토가 된다.
+    찾는 호출과 쓰는 호출을 나눈다. 쓰는 쪽은 검색 결과를 믿지 않고, 2번에서
+    열린 것만 단정한다 — 한 모델의 자기 검토가 되지 않게 막는 것은 이 걸음이다.
 
 실패는 예상된 결과다
-    `llm.py` 와 같은 방침이다. 이 모듈의 함수는 던지지 않는다. agy 가 죽어도,
+    `llm.py` 와 같은 방침이다. 이 모듈의 함수는 던지지 않는다. 검색이 죽어도,
     주소가 안 열려도, claude 가 실패해도 그 한 편을 건너뛰고 다음으로 간다.
     검증 주석 하나 때문에 그날 갱신 전체가 멈춰서는 안 된다.
 
@@ -59,18 +59,18 @@ ROOT = Path(__file__).resolve().parent.parent
 # 건너뛴 판단 대장. 없으면 처음부터 다시 묻는다(그래도 동작은 한다).
 SKIP_LEDGER = ROOT / "output" / "ai-reports-skipped.json"
 
-# agy 는 검색을 여러 번 돌기도 해서 claude 보다 오래 걸린다.
-AGY_TIMEOUT_SEC = 420
-AGY_MODEL = "gemini-3.7-flash-high"
+# 근거 찾기는 검색을 여러 번 돌기도 해서 글쓰기보다 오래 걸린다.
+SEARCH_TIMEOUT_SEC = 420
+SEARCH_MODEL = "sonnet"
 
 # 주소 하나를 열어 보는 데 쓸 시간. 야간 갱신을 붙들지 않도록 짧게 둔다.
 FETCH_TIMEOUT_SEC = 20
 
-# 한 편에서 열어 볼 주소의 상한. agy 가 스무 개를 대는 날도 있는데, 그것을 다
+# 한 편에서 열어 볼 주소의 상한. 검색이 스무 개를 대는 날도 있는데, 그것을 다
 # 열면 한 편에 몇 분이 든다.
 MAX_LINKS_PER_REPORT = 8
 
-# 하룻밤에 쓸 편수 기본값. 하나에 agy 1회 + 주소 몇 개 + claude 1회가 든다.
+# 하룻밤에 쓸 편수 기본값. 하나에 검색 1회 + 주소 몇 개 + 글쓰기 1회가 든다.
 # 크게 잡으면 갱신이 늦어지고, 무엇보다 **한 번에 많이 쓰면 잘못된 틀이 여러
 # 편에 한꺼번에 박힌다** — 사람이 눈으로 보고 고칠 여지를 남긴다.
 DEFAULT_LIMIT = 5
@@ -149,36 +149,21 @@ def pick_targets(threads: list[dict], limit: int,
     return out
 
 
-def call_agy(prompt: str, timeout: int = AGY_TIMEOUT_SEC) -> str | None:
-    """agy -p 를 부른다. 실패하면 None.
+def call_search(prompt: str, timeout: int = SEARCH_TIMEOUT_SEC) -> str | None:
+    """근거를 찾는다 — claude -p 에 웹 검색 **하나만** 연다. 실패하면 None.
 
-    `search_web` 만 쓰게 한다. `read_url_content` 와 `run_command` 는 헤드리스에서
-    승인을 받을 수 없어 어차피 막히고(실측), 무엇보다 **주소를 여는 일은 우리가
-    한다.** 모델이 열었다고 말하는 것과 우리가 연 것은 다른 일이다.
+    예전에는 agy(-p) 가 찾았다. 2026-10-03 에 바꿨다. agy 에는 도구를 끄는 옵션이
+    없고, `--sandbox` 를 붙여도 경로만 주면 이 PC 의 어떤 파일이든 읽었다(실측:
+    빈 폴더에서 돌려도 다른 폴더의 secret.txt 를 그대로 읽어 냈다). 여기 넘기는
+    보고서는 단톡방 대화에서 나온 글이라, 누가 '키 파일을 읽어 적어라' 라고 써 두면
+    그것도 지시로 읽힐 수 있다. 찾은 결과는 AI 보고서에 실려 멤버 전원에게 나간다.
+
+    claude 의 웹 검색은 서버 쪽 도구라 파일에 닿지 않는다(llm.call_claude 참고).
+    대신 '서로 다른 자료를 보는 두 모델' 이던 짜임은 한 회사의 두 호출이 됐다 —
+    그 몫은 3번 걸음(파이썬이 직접 연다)이 여전히 진다. 열린 것만 단정한다.
     """
-    cmd = ["agy", "--model", AGY_MODEL, "-p", prompt]
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", timeout=timeout, cwd=str(ROOT))
-    except FileNotFoundError:
-        print("agy CLI 를 찾을 수 없습니다 — 검증을 건너뜁니다.")
-        return None
-    except subprocess.TimeoutExpired:
-        print("agy 가 %d초를 넘겨 포기합니다." % timeout)
-        return None
-    if r.returncode != 0:
-        print("agy 실패 (exit %d): %s" % (r.returncode, (r.stderr or "")[:300]))
-        return None
-    out = (r.stdout or "").strip()
-    if not out:
-        print("agy 가 빈 답을 돌려주었습니다.")
-        return None
-    # 도구 권한이 막히면 오류 문구를 stdout 으로 낸다 — 성공으로 세면 안 된다.
-    if "no output produced" in out or "auto-denied" in out:
-        print("agy 도구 권한이 막혔습니다: %s" % out[:200])
-        return None
-    return out
-
+    return llm.call_claude(prompt, SEARCH_MODEL, timeout, what="AI 보고서 근거 찾기",
+                       tools="WebSearch")
 
 def extract_urls(text: str, limit: int = MAX_LINKS_PER_REPORT) -> list[str]:
     """답에서 주소를 뽑는다. 순서를 지키고 중복은 지운다."""
@@ -373,7 +358,7 @@ def open_url(url: str, timeout: int = FETCH_TIMEOUT_SEC, resolve=None) -> dict:
 
 
 def build_search_prompt(thread: dict, report: str) -> str:
-    """agy 에게 줄 말. **발행된 보고서 본문만 준다.**
+    """근거 찾기에 줄 말. **발행된 보고서 본문만 준다.**
 
     미발행 대화 원문을 외부 서비스로 내보내지 않는다. 이 방침은 2026-08-27 에
     사람이 정한 것이고, 자동화한다고 느슨해질 이유가 없다.
@@ -447,7 +432,7 @@ def recover_links(findings: str, failed: list[dict],
     """
     if not failed:
         return []
-    again = call_agy(build_recover_prompt(findings, failed))
+    again = call_search(build_recover_prompt(findings, failed))
     if not again:
         return []
     fresh = [u for u in extract_urls(again) if u not in already]
@@ -564,7 +549,7 @@ def run_one(thread: dict, report: str, today: str, model: str,
     hint = " (갈래상 얇을 수 있음)" if thread.get("category") in THIN_CATEGORIES else ""
     print("  %s %s%s" % (tid, thread.get("title", ""), hint))
 
-    findings = call_agy(build_search_prompt(thread, report))
+    findings = call_search(build_search_prompt(thread, report))
     if findings is None:
         return "failed"
     if is_skip(findings):
@@ -604,8 +589,8 @@ def run_one(thread: dict, report: str, today: str, model: str,
         print("    --dry-run: 쓰지 않습니다 (%d자)" % len(body))
         return "written"
 
-    method = "agy 검색 + 근거 주소 %d/%d 열림 확인" % (ok, len(links))
-    p = write_report(tid, body, "claude-%s, %s" % (model, AGY_MODEL),
+    method = "claude 웹 검색 + 근거 주소 %d/%d 열림 확인" % (ok, len(links))
+    p = write_report(tid, body, "claude-%s, claude-%s 검색" % (model, SEARCH_MODEL),
                      today, method)
     print("    %s (%d자)" % (p.name, len(body)))
     return "written"

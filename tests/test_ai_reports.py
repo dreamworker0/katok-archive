@@ -243,28 +243,28 @@ class RecoverTests(unittest.TestCase):
     def test_nothing_failed_means_no_extra_call(self):
         """멀쩡한 편에까지 agy 를 한 번 더 부르면 값과 시간이 곱절이 된다."""
         called = []
-        old, ar.call_agy = ar.call_agy, lambda *a, **k: called.append(1)
+        old, ar.call_search = ar.call_search, lambda *a, **k: called.append(1)
         try:
             self.assertEqual(ar.recover_links("x", [], set()), [])
             self.assertEqual(called, [])
         finally:
-            ar.call_agy = old
+            ar.call_search = old
 
     def test_urls_we_already_tried_are_not_tried_again(self):
         """같은 주소를 다시 열어 보는 것은 시간만 쓴다."""
         seen = "https://a.kr"
         opened = []
-        old_agy, ar.call_agy = ar.call_agy, lambda *a, **k: "근거: " + seen
+        old_search, ar.call_search = ar.call_search, lambda *a, **k: "근거: " + seen
         old_open, ar.open_url = ar.open_url, lambda u, **k: opened.append(u)
         try:
             self.assertEqual(ar.recover_links("x", [self.DEAD], {seen}), [])
             self.assertEqual(opened, [])
         finally:
-            ar.call_agy, ar.open_url = old_agy, old_open
+            ar.call_search, ar.open_url = old_search, old_open
 
     def test_only_the_ones_that_open_come_back(self):
         """되짚어 왔어도 안 열리면 근거가 아니다 — 규칙은 그대로다."""
-        old_agy, ar.call_agy = ar.call_agy, lambda *a, **k: "https://live.kr https://dead.kr"
+        old_search, ar.call_search = ar.call_search, lambda *a, **k: "https://live.kr https://dead.kr"
         old_open = ar.open_url
         ar.open_url = lambda u, **k: {"url": u, "final": u, "status": 200,
                                       "ok": u == "https://live.kr", "note": ""}
@@ -272,14 +272,14 @@ class RecoverTests(unittest.TestCase):
             got = ar.recover_links("x", [self.DEAD], set())
             self.assertEqual([l["url"] for l in got], ["https://live.kr"])
         finally:
-            ar.call_agy, ar.open_url = old_agy, old_open
+            ar.call_search, ar.open_url = old_search, old_open
 
-    def test_a_dead_agy_does_not_break_the_report(self):
-        old, ar.call_agy = ar.call_agy, lambda *a, **k: None
+    def test_a_dead_search_does_not_break_the_report(self):
+        old, ar.call_search = ar.call_search, lambda *a, **k: None
         try:
             self.assertEqual(ar.recover_links("x", [self.DEAD], set()), [])
         finally:
-            ar.call_agy = old
+            ar.call_search = old
 
 
 class ConcurrentRunTests(unittest.TestCase):

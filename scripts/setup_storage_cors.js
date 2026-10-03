@@ -20,7 +20,7 @@ const path = require("path");
 const admin = require("firebase-admin");
 
 const ROOT = path.resolve(__dirname, "..");
-const KEY = path.join(ROOT, "serviceAccountKey.json");
+const KEY = require("./sa_key");   // 프로젝트 밖으로 옮겼다 — sa_key.js 참고
 const BUCKET = "katok-crawling-project.firebasestorage.app";
 
 // 아카이브를 서비스하는 출처만 허용한다. 커스텀 도메인을 붙이면 여기에 추가.

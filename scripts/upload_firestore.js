@@ -38,7 +38,7 @@ const admin = require("firebase-admin");
 
 const ROOT = path.resolve(__dirname, "..");
 const PAYLOAD = path.join(ROOT, "firestore-payload");
-const KEY = path.join(ROOT, "serviceAccountKey.json");
+const KEY = require("./sa_key");   // 프로젝트 밖으로 옮겼다 — sa_key.js 참고
 const STATE_PATH = path.join(ROOT, "output", "upload-state.json");
 const PROJECT_ID = "katok-crawling-project";
 const BUCKET = "katok-crawling-project.firebasestorage.app";

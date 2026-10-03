@@ -336,7 +336,7 @@ Unregister-ScheduledTask -TaskName '카톡아카이브-갱신감시' -Confirm:$f
 ### 무인 실행 전제
 - 카카오톡이 실행 중이고 해당 방 창이 열려 있어야 한다
 - 화면이 잠겨 있지 않아야 한다 (절전은 `-StartWhenAvailable` 이 만회)
-- `serviceAccountKey.json` 이 있어야 Firestore 적재가 로그인 없이 된다
+- 서비스 계정 키(`%USERPROFILE%\.katok-archive\serviceAccountKey.json`, `scripts/sa_key.js`)가 있어야 Firestore 적재가 로그인 없이 된다
 - 실패는 `logs\daily-*.log` 와 `logs\abort-*.png` 에 남는다 — 주기적으로 볼 것
 
 ## 로그

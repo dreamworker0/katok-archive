@@ -33,7 +33,7 @@ const path = require("path");
 const { GoogleAuth } = require("google-auth-library");
 
 const ROOT = path.resolve(__dirname, "..");
-const KEY = path.join(ROOT, "serviceAccountKey.json");
+const KEY = require("./sa_key");   // 프로젝트 밖으로 옮겼다 — sa_key.js 참고
 const RULES = path.join(ROOT, "firestore.rules");
 const PROJECT = JSON.parse(fs.readFileSync(KEY, "utf8")).project_id;
 
