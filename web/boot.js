@@ -661,7 +661,11 @@
         var member = snap.data();
         // 이미지 권한(Custom Claims)을 먼저 확인한 뒤 아카이브를 연다
         ensureClaim(user).then(function () { return loadArchive(db); }).then(
-          function (meta) { start(user, member); loadRest(db, meta); },
+          function (meta) {
+            start(user, member);
+            loadRest(db, meta);
+            watchNewEdition(db, meta.content_hash);
+          },
           function (e) {
             gateError("아카이브를 불러오지 못했습니다", escapeHtml(e.message || String(e)),
               { retry: true });
@@ -676,6 +680,60 @@
         );
       }
     );
+  }
+
+  /* 열어 둔 화면이 밤 갱신을 모르고 지나가지 않게 한다. (2026-10-04)
+   *
+   * 판을 확인하는 것은 처음 열 때 한 번뿐이었다. 탭을 열어 두거나 휴대폰에 설치한
+   * 앱을 닫지 않고 다시 띄우면 전날 판이 그대로 남아, 토요일 글이 일요일까지
+   * 타임라인에 안 보였다. 화면으로 돌아올 때 meta 를 한 장 읽어 지문이 달라졌으면
+   * 새로고침을 권한다. 몰래 바꿔치지 않는 것은 새 버전 안내(pwa.js)와 같은 이유다 —
+   * 읽던 카드가 사라지는 것이 하루 낡은 것보다 나쁘다.
+   *
+   * 돌아올 때마다 읽으면 탭을 오가는 것만으로 읽기가 쌓인다. 5분에 한 번으로 묶고,
+   * 안내를 띄운 뒤에는 더 묻지 않는다.
+   */
+  var EDITION_CHECK_MS = 5 * 60 * 1000;
+
+  function watchNewEdition(db, hash) {
+    if (!hash || typeof document.addEventListener !== "function") return;
+    var lastCheck = Date.now();
+    var told = false;
+
+    function check() {
+      if (told || document.visibilityState !== "visible") return;
+      if (Date.now() - lastCheck < EDITION_CHECK_MS) return;
+      if (!firebase.auth().currentUser) return;
+      lastCheck = Date.now();
+      db.collection("meta").doc("archive").get().then(function (s) {
+        var now = s.exists ? (s.data() || {}).content_hash : null;
+        if (!told && now && now !== hash) {
+          told = true;
+          showEditionNotice();
+        }
+      }).catch(function () { /* 못 물으면 다음에 다시 묻는다 */ });
+    }
+
+    document.addEventListener("visibilitychange", check);
+    window.addEventListener("focus", check);
+  }
+
+  function showEditionNotice() {
+    var bar = document.createElement("div");
+    bar.className = "pwa-toast";
+    bar.setAttribute("role", "status");
+    bar.setAttribute("aria-live", "polite");
+    var text = document.createElement("p");
+    text.className = "pwa-toast__text";
+    text.textContent = "새 내용이 올라왔어요.";
+    var btn = document.createElement("button");
+    btn.className = "pwa-toast__action";
+    btn.type = "button";
+    btn.textContent = "새로고침";
+    btn.addEventListener("click", function () { window.location.reload(); });
+    bar.appendChild(text);
+    bar.appendChild(btn);
+    document.body.appendChild(bar);
   }
 
   // 속성값(value="...")에도 그대로 쓰므로 따옴표까지 막는다

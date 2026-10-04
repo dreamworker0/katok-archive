@@ -134,7 +134,7 @@ async function settle(cond, why) {
 }
 
 /** 한 번의 방문. boot.js 를 새 문맥에서 돌리고 로그인 콜백을 부른다. */
-async function visit(idb, data, onRead) {
+async function visit(idb, data, onRead, extra) {
   const reads = {};
   const got = { started: null, digests: null, ai: null };
   const element = () => ({ innerHTML: "", hidden: false, classList: { add() {}, remove() {} }, onclick: null });
@@ -164,6 +164,7 @@ async function visit(idb, data, onRead) {
     },
   };
   sandbox.window = sandbox;
+  if (extra) extra(sandbox);
   vm.runInNewContext(SRC, sandbox, { filename: "boot.js" });
   assert.ok(authCb, "onAuthStateChanged 에 콜백이 걸려야 한다");
   authCb(USER);
@@ -340,4 +341,53 @@ test("판이 그대로면 세 조각을 함께 둔다 — 확인은 한 번뿐�
   assert.equal(reads.meta, 2, "처음 한 번, 저장 직전 한 번 — 조각마다 묻지 않는다");
   await settle(() => idb._stores.bundles && idb._stores.bundles.size === 3, "세 조각");
   assert.deepEqual([...idb._stores.bundles.keys()].sort(), ["aiReports", "core", "digests"]);
+});
+
+/* ── 열어 둔 화면이 밤 갱신을 알아채는가 (2026-10-04) ──
+ * 토요일 밤 발행이 일요일까지 열려 있던 화면에 안 나왔다. 판 확인이 처음 열 때
+ * 한 번뿐이었기 때문이다. */
+function liveDoc(sandbox, clock) {
+  const listeners = {};
+  const appended = [];
+  const on = (t, f) => { (listeners[t] = listeners[t] || []).push(f); };
+  sandbox.document.addEventListener = on;
+  sandbox.addEventListener = on;
+  sandbox.document.visibilityState = "visible";
+  sandbox.document.createElement = () => ({ appendChild() {}, setAttribute() {}, addEventListener() {} });
+  sandbox.document.body = { appendChild(x) { appended.push(x); } };
+  const RealDate = Date;
+  sandbox.Date = Object.assign(function (...a) { return new RealDate(...a); }, { now: () => clock.t });
+  const auth = sandbox.firebase.auth;
+  sandbox.firebase.auth = Object.assign(() => ({ ...auth(), currentUser: USER }), auth);
+  return { fire: (t) => (listeners[t] || []).forEach((f) => f()), appended };
+}
+
+test("돌아왔을 때 발행이 바뀌었으면 새로고침을 권한다 — 5분 안에는 묻지 않는다", async () => {
+  const clock = { t: 1000 };
+  let live;
+  const data = archiveData("h1");
+  const { reads } = await visit(fakeIndexedDB(), data, null, (sb) => { live = liveDoc(sb, clock); });
+  await new Promise((r) => setTimeout(r, 20));   // 첫 방문의 저장 전 확인이 끝나길 기다린다
+  const before = reads.meta;
+
+  live.fire("visibilitychange");
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(reads.meta, before, "5분이 안 지났으면 읽지 않는다");
+
+  clock.t += 5 * 60 * 1000;
+  live.fire("visibilitychange");
+  await settle(() => reads.meta === before + 1, "5분 뒤 돌아오면 meta 를 한 장 읽는다");
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(live.appended.length, 0, "판이 같으면 안내하지 않는다");
+
+  data.meta.archive.content_hash = "h2";
+  clock.t += 5 * 60 * 1000;
+  live.fire("focus");
+  await settle(() => live.appended.length === 1, "판이 바뀌었으면 안내를 띄운다");
+
+  clock.t += 5 * 60 * 1000;
+  live.fire("visibilitychange");
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(reads.meta, before + 2, "안내한 뒤에는 더 묻지 않는다");
+  assert.equal(live.appended.length, 1);
 });
