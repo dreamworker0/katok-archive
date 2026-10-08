@@ -181,7 +181,7 @@ async function main() {
   }
 }
 
-module.exports = { parseArgs, loadNotifyConfig, buildNotice, todayLogPath, VALID };
+module.exports = { parseArgs, loadNotifyConfig, buildNotice, sendNotice, todayLogPath, VALID };
 
 if (require.main === module) {
   main().catch((e) => {

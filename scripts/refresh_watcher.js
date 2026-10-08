@@ -19,6 +19,10 @@
  *   그래서 실패도 반드시 적는다 — 조용히 끝나면 "누른 게 먹었나?"가 되고,
  *   그게 이 기능에서 가장 나쁜 결말이다.
  *
+ * 덤으로 하는 일
+ *   관리자 명단(members, role == admin)도 듣는다. 바뀌면 디스코드로 알린다 —
+ *   이 PC 에 늘 붙어 있는 리스너가 여기뿐이라 얹었다. 자세한 것은 admin_alert.js.
+ *
  * 이 스크립트가 하지 않는 일
  *   - 요청을 만들지 않는다. 만드는 것은 requestRefresh Function 뿐이다.
  *   - 겹침을 스스로 막지 않는다. 실제 잠금은 run_daily.ps1 의 파일 핸들이다
@@ -36,6 +40,7 @@ const admin = require("firebase-admin");
 
 const ROOT = path.resolve(__dirname, "..");
 const KEY = require("./sa_key");   // 프로젝트 밖으로 옮겼다 — sa_key.js 참고
+const adminAlert = require("./admin_alert");
 const LOG_DIR = path.join(ROOT, "logs");
 const PROJECT_ID = "katok-crawling-project";
 
@@ -398,6 +403,30 @@ async function main() {
   };
 
   subscribe();
+
+  // 관리자 명단 감시 — 바뀌면 디스코드로 알린다 (admin_alert.js 머리말).
+  // 갱신 리스너와 따로 끊기고 따로 다시 붙는다. 한쪽이 죽어도 다른 쪽은 산다.
+  // --once 는 갱신 요청 하나만 보는 확인용이라 붙이지 않는다.
+  if (!ONCE) {
+    let adminAttempt = 0;
+    // 스냅샷이 잇달아 오면 비교가 겹쳐 같은 알림이 두 번 갈 수 있다 — 줄 세운다.
+    let adminChain = Promise.resolve();
+    const watchAdmins = () => {
+      adminAlert.adminQuery(admin.firestore()).onSnapshot((snap) => {
+        adminAttempt = 0;
+        const cur = adminAlert.rosterFrom(snap.docs);
+        adminChain = adminChain
+          .then(() => adminAlert.checkRoster(cur, { dry: DRY, say }))
+          .catch((e) => say(`관리자 명단 확인 오류: ${e.message}`, "ERROR"));
+      }, (e) => {
+        const wait = BACKOFF_MS[Math.min(adminAttempt, BACKOFF_MS.length - 1)];
+        adminAttempt += 1;
+        say(`관리자 명단 리스너 오류: ${e.message} — ${Math.round(wait / 1000)}초 뒤 다시 붙습니다.`, "WARN");
+        setTimeout(watchAdmins, wait);
+      });
+    };
+    watchAdmins();
+  }
 
   process.on("SIGINT", () => stop(0, "종료 신호 — 감시를 멈춥니다."));
   process.on("SIGTERM", () => stop(0, "종료 신호 — 감시를 멈춥니다."));
