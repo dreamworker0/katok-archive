@@ -259,13 +259,13 @@ class SaveIsNotCutShortTests(unittest.TestCase):
     def test_result_counts_are_read_and_failures_warned(self):
         body = DRAWER[DRAWER.index("function Wait-SaveResult"):]
         body = body[:body.index("\nfunction ")]
-        self.assertIn("저장\s*결과", body)
+        self.assertIn(r"저장\s*결과", body)
         self.assertIn("실패", body)
         self.assertIn("'WARN'", body)
 
     def test_a_progress_popup_is_never_taken_for_the_end(self):
         body = DRAWER[DRAWER.index("function Wait-SaveResult"):]
-        self.assertIn("-notmatch '저장하는\s*중'", body[:body.index("\nfunction ")])
+        self.assertIn(r"-notmatch '저장하는\s*중'", body[:body.index("\nfunction ")])
 
     def test_totals_are_logged_at_the_end(self):
         self.assertIn("저장 결과 합계", DRAWER)
