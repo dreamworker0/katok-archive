@@ -113,7 +113,7 @@ def publish_edges(edges: list[dict], thread_of: dict[str, str]) -> list[dict]:
     """원장의 근거를 발행본에서 **주제 id** 로 바꾼다.
 
     원장은 근거를 message id 로 쥔다 — 가장 좁은 자리를 가리키는 것이 맞고,
-    관리자는 원장으로 그 한 줄을 볼 수 있다(`messagesSource`).
+    관리자는 로컬 원장(`output/messages.jsonl`)으로 그 한 줄을 볼 수 있다.
 
     **발행본에는 그 id 를 그대로 실을 수 없다.** 이 아카이브는 원문을 발행하지
     않으므로 멤버가 message id 를 눌러도 갈 곳이 없다. 그래서 그 메시지가 속한

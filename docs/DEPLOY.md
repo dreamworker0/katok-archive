@@ -108,7 +108,7 @@ npm run deploy
 규칙 검증은 CI 에서 돌지 않는다 — 서비스 계정 키가 필요하고 그 키를 깃허브에
 두지 않는다. 규칙이 바뀌는 순간은 배포하는 순간뿐이므로 거기가 맞는 자리다.
 따로 돌리려면 `npm run test:rules` (59개 경우: 발행본 다섯 갈래·chunks·myMessages·
-settings·messagesSource·members·claims·deletionRequests·preferences·catch-all).
+settings·messagesSource(닫힘)·members·claims·deletionRequests·preferences·catch-all).
 
 ### 적재는 어떤 차례로 도는가 (2026-09-05)
 
@@ -117,7 +117,7 @@ settings·messagesSource·members·claims·deletionRequests·preferences·catch-
 
 | 차례 | 하는 일 | 도중에 끊기면 |
 |---|---|---|
-| ① | `threads`·`aiReports`·`media`·`digests`·`graph`·`myMessages`·`messagesSource` 적재 | 멤버는 **지난 판**을 그대로 본다 (`meta` 가 아직 옛 지문) |
+| ① | `threads`·`aiReports`·`media`·`digests`·`graph`·`myMessages` 적재 | 멤버는 **지난 판**을 그대로 본다 (`meta` 가 아직 옛 지문) |
 | ② | 사진·첨부 **업로드** (더하기만) | 같음. 새 파일이 올라가 있어도 가리키는 것이 없다 |
 | ③ | **`meta` 적재 ← 새 판을 켜는 순간** | 여기서 끊기면 켜지지 않은 것이다 = 지난 판 |
 | ④ | 발행본에서 빠진 사진·첨부 **삭제** (삭제 요청·수집 거부 반영) | 다음 실행이 마저 지운다 |
@@ -390,7 +390,7 @@ node scripts/upload_firestore.js
 | 설정 | `config/collection-policy.json` | `output/exclusions.json` |
 | 적용 시점 | 증분 수집 (`ingest_incremental`) | 발행 (`build_firestore_payload`) |
 | 원본(`messages.jsonl`) | **안 들어감** | 남음 |
-| 관리자 열람 | 불가 — 존재 자체가 없음 | 가능 (`messagesSource`) |
+| 관리자 열람 | 불가 — 존재 자체가 없음 | 가능 (이 PC 의 `output/messages.jsonl`) |
 | 되돌리기 | **불가** — 그 기간은 영영 빔 | 가능 — 설정만 되돌리면 다시 보임 |
 
 ### 글 쓸 때 `[제외]` — 가장 손이 덜 가는 방법

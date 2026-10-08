@@ -233,8 +233,7 @@ def plan_documents(payload: dict) -> list[dict]:
 
     upload_firestore.js 의 main() 과 같은 모양이어야 한다. 그쪽이 컬렉션을 하나
     더 나누거나 합치면 여기도 따라 고친다 — 그래야 검사와 경고가 실제를 본다.
-    (관리자 전용인 messagesSource 와 명부 members 는 멤버의 첫 화면 읽기가 아니고
-    문서마다 작아서 세지 않는다.)
+    (명부 members 는 멤버의 첫 화면 읽기가 아니고 문서마다 작아서 세지 않는다.)
     """
     docs: list[dict] = []
 
@@ -497,8 +496,9 @@ def build_payload() -> dict:
     # devtools 로 1,500건을 전부 읽을 수 있었다. 이 방의 가치는 대화 자체가 아니라
     # 그 안의 내용이므로, 스레드 요약과 결과물(링크·사진·첨부)만 발행한다.
     # 원문이 필요한 곳은 두 군데뿐이고 둘 다 따로 다룬다:
-    #   - 관리자 전체 열람   messagesSource (규칙이 관리자만 허용)
-    #   - 본인 글 관리       messagesSource 중 본인 표시명 것만 (클레임으로 판정)
+    #   - 관리자 전체 열람   이 PC 의 output/messages.jsonl. 클라우드에는 두지 않는다
+    #                        (messagesSource — 2026-10-08 적재를 멈추고 지웠다).
+    #   - 본인 글 관리       myMessages, 본인 표시명 것만
     threads_pub = build_site.enrich_threads(data["threads"], data["messages"])
 
     # 개인정보가 찍힌 사진은 발행하지 않는다. 판정은 OCR 로 미리 해 둔 것을 읽는다
@@ -590,8 +590,8 @@ def build_payload() -> dict:
     # 둘 있다:
     #   my_messages     본인 글은 본인에게 원문으로 보여야 한다. 무엇을 지울지
     #                   고르려면 봐야 하고, 자기 연락처를 자기가 보는 건 문제가 아니다.
-    #   messages_source 규칙이 관리자만 허용하는 원장이다. 여기까지 가리면 관리자가
-    #                   "원래 뭐였나" 를 확인할 길이 없어져 오탐을 못 되돌린다.
+    # 오탐을 되돌릴 "원래 뭐였나" 는 로컬 원장(output/messages.jsonl)이 쥔다 —
+    # 발행본이 아니므로 가리지 않는다.
     allow = pii.load_allow()
     # AI 보고서는 threads/all 에서 빼내 따로 담는다.
     #
@@ -631,7 +631,6 @@ def build_payload() -> dict:
         "my_messages": my_messages,
         "digests": digests_pub,
         "graph": graph,
-        "messages_source": messages_raw,
         "members": members,
         "member_warnings": check_member_nicknames(members, participants),
         "images": used_images,
@@ -658,7 +657,6 @@ def write_payload(payload: dict) -> None:
     dump("my-messages.json", payload["my_messages"])
     dump("digests.json", payload["digests"])
     dump("graph.json", payload["graph"])
-    dump("messages-source.json", payload["messages_source"])
     dump("members.json", payload["members"])
     dump("images.json", payload["images"])
     dump("files.json", payload["files"])

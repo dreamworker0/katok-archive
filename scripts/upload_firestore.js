@@ -240,7 +240,14 @@ function publishPlan(p) {
     //
     // config/members.json 은 로컬 거울이다. scripts/sync_members.js 가 Firestore
     // 에서 끌어와 갱신하고, 파이프라인은 닉네임 대조용으로만 읽는다.
-    { name: "messagesSource", docs: p.sourceDocs },
+    // messagesSource 는 더 이상 적재하지 않는다 (2026-10-08). 빈 목록으로 남겨 두면
+    // chunks 처럼 예전 적재분을 지운다.
+    //
+    // 대화 원문 전체가 관리자 전용으로 올라가 있었는데, 화면도 스크립트도 읽지 않았다.
+    // 그런데 원장 그대로라 제외·삭제 요청·개인정보 가리기가 하나도 반영되지 않았다 —
+    // 멤버가 '내 글 지워 줘' 해도 여기에는 남는다. 관리자 계정 하나만 털려도 통째로
+    // 나간다. "원래 뭐였나" 는 이 PC 의 output/messages.jsonl 로 확인한다.
+    { name: "messagesSource", docs: [] },
     // ── 여기부터가 새 판이다. 위가 다 끝나야 켠다. ──
     // meta 의 updatedAt 은 매번 달라진다. 마지막 발행 시각을 남기는 자리다 (1건).
     { name: "meta", docs: [{ id: "archive", ...p.meta, updatedAt: p.now }] },
@@ -488,13 +495,11 @@ async function main() {
   const aiDocs = chunkDocs(aiReports);
   const digests = readPayload("digests.json");
   const graph = readPayload("graph.json");
-  const source = readPayload("messages-source.json");
   const members = readPayload("members.json");
   const images = readPayload("images.json");
   const files = readPayload("files.json");
 
   const digestDocs = Object.keys(digests).map((k) => ({ id: k, ...digests[k] }));
-  const sourceDocs = source.map((m) => ({ id: m.id, ...m }));
   /* '내 글' 문서에 **어떤 표시명으로 모았는지**를 함께 싣는다 (2026-09-05).
    *
    * 관리자가 표시명 연결을 고치면 setMemberNicknames 가 그 자리에서 이 문서를
@@ -527,13 +532,13 @@ async function main() {
   console.log(`  digests ${digestDocs.length} / graph 2`);
   console.log(`  members ${members.length}명 — 적재하지 않음 (Firestore 가 주인)`);
   console.log(`  myMessages ${mineDocs.length}명분 (본인만 읽음)`);
-  console.log(`  messagesSource ${sourceDocs.length} (관리자 전용 원본)`);
+  console.log("  messagesSource 적재하지 않음 — 원문은 이 PC 에만 둔다 (남은 것은 지운다)");
   console.log(`  → 멤버가 전체를 읽을 때: ${docCount + 1}회 읽기`);
   console.log(`  이미지 ${images.length}장 (Storage, 지연 로딩)`);
   console.log(`  첨부 파일 ${files.length}개 (Storage, 내려받기)`);
 
   if (needFull) {
-    console.log(`  방식: 전량 (${fullWhy}) — 쓰기 ${docCount + sourceDocs.length}건`);
+    console.log(`  방식: 전량 (${fullWhy}) — 쓰기 ${docCount}건`);
   } else {
     // 대장과 견줘 실제로 몇 건이 바뀌는지 미리 알려 준다 (dry-run 의 값어치)
     const changed =
@@ -541,8 +546,7 @@ async function main() {
       planWrites(prevState.collections.aiReports, aiDocs).writes.length +
       planWrites(prevState.collections.media, mediaDocs).writes.length +
       planWrites(prevState.collections.myMessages, mineDocs).writes.length +
-      planWrites(prevState.collections.digests, digestDocs).writes.length +
-      planWrites(prevState.collections.messagesSource, sourceDocs).writes.length;
+      planWrites(prevState.collections.digests, digestDocs).writes.length;
     console.log(`  방식: 변경분만 (대장 ${prevState.updated_at || "?"} 기준) — ` +
       `meta 1 + 그래프 최대 2 + 바뀐 문서 ${changed}건`);
   }
@@ -583,7 +587,7 @@ async function main() {
    * publishPlan 의 긴 주석을 함께 볼 것.
    */
   const { before, activate } = splitPlan(publishPlan({
-    meta, threadDocs, aiDocs, mediaDocs, mineDocs, digestDocs, graph, sourceDocs,
+    meta, threadDocs, aiDocs, mediaDocs, mineDocs, digestDocs, graph,
     now: new Date().toISOString(),
   }));
 

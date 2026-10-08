@@ -195,7 +195,6 @@ function payloadOf(mark) {
     mineDocs: [{ id: "a@b.c", items: [{ id: "m-1", text: mark }] }],
     digestDocs: [{ id: "projects", body: mark }],
     graph: { nodes: [{ id: "n-" + mark }], edges: [] },
-    sourceDocs: [{ id: "m-1", text: mark }],
     now: "2026-09-05T23:40:00.000Z",
   };
 }
@@ -210,6 +209,9 @@ test("발행 계획: meta 가 마지막이다 — 새 판은 내용이 다 올�
     .forEach((n) => assert.ok(names.indexOf(n) !== -1 && names.indexOf(n) < names.indexOf("meta"),
       n + " 은 meta 보다 먼저 써야 한다"));
   assert.equal(names.indexOf("members"), -1, "members 는 Firestore 가 주인이다");
+  // 원문 전체는 클라우드에 두지 않는다 — 빈 목록이라 예전 적재분을 지운다 (2026-10-08).
+  assert.deepEqual(plan.find((s) => s.name === "messagesSource").docs, [],
+    "messagesSource 에 원문이 실렸다");
   assert.equal(plan.find((s) => s.name === "meta").docs[0].updatedAt,
     "2026-09-05T23:40:00.000Z");
 });

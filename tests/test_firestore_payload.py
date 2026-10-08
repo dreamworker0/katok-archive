@@ -318,12 +318,16 @@ class ExclusionTest(unittest.TestCase):
             self.assertTrue(t.get("title"))
             self.assertTrue(t.get("start_date"))
 
-    def test_source_collection_keeps_everything(self):
-        """원본(관리자 전용)은 제외와 무관하게 전량 보존한다."""
+    def test_raw_messages_are_not_uploaded(self):
+        """원문 전체는 발행본에 싣지 않는다 (2026-10-08).
+
+        예전에는 messages_source 로 원장 그대로 실어 관리자 전용으로 올렸다. 제외·삭제
+        요청이 반영되지 않은 채였고, 관리자 계정 하나면 통째로 나갔다.
+        """
         excl = {"exclude_people": [self.victim], "exclude_keywords": [],
                 "exclude_message_ids": [], "drop_person_apps": True}
         payload = self._payload_with(excl)
-        self.assertEqual(len(payload["messages_source"]), len(self.messages))
+        self.assertNotIn("messages_source", payload)
 
     def test_no_exclusions_keeps_all(self):
         excl = {"exclude_people": [], "exclude_keywords": [],

@@ -337,10 +337,6 @@ class PublicationTest(unittest.TestCase):
                 "%s 의 %s 본문이 원장과 다르다 — 가려진 것으로 보인다" % (where, m["id"]),
             )
 
-    def test_admin_ledger_keeps_the_original(self):
-        """관리자 원장은 가리지 않는다 — 오탐을 되돌릴 근거가 사라진다."""
-        self.assert_untouched(self.payload["messages_source"], "messages_source")
-
     def test_own_messages_are_not_masked(self):
         """본인 글은 원문으로 보여야 한다. 무엇을 지울지 고르려면 봐야 한다."""
         for email, items in self.payload["my_messages"].items():

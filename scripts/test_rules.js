@@ -292,9 +292,9 @@ const CASES = [
   testCase("관리자도 운영 설정에 직접 쓰지는 못한다", "DENY",
     write("settings/refresh", { status: "queued" }, MEMBER), ADMIN),
 
-  // ── 원본 메시지: 관리자 전용 ──
+  // ── 옛 원본 메시지: 아무도 못 읽는다 (2026-10-08 적재 중단) ──
   testCase("멤버는 원본 메시지를 못 읽는다", "DENY", read("messagesSource/m-1", MEMBER), IN),
-  testCase("관리자는 원본 메시지를 읽는다", "ALLOW", read("messagesSource/m-1", MEMBER), ADMIN),
+  testCase("관리자도 원본 메시지를 못 읽는다", "DENY", read("messagesSource/m-1", MEMBER), ADMIN),
 
   // ── 멤버 명부: 본인 문서와 관리자만 ──
   //

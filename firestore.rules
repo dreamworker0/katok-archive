@@ -9,7 +9,8 @@ rules_version = '2';
 //     제외된 메시지는 애초에 발행본에 들어가지 않는다 — "숨김"이 아니라 "미발행".
 //  4. 본인이 쓴 글은 본인만 원문으로 본다(myMessages). 무엇을 지울지 고르려면
 //     봐야 하고, 자기 글을 보는 건 개인정보 문제가 아니다.
-//  5. 원본 전체(messagesSource)와 운영 설정(settings)은 관리자만 읽는다.
+//  5. 운영 설정(settings)은 관리자만 읽는다. 대화 원문 전체는 클라우드에 두지 않는다
+//     (messagesSource — 2026-10-08 적재를 멈추고 지웠다. 원장은 그 PC 에만 있다).
 //  6. 열람 신청(claims)은 아직 멤버가 아닌 사람이 쓸 수 있는 유일한 경로다.
 //     본인 이메일 문서 한 장만, 정해진 필드만 쓸 수 있다.
 service cloud.firestore {
@@ -75,8 +76,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // ── 원본 메시지: 관리자 전용 (P2에서 개별 숨김 처리에 사용) ──
-    match /messagesSource/{msgId} { allow read: if isAdmin(); allow write: if false; }
+    // ── 옛 원본 메시지 — 적재를 멈추고 지웠다 (2026-10-08) ──
+    //
+    // 대화 원문 전체(제외·삭제 요청·개인정보 가리기 전)가 관리자 전용으로 올라가
+    // 있었다. 화면도 스크립트도 읽지 않는데, 관리자 계정 하나만 털리면 통째로 나간다.
+    // 멤버가 '내 글 지워 줘' 한 글도 여기에는 남았다. chunks 처럼 되살아나도 못 읽게 닫는다.
+    match /messagesSource/{msgId} { allow read, write: if false; }
 
     // ── 멤버 명부: 본인 문서(역할 확인용)와 관리자만. 쓰기는 P2 Functions로. ──
     match /members/{memberEmail} {
