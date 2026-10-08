@@ -39,21 +39,21 @@ test("첫 실행은 기준만 잡고 알리지 않는다", async () => {
 
 test("관리자가 늘면 알리고, 이메일 원문은 싣지 않는다", async () => {
   const file = tmpRoster();
-  await aa.checkRoster({ "boss@x.org": {} }, { file, cfg: CFG, say: quiet, send: async () => {} });
+  await aa.checkRoster({ "admin@x.com": {} }, { file, cfg: CFG, say: quiet, send: async () => {} });
 
   let text = "";
   const cur = aa.rosterFrom(fakeDocs({
-    "boss@x.org": { role: "admin" },
-    "intruder@evil.org": { role: "admin", googleName: "누군가", roleChangedBy: "boss@x.org" },
+    "admin@x.com": { role: "admin" },
+    "intruder@example.org": { role: "admin", googleName: "누군가", roleChangedBy: "admin@x.com" },
   }));
   const r = await aa.checkRoster(cur,
     { file, cfg: CFG, say: quiet, host: "PC", send: async (_c, t) => { text = t; } });
 
-  assert.deepEqual(r.added, ["intruder@evil.org"]);
+  assert.deepEqual(r.added, ["intruder@example.org"]);
   assert.equal(r.sent, true);
-  assert.match(text, /관리자 추가: in\*\*\*@evil\.org \(누군가\)/);
+  assert.match(text, /관리자 추가: in\*\*\*@example\.org \(누군가\)/);
   assert.ok(!text.includes("intruder@"), "이메일 원문이 알림에 들어갔다");
-  assert.ok(!text.includes("boss@"), "처리한 사람 이메일 원문이 알림에 들어갔다");
+  assert.ok(!text.includes("admin@x.com"), "처리한 사람 이메일 원문이 알림에 들어갔다");
 });
 
 test("관리자가 줄어도 알린다", async () => {

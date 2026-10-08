@@ -37,7 +37,7 @@ const { loadNotifyConfig, sendNotice } = require("./report_run.js");
 const ROOT = path.resolve(__dirname, "..");
 const ROSTER = path.join(ROOT, "output", "admin-roster.json");
 
-/** jwblue@sasw.or.kr → jw***@sasw.or.kr */
+/** someone@example.org → so***@example.org */
 function maskEmail(email) {
   const s = String(email || "");
   const at = s.indexOf("@");
