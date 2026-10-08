@@ -164,7 +164,12 @@ if (require.main === module) {
     .then((snap) => checkRoster(rosterFrom(snap.docs), { dry: DRY }))
     .then((r) => {
       console.log(r.first ? "기준 저장" : (r.added.length || r.removed.length) ? "변화 있음" : "변화 없음");
-      process.exit(0);
+    }, (e) => {
+      console.error("관리자 명단 확인 실패:", e.message);
+      process.exitCode = 1;
     })
-    .catch((e) => { console.error("관리자 명단 확인 실패:", e.message); process.exit(1); });
+    // process.exit() 로 끊지 않는다. 디스코드로 보낸(fetch) 직후 끊으면 Windows 의
+    // Node 가 'UV_HANDLE_CLOSING' 단언으로 죽는다(실측 2026-10-08). 연결을 닫고
+    // 저절로 끝나게 둔다.
+    .finally(() => admin.app().delete());
 }
