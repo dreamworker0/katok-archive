@@ -104,3 +104,8 @@ Thumbs.db
 #   design-source/        화면 삽화 원본.
 #   [Kk]akao[Tt]alk_*/    카톡이 폴더째 내보낸 것(대화 txt + 미디어 원본).
 /assets/*
+
+# 멤버에게 돌리는 새소식 HTML — 저장소 맨 위에 만들어 두고 쓴다. 기능 소개지만
+# 방 사람들의 이름·사례가 들어갈 수 있고, 이 저장소는 공개다. 맨 위는
+# `test_nothing_is_left_untracked_and_unignored` 가 보지 않는 자리라 여기서 막는다.
+/새소식-*.html
