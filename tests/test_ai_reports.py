@@ -510,3 +510,208 @@ class FetchLimitTests(unittest.TestCase):
         src = Path(ar.__file__).read_text(encoding="utf-8")
         self.assertIn("r.read(2048)", src,
                       "본문을 통째로 받으면 안 된다 — 열리는지만 본다")
+
+
+def _stream(*events):
+    """agy stream-json 한 판을 꾸민다. 한 줄에 사건 하나."""
+    return "\n".join(json.dumps(e, ensure_ascii=False) for e in events) + "\n"
+
+
+def _init(agent=None):
+    return {"event": "init", "init": {"agent": agent or ar.AGY_AGENT,
+                                      "model": ar.SEARCH_MODEL}}
+
+
+def _tool(name):
+    return {"event": "step_update",
+            "step_update": {"step_type": "tool", "state": "DONE", "tool_name": name,
+                            "tool_info": {"name": name, "parameters": {}}}}
+
+
+def _result(text, status="SUCCESS"):
+    return {"event": "result", "result": {"status": status, "response": text}}
+
+
+class AgyAgentDefinitionTests(unittest.TestCase):
+    """agy 는 실행 옵션으로 도구를 끌 수 없다. 끄는 자리는 이 정의 하나다.
+
+    실측 2026-10-14: 기본 에이전트는 `--sandbox` 여도 폴더 밖 파일을 `view_file`
+    로 읽었고, 이 정의로 띄우면 같은 요청에 도구를 하나도 부르지 못했다.
+    """
+
+    def _frontmatter(self):
+        md = ar.AGY_AGENT_MD
+        self.assertTrue(md.startswith("---\n"))
+        return md.split("---\n")[1]
+
+    def test_built_in_tools_are_excluded(self):
+        self.assertIn("excludeDefaultComponents: true", self._frontmatter())
+
+    def test_the_only_tool_is_web_search(self):
+        tools = self._frontmatter().split("tools:\n", 1)[1]
+        listed = [l.strip()[2:].strip() for l in tools.splitlines()
+                  if l.strip().startswith("- ")]
+        self.assertEqual(listed, ["search_web"])
+        self.assertEqual(ar.AGY_ALLOWED_TOOLS, frozenset({"search_web"}))
+
+    def test_no_mcp_and_no_subagent_use(self):
+        fm = self._frontmatter()
+        self.assertIn("inheritMcp: false", fm)
+        self.assertIn("subagent: false", fm)
+
+    def test_name_matches_what_we_ask_for(self):
+        """이름이 어긋나면 agy 가 exit 1 로 멈춘다 — 밤마다 전부 claude 로 넘어간다."""
+        self.assertIn("name: %s\n" % ar.AGY_AGENT, self._frontmatter())
+
+
+class AgyStreamTests(unittest.TestCase):
+    """답 글자만 보지 않고 **무엇을 했는지**를 본다."""
+
+    def test_a_search_only_run_is_accepted(self):
+        text, problem = ar.read_agy_stream(_stream(
+            _init(), _tool("search_web"), _tool("search_web"),
+            _result("1. 맞다 https://firebase.google.com/pricing")))
+        self.assertEqual(text, "1. 맞다 https://firebase.google.com/pricing")
+        self.assertEqual(problem, "")
+
+    def test_any_other_tool_throws_the_answer_away(self):
+        for name in ("view_file", "run_command", "read_url_content", "manage_task"):
+            text, problem = ar.read_agy_stream(_stream(
+                _init(), _tool("search_web"), _tool(name), _result("CANARY")))
+            self.assertIsNone(text, name)
+            self.assertIn(name, problem)
+
+    def test_the_default_agent_is_refused(self):
+        """기본 에이전트는 파일을 읽는다. 그쪽으로 돌았으면 답을 쓰지 않는다."""
+        text, problem = ar.read_agy_stream(_stream(
+            _init(agent="default"), _result("답")))
+        self.assertIsNone(text)
+        self.assertIn("검색 전용", problem)
+
+    def test_a_missing_init_is_refused(self):
+        self.assertIsNone(ar.read_agy_stream(_stream(_result("답")))[0])
+
+    def test_a_subagent_is_refused(self):
+        ev = {"event": "step_update",
+              "step_update": {"step_type": "tool", "tool_name": "search_web",
+                              "subagent_info": {"conversation_id": "x"}}}
+        text, problem = ar.read_agy_stream(_stream(_init(), ev, _result("답")))
+        self.assertIsNone(text)
+        self.assertIn("하위 에이전트", problem)
+
+    def test_an_unknown_step_kind_is_refused(self):
+        ev = {"event": "step_update", "step_update": {"step_type": "browser"}}
+        self.assertIsNone(ar.read_agy_stream(_stream(_init(), ev, _result("답")))[0])
+
+    def test_the_gemini_filter_message_is_not_an_answer(self):
+        """필터에 걸리면 SUCCESS 상태로 이 문구를 답 자리에 낸다(실측)."""
+        text, problem = ar.read_agy_stream(_stream(_init(), _result(
+            "This request was blocked by Gemini's filters. They can occasionally "
+            "trigger by mistake.")))
+        self.assertIsNone(text)
+        self.assertIn("필터", problem)
+
+    def test_a_failed_status_or_empty_answer_is_refused(self):
+        self.assertIsNone(ar.read_agy_stream(_stream(_init(), _result("x", "ERROR")))[0])
+        self.assertIsNone(ar.read_agy_stream(_stream(_init(), _result("  ")))[0])
+        self.assertIsNone(ar.read_agy_stream("")[0])
+
+    def test_noise_lines_are_ignored(self):
+        raw = "경고 한 줄\n" + _stream(_init(), _tool("search_web"), _result("답"))
+        self.assertEqual(ar.read_agy_stream(raw)[0], "답")
+
+
+class _Ran:
+    def __init__(self, stdout="", returncode=0, stderr=""):
+        self.stdout, self.returncode, self.stderr = stdout, returncode, stderr
+
+
+class AgyCallTests(unittest.TestCase):
+    """agy 를 어디서, 무엇으로 부르는지."""
+
+    def setUp(self):
+        self.seen = {}
+        self._old = ar.subprocess.run
+
+        def fake_run(cmd, **kw):
+            cwd = Path(kw["cwd"])
+            self.seen["cmd"], self.seen["cwd"] = cmd, cwd
+            self.seen["files"] = sorted(str(p.relative_to(cwd)).replace("\\", "/")
+                                        for p in cwd.rglob("*") if p.is_file())
+            agent = cwd / ".agents" / "agents" / ("%s.md" % ar.AGY_AGENT)
+            self.seen["agent"] = agent.read_text(encoding="utf-8")
+            return _Ran(_stream(_init(), _tool("search_web"), _result("찾음")))
+        ar.subprocess.run = fake_run
+
+    def tearDown(self):
+        ar.subprocess.run = self._old
+
+    def test_runs_in_a_fresh_empty_folder_with_only_the_definition(self):
+        """이 저장소에서 돌리지 않는다 — output/ 에 대화 원문이 있다."""
+        self.assertEqual(ar.call_agy("물음"), "찾음")
+        cwd = self.seen["cwd"].resolve()
+        self.assertNotEqual(cwd, ar.ROOT.resolve())
+        self.assertNotIn(ar.ROOT.resolve(), cwd.parents)
+        self.assertEqual(self.seen["files"], [".agents/agents/%s.md" % ar.AGY_AGENT])
+        self.assertEqual(self.seen["agent"], ar.AGY_AGENT_MD)
+        self.assertFalse(self.seen["cwd"].exists(), "임시 폴더는 지운다")
+
+    def test_asks_for_the_search_agent_and_the_model(self):
+        ar.call_agy("물음")
+        cmd = self.seen["cmd"]
+        self.assertEqual(cmd[cmd.index("--agent") + 1], ar.AGY_AGENT)
+        self.assertEqual(cmd[cmd.index("--model") + 1], ar.SEARCH_MODEL)
+        self.assertEqual(cmd[cmd.index("--output-format") + 1], "stream-json")
+        self.assertIn("--sandbox", cmd)
+        self.assertNotIn("--dangerously-skip-permissions", cmd)
+
+    def test_a_too_long_prompt_is_not_sent(self):
+        self.assertIsNone(ar.call_agy("가" * (ar.AGY_MAX_PROMPT_CHARS + 1)))
+        self.assertNotIn("cmd", self.seen)
+
+    def test_a_nonzero_exit_is_a_failure(self):
+        ar.subprocess.run = lambda cmd, **kw: _Ran(_stream(_init(), _result("답")), 1)
+        self.assertIsNone(ar.call_agy("물음"))
+
+    def test_a_missing_agy_is_a_failure_not_a_crash(self):
+        def gone(cmd, **kw):
+            raise FileNotFoundError("agy")
+        ar.subprocess.run = gone
+        self.assertIsNone(ar.call_agy("물음"))
+
+
+class SearchFallbackTests(unittest.TestCase):
+    """agy 가 안 되면 claude 가 찾고, 누가 찾았는지 기록이 정직하다."""
+
+    def setUp(self):
+        self._agy, self._claude = ar.call_agy, ar.llm.call_claude
+        self.claude_calls = []
+
+        def fake_claude(prompt, model, timeout=0, what="", tools=""):
+            self.claude_calls.append((model, tools))
+            return "claude 가 찾음"
+        ar.llm.call_claude = fake_claude
+
+    def tearDown(self):
+        ar.call_agy, ar.llm.call_claude = self._agy, self._claude
+
+    def test_agy_answer_is_used_and_recorded(self):
+        ar.call_agy = lambda p, t=0: "agy 가 찾음"
+        used = []
+        self.assertEqual(ar.call_search("물음", used=used), "agy 가 찾음")
+        self.assertEqual(used, [ar.SEARCH_MODEL])
+        self.assertEqual(self.claude_calls, [])
+
+    def test_claude_takes_over_with_web_search_only(self):
+        ar.call_agy = lambda p, t=0: None
+        used = []
+        self.assertEqual(ar.call_search("물음", used=used), "claude 가 찾음")
+        self.assertEqual(used, ["claude-%s" % ar.FALLBACK_SEARCH_MODEL])
+        self.assertEqual(self.claude_calls, [(ar.FALLBACK_SEARCH_MODEL, "WebSearch")])
+
+    def test_both_failing_records_nothing(self):
+        ar.call_agy = lambda p, t=0: None
+        ar.llm.call_claude = lambda *a, **k: None
+        used = []
+        self.assertIsNone(ar.call_search("물음", used=used))
+        self.assertEqual(used, [])

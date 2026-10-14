@@ -14,9 +14,10 @@
     '합의' 로 기록됐다. 동의는 근거가 아니다. 열어 본 것만 근거다.
 
 세 걸음
-    1. **웹 검색이 찾는다** — claude -p 에 웹 검색 하나만 열어 근거 주소를 받는다.
-       예전에는 agy 가 맡았는데, 파일을 읽는 도구를 끌 수 없어 2026-10-03 에
-       바꿨다(call_search 참고).
+    1. **agy 가 찾는다** — Gemini 가 웹 검색으로 근거 주소를 댄다. 한국어 자료
+       (학회·정부 지침·인증 제도·국내 요금제)를 잘 찾는다. 다만 **검색 도구 하나만
+       가진 에이전트로만** 부른다(call_agy 참고). agy 가 실패하면 그 편은 claude
+       웹 검색이 대신 찾는다.
     2. **파이썬이 연다** — 검색이 댄 주소를 하나씩 열어 본다. 이 걸음이 이
        모듈의 존재 이유다. 여기서 열린 것만 3번에서 단정으로 쓸 수 있다.
     3. **claude 가 쓴다** — 사람 보고서·검색 결과·열림 여부표를 받아 규칙대로
@@ -25,6 +26,8 @@
 
     찾는 호출과 쓰는 호출을 나눈다. 쓰는 쪽은 검색 결과를 믿지 않고, 2번에서
     열린 것만 단정한다 — 한 모델의 자기 검토가 되지 않게 막는 것은 이 걸음이다.
+    두 회사의 모델을 쓰는 값은 판단이 하나 더 늘어서가 아니라 **보는 자료가
+    다르기** 때문이다.
 
 실패는 예상된 결과다
     `llm.py` 와 같은 방침이다. 이 모듈의 함수는 던지지 않는다. 검색이 죽어도,
@@ -44,7 +47,9 @@ import json
 import os
 import re
 import socket
+import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -60,7 +65,56 @@ SKIP_LEDGER = ROOT / "output" / "ai-reports-skipped.json"
 
 # 근거 찾기는 검색을 여러 번 돌기도 해서 글쓰기보다 오래 걸린다.
 SEARCH_TIMEOUT_SEC = 420
-SEARCH_MODEL = "sonnet"
+
+# 근거 찾기 모델(agy). 2026-10-14 에 gemini-3.7-flash-high 에서 바꿨다. 같은 질문에
+# medium 은 40초, high 는 82초였고 high 는 중계 주소 옆에 **원 사이트 주소**를
+# 함께 댔다 — 2번 걸음에서 열리는 근거가 그만큼 는다.
+SEARCH_MODEL = "gemini-4-argon-high"
+
+# agy 가 실패하면(죽음·시간 초과·Gemini 필터·검사 불통과) 이것으로 대신 찾는다.
+FALLBACK_SEARCH_MODEL = "sonnet"
+
+# agy 를 부를 때 쓰는 검색 전용 에이전트. 부를 때마다 빈 임시 폴더에 **새로 써서**
+# 쓴다 — 디스크 어딘가에 두고 읽으면 누가 고쳐 놓아도 모른다.
+#
+# 왜 이렇게까지 하는가: agy 에는 도구를 끄는 실행 옵션이 없다. 기본 에이전트는
+# `--sandbox` 를 붙여도 경로만 주면 이 PC 의 어떤 파일이든 `view_file` 로 읽었다
+# (실측 2026-10-03, 2026-10-14). 그래서 2026-10-03 에 agy 를 뺐다. 그런데 사용자
+# 정의 에이전트에 `excludeDefaultComponents: true` 와 `tools: [search_web]` 를 주면
+# 모델이 가진 도구가 search_web·manage_task 뿐이고, '이 파일을 읽어라' 를 직접
+# 시켜도 도구를 하나도 부르지 못했다(실측 2026-10-14, 폴더 밖 미끼 파일).
+AGY_AGENT = "katok-evidence-search"
+AGY_AGENT_MD = """---
+name: katok-evidence-search
+description: Finds public web sources for factual claims. Web search only.
+mainAgent: true
+subagent: false
+excludeDefaultComponents: true
+inheritMcp: false
+tools:
+  - search_web
+---
+# katok-evidence-search
+
+You find public web sources for the factual claims in the user's message.
+Use only web search. Never read local files, never run commands.
+Run at most 6 searches in total, then write your answer. An answer that marks
+some claims as unverified is better than running out of time with no answer.
+"""
+
+# 검사 — agy 가 실제로 부른 도구가 이 밖이면 답을 버린다. 정의가 막아 줄 것을
+# 믿되, agy 가 판을 바꿔 정의를 무시하는 날을 대비한다. 그날에는 도구가 이미
+# 돌았겠지만, 적어도 그 결과가 보고서에 실려 멤버 전원에게 나가지는 않는다.
+AGY_ALLOWED_TOOLS = frozenset({"search_web"})
+
+# agy 의 stream-json 에 나오는 걸음 종류. 처음 보는 종류가 나오면 무엇을 했는지
+# 모르는 것이므로 답을 버린다(claude 가 대신 찾는다).
+AGY_KNOWN_STEPS = frozenset({"user_input", "agent_response", "tool"})
+
+# 프롬프트는 명령줄 인자로 넘긴다(agy 는 stdin 으로 평문을 받지 않는다).
+# Windows 명령줄은 32,767자에서 잘린다 — 넘으면 agy 를 부르지 않는다.
+# 발행 보고서는 길어야 3천 자 남짓이다(2026-10-14, 487편).
+AGY_MAX_PROMPT_CHARS = 24000
 
 # 주소 하나를 열어 보는 데 쓸 시간. 야간 갱신을 붙들지 않도록 짧게 둔다.
 FETCH_TIMEOUT_SEC = 20
@@ -148,21 +202,128 @@ def pick_targets(threads: list[dict], limit: int,
     return out
 
 
-def call_search(prompt: str, timeout: int = SEARCH_TIMEOUT_SEC) -> str | None:
-    """근거를 찾는다 — claude -p 에 웹 검색 **하나만** 연다. 실패하면 None.
+def read_agy_stream(raw: str) -> tuple[str | None, str]:
+    """agy 의 stream-json 출력을 읽고 검사한다. (답, 문제) — 문제가 있으면 답은 None.
 
-    예전에는 agy(-p) 가 찾았다. 2026-10-03 에 바꿨다. agy 에는 도구를 끄는 옵션이
-    없고, `--sandbox` 를 붙여도 경로만 주면 이 PC 의 어떤 파일이든 읽었다(실측:
-    빈 폴더에서 돌려도 다른 폴더의 secret.txt 를 그대로 읽어 냈다). 여기 넘기는
-    보고서는 단톡방 대화에서 나온 글이라, 누가 '키 파일을 읽어 적어라' 라고 써 두면
-    그것도 지시로 읽힐 수 있다. 찾은 결과는 AI 보고서에 실려 멤버 전원에게 나간다.
-
-    claude 의 웹 검색은 서버 쪽 도구라 파일에 닿지 않는다(llm.call_claude 참고).
-    대신 '서로 다른 자료를 보는 두 모델' 이던 짜임은 한 회사의 두 호출이 됐다 —
-    그 몫은 3번 걸음(파이썬이 직접 연다)이 여전히 진다. 열린 것만 단정한다.
+    답 글자만 보지 않고 **무엇을 했는지**를 본다. 여기 넘기는 보고서는 단톡방
+    대화에서 나온 글이라, 누가 '키 파일을 읽어 적어라' 라고 써 두면 그것도 지시로
+    읽힐 수 있다. 찾은 결과는 AI 보고서에 실려 멤버 전원에게 나간다.
     """
-    return llm.call_claude(prompt, SEARCH_MODEL, timeout, what="AI 보고서 근거 찾기",
-                       tools="WebSearch")
+    init = result = None
+    tools: list[str] = []
+    for line in (raw or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        kind = ev.get("event")
+        if kind == "init":
+            init = ev.get("init") or {}
+        elif kind == "result":
+            result = ev.get("result") or {}
+        elif kind == "step_update":
+            step = ev.get("step_update") or {}
+            if step.get("subagent_info"):
+                return None, "하위 에이전트를 띄웠다"
+            stype = step.get("step_type")
+            if stype not in AGY_KNOWN_STEPS:
+                return None, "처음 보는 걸음 종류: %s" % stype
+            if stype == "tool":
+                tools.append(step.get("tool_name")
+                             or (step.get("tool_info") or {}).get("name") or "?")
+
+    if init is None:
+        return None, "시작 기록(init)이 없다"
+    # 이름이 틀리면 agy 는 exit 1 로 멈춘다(실측). 그래도 기본 에이전트로 돌았는지는
+    # 따로 본다 — 기본 에이전트는 파일을 읽는다.
+    if init.get("agent") != AGY_AGENT:
+        return None, "검색 전용 에이전트로 돌지 않았다(%s)" % init.get("agent")
+    bad = sorted(set(tools) - AGY_ALLOWED_TOOLS)
+    if bad:
+        return None, "검색 말고 다른 도구를 불렀다: %s" % ", ".join(bad)
+    if result is None:
+        return None, "결과 기록이 없다"
+    if result.get("status") != "SUCCESS":
+        return None, "상태가 %s" % result.get("status")
+    text = (result.get("response") or "").strip()
+    if not text:
+        return None, "빈 답"
+    # 필터에 걸리면 성공 상태로 이 문구를 답처럼 돌려준다(실측 2026-10-14).
+    if "blocked by Gemini's filters" in text:
+        return None, "Gemini 필터가 막았다"
+    # 도구 권한이 막히면 오류 문구를 답 자리로 낸다 — 성공으로 세면 안 된다.
+    if "no output produced" in text or "auto-denied" in text:
+        return None, "도구 권한이 막혔다"
+    return text, ""
+
+
+def call_agy(prompt: str, timeout: int = SEARCH_TIMEOUT_SEC) -> str | None:
+    """agy -p 를 **검색 전용 에이전트로** 부른다. 실패하거나 검사에 걸리면 None.
+
+    `read_url_content` 도 주지 않는다. **주소를 여는 일은 우리가 한다** — 모델이
+    열었다고 말하는 것과 우리가 연 것은 다른 일이다.
+    """
+    if len(prompt) > AGY_MAX_PROMPT_CHARS:
+        print("    agy 에 넘기기엔 프롬프트가 깁니다(%d자)." % len(prompt))
+        return None
+    cmd = ["agy", "-p", prompt,
+           "--agent", AGY_AGENT,
+           "--model", SEARCH_MODEL,
+           "--sandbox",
+           "--disable-slash-commands",
+           "--output-format", "stream-json",
+           # agy 가 스스로 먼저 끝내게 한다 — 우리가 죽이면 결과가 한 줄도 안 남는다.
+           "--print-timeout", "%ds" % max(timeout - 30, 30)]
+    try:
+        # 빈 폴더에서 돌린다. 이 저장소(output/ 에 대화 원문이 있다)에서 돌리지 않는다.
+        with tempfile.TemporaryDirectory(prefix="katok-agy-",
+                                         ignore_cleanup_errors=True) as work:
+            agents = Path(work) / ".agents" / "agents"
+            agents.mkdir(parents=True)
+            (agents / ("%s.md" % AGY_AGENT)).write_text(AGY_AGENT_MD, encoding="utf-8")
+            r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=timeout, cwd=work)
+    except FileNotFoundError:
+        print("    agy CLI 를 찾을 수 없습니다.")
+        return None
+    except subprocess.TimeoutExpired:
+        print("    agy 가 %d초를 넘겨 포기합니다." % timeout)
+        return None
+    except OSError as e:
+        print("    agy 를 부르지 못했습니다: %s" % e)
+        return None
+    if r.returncode != 0:
+        print("    agy 실패 (exit %d): %s" % (r.returncode, (r.stderr or r.stdout or "")[:300]))
+        return None
+    text, problem = read_agy_stream(r.stdout)
+    if text is None:
+        print("    agy 답을 버립니다 — %s" % problem)
+    return text
+
+
+def call_search(prompt: str, timeout: int = SEARCH_TIMEOUT_SEC,
+                used: list[str] | None = None) -> str | None:
+    """근거를 찾는다. agy 가 먼저, 안 되면 claude 웹 검색. 둘 다 안 되면 None.
+
+    `used` 를 주면 실제로 찾은 쪽 이름을 덧붙인다 — 보고서의 모델 기록이 거짓말을
+    하지 않게 한다.
+
+    claude 쪽은 웹 검색 **하나만** 연다. 서버 쪽 도구라 파일에 닿지 않는다
+    (llm.call_claude 참고). 2026-10-03 ~ 10-13 에는 이쪽만 썼다.
+    """
+    out, engine = call_agy(prompt, timeout), SEARCH_MODEL
+    if out is None:
+        print("    claude 웹 검색으로 대신 찾습니다.")
+        out = llm.call_claude(prompt, FALLBACK_SEARCH_MODEL, timeout,
+                              what="AI 보고서 근거 찾기", tools="WebSearch")
+        engine = "claude-%s" % FALLBACK_SEARCH_MODEL
+    if out is not None and used is not None:
+        used.append(engine)
+    return out
+
 
 def extract_urls(text: str, limit: int = MAX_LINKS_PER_REPORT) -> list[str]:
     """답에서 주소를 뽑는다. 순서를 지키고 중복은 지운다."""
@@ -417,7 +578,7 @@ def build_recover_prompt(findings: str, failed: list[dict]) -> str:
 
 
 def recover_links(findings: str, failed: list[dict],
-                  already: set[str]) -> list[dict]:
+                  already: set[str], used: list[str] | None = None) -> list[dict]:
     """열리지 않은 주소를 한 번 되짚는다. 새로 열린 것만 돌려준다.
 
     왜 필요한가: agy 의 검색 근거는 `vertexaisearch.../grounding-api-redirect/…`
@@ -431,7 +592,7 @@ def recover_links(findings: str, failed: list[dict],
     """
     if not failed:
         return []
-    again = call_search(build_recover_prompt(findings, failed))
+    again = call_search(build_recover_prompt(findings, failed), used=used)
     if not again:
         return []
     fresh = [u for u in extract_urls(again) if u not in already]
@@ -548,7 +709,8 @@ def run_one(thread: dict, report: str, today: str, model: str,
     hint = " (갈래상 얇을 수 있음)" if thread.get("category") in THIN_CATEGORIES else ""
     print("  %s %s%s" % (tid, thread.get("title", ""), hint))
 
-    findings = call_search(build_search_prompt(thread, report))
+    used: list[str] = []
+    findings = call_search(build_search_prompt(thread, report), used=used)
     if findings is None:
         return "failed"
     if is_skip(findings):
@@ -566,7 +728,7 @@ def run_one(thread: dict, report: str, today: str, model: str,
     # 되물으면 모델이 비슷한 주소를 또 댈 뿐이다.
     failed = [l for l in links if not l["ok"] and not l.get("blocked")]
     if failed:
-        found = recover_links(findings, failed, {l["url"] for l in links})
+        found = recover_links(findings, failed, {l["url"] for l in links}, used)
         if found:
             print("    되짚어 %d개를 더 열었습니다" % len(found))
             links += found
@@ -588,8 +750,9 @@ def run_one(thread: dict, report: str, today: str, model: str,
         print("    --dry-run: 쓰지 않습니다 (%d자)" % len(body))
         return "written"
 
-    method = "claude 웹 검색 + 근거 주소 %d/%d 열림 확인" % (ok, len(links))
-    p = write_report(tid, body, "claude-%s, claude-%s 검색" % (model, SEARCH_MODEL),
+    engines = " + ".join(dict.fromkeys(used))
+    method = "%s 검색 + 근거 주소 %d/%d 열림 확인" % (engines, ok, len(links))
+    p = write_report(tid, body, "claude-%s, %s 검색" % (model, engines),
                      today, method)
     print("    %s (%d자)" % (p.name, len(body)))
     return "written"

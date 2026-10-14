@@ -468,7 +468,7 @@ try {
 catch { Say "같은 날 주제 합치기가 실패했습니다 — 없이 계속합니다: $_" 'WARN' }
 finally { $ErrorActionPreference = $prevEap }
 
-# 5b-2) AI 검증 주석 (claude 웹 검색 + 주소 열기 + LLM 작성)
+# 5b-2) AI 검증 주석 (agy 검색 전용 에이전트 + 주소 열기 + LLM 작성)
 #
 #     사람 보고서 옆에 붙는 기계의 주석이다. 사람 보고서가 쓰인 **뒤**에 돌아야
 #     한다 — 그 글을 재료로 삼는다.
