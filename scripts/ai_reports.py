@@ -314,14 +314,22 @@ def call_search(prompt: str, timeout: int = SEARCH_TIMEOUT_SEC,
     claude 쪽은 웹 검색 **하나만** 연다. 서버 쪽 도구라 파일에 닿지 않는다
     (llm.call_claude 참고). 2026-10-03 ~ 10-13 에는 이쪽만 썼다.
     """
-    out, engine = call_agy(prompt, timeout), SEARCH_MODEL
+    out = call_agy(prompt, timeout)
     if out is None:
         print("    claude 웹 검색으로 대신 찾습니다.")
-        out = llm.call_claude(prompt, FALLBACK_SEARCH_MODEL, timeout,
-                              what="AI 보고서 근거 찾기", tools="WebSearch")
-        engine = "claude-%s" % FALLBACK_SEARCH_MODEL
+        return call_claude_search(prompt, timeout, used)
+    if used is not None:
+        used.append(SEARCH_MODEL)
+    return out
+
+
+def call_claude_search(prompt: str, timeout: int = SEARCH_TIMEOUT_SEC,
+                       used: list[str] | None = None) -> str | None:
+    """claude 웹 검색 **하나만** 열어 찾는다. 실패하면 None."""
+    out = llm.call_claude(prompt, FALLBACK_SEARCH_MODEL, timeout,
+                          what="AI 보고서 근거 찾기", tools="WebSearch")
     if out is not None and used is not None:
-        used.append(engine)
+        used.append("claude-%s" % FALLBACK_SEARCH_MODEL)
     return out
 
 
@@ -555,13 +563,14 @@ def build_recover_prompt(findings: str, failed: list[dict]) -> str:
     dead = "\n".join("  - %s  (%s)" % (l["url"], l["note"] or l["status"])
                      for l in failed)
     return "\n".join([
-        "search_web 도구만 사용하라. run_command 와 read_url_content 는 쓰지 마라.",
+        "웹 검색만 써서 찾아라.",
         "",
-        "네가 방금 준 근거 주소 중 아래 것들이 **열리지 않았다.**",
+        "다른 모델이 근거로 댄 주소 중 아래 것들이 **열리지 않았다.**",
         dead,
         "",
-        "이 주소들이 뒷받침하려던 주장이 무엇이었는지는 아래 네 답에 있다.",
-        "--- 네가 준 답 ---",
+        "이 주소들이 뒷받침하려던 주장이 무엇이었는지는 아래 그 모델의 답에 있다.",
+        "그 모델이 주장을 맞게 말했다는 보장은 없다 — 원 출처에서 직접 확인하라.",
+        "--- 그 모델의 답 ---",
         (findings or "").strip(),
         "---",
         "",
@@ -589,10 +598,14 @@ def recover_links(findings: str, failed: list[dict],
 
     **한 번만 되짚는다.** 되풀이하면 모델이 아무 주소나 대기 시작하고, 그것을
     거르는 일이 다시 우리 몫이 된다. 한 번 물어 못 찾으면 못 찾은 것이다.
+
+    되짚기는 **claude 웹 검색**이 한다(2026-10-17). 아르곤으로 바꾼 뒤 사흘 밤
+    (10-14~16) 되짚기 4번이 모두 하나도 더 열지 못했다. 같은 일을 claude 가 하던
+    10-12~13 에는 5번 중 2번이 9개를 더 열었다. 첫 검색은 아르곤 그대로다.
     """
     if not failed:
         return []
-    again = call_search(build_recover_prompt(findings, failed), used=used)
+    again = call_claude_search(build_recover_prompt(findings, failed), used=used)
     if not again:
         return []
     fresh = [u for u in extract_urls(again) if u not in already]

@@ -241,30 +241,30 @@ class RecoverTests(unittest.TestCase):
         self.assertIn("지어내지 마라", p)
 
     def test_nothing_failed_means_no_extra_call(self):
-        """멀쩡한 편에까지 agy 를 한 번 더 부르면 값과 시간이 곱절이 된다."""
+        """멀쩡한 편에까지 한 번 더 부르면 값과 시간이 곱절이 된다."""
         called = []
-        old, ar.call_search = ar.call_search, lambda *a, **k: called.append(1)
+        old, ar.call_claude_search = ar.call_claude_search, lambda *a, **k: called.append(1)
         try:
             self.assertEqual(ar.recover_links("x", [], set()), [])
             self.assertEqual(called, [])
         finally:
-            ar.call_search = old
+            ar.call_claude_search = old
 
     def test_urls_we_already_tried_are_not_tried_again(self):
         """같은 주소를 다시 열어 보는 것은 시간만 쓴다."""
         seen = "https://a.kr"
         opened = []
-        old_search, ar.call_search = ar.call_search, lambda *a, **k: "근거: " + seen
+        old_search, ar.call_claude_search = ar.call_claude_search, lambda *a, **k: "근거: " + seen
         old_open, ar.open_url = ar.open_url, lambda u, **k: opened.append(u)
         try:
             self.assertEqual(ar.recover_links("x", [self.DEAD], {seen}), [])
             self.assertEqual(opened, [])
         finally:
-            ar.call_search, ar.open_url = old_search, old_open
+            ar.call_claude_search, ar.open_url = old_search, old_open
 
     def test_only_the_ones_that_open_come_back(self):
         """되짚어 왔어도 안 열리면 근거가 아니다 — 규칙은 그대로다."""
-        old_search, ar.call_search = ar.call_search, lambda *a, **k: "https://live.kr https://dead.kr"
+        old_search, ar.call_claude_search = ar.call_claude_search, lambda *a, **k: "https://live.kr https://dead.kr"
         old_open = ar.open_url
         ar.open_url = lambda u, **k: {"url": u, "final": u, "status": 200,
                                       "ok": u == "https://live.kr", "note": ""}
@@ -272,14 +272,43 @@ class RecoverTests(unittest.TestCase):
             got = ar.recover_links("x", [self.DEAD], set())
             self.assertEqual([l["url"] for l in got], ["https://live.kr"])
         finally:
-            ar.call_search, ar.open_url = old_search, old_open
+            ar.call_claude_search, ar.open_url = old_search, old_open
 
     def test_a_dead_search_does_not_break_the_report(self):
-        old, ar.call_search = ar.call_search, lambda *a, **k: None
+        old, ar.call_claude_search = ar.call_claude_search, lambda *a, **k: None
         try:
             self.assertEqual(ar.recover_links("x", [self.DEAD], set()), [])
         finally:
-            ar.call_search = old
+            ar.call_claude_search = old
+
+    def test_recovery_goes_to_claude_web_search_not_agy(self):
+        """되짚기는 claude 웹 검색이 한다 — 아르곤은 사흘 밤 4번 모두 못 찾았다.
+
+        agy 는 부르지도 않아야 하고, claude 에는 웹 검색 하나만 열어야 하며,
+        누가 되짚었는지가 `used` 에 남아 보고서 기록에 실려야 한다.
+        """
+        agy_calls, claude_calls = [], []
+        old_agy, old_claude, old_open = ar.call_agy, ar.llm.call_claude, ar.open_url
+        ar.call_agy = lambda *a, **k: agy_calls.append(1) or "https://agy.kr"
+
+        def fake_claude(prompt, model, timeout=0, what="", tools=""):
+            claude_calls.append((model, tools, prompt))
+            return "https://live.kr"
+        ar.llm.call_claude = fake_claude
+        ar.open_url = lambda u, **k: {"url": u, "final": u, "status": 200,
+                                      "ok": True, "note": ""}
+        used = [ar.SEARCH_MODEL]
+        try:
+            got = ar.recover_links("x", [self.DEAD], set(), used)
+        finally:
+            ar.call_agy, ar.llm.call_claude, ar.open_url = old_agy, old_claude, old_open
+        self.assertEqual([l["url"] for l in got], ["https://live.kr"])
+        self.assertEqual(agy_calls, [])
+        self.assertEqual([(m, t) for m, t, _ in claude_calls],
+                         [(ar.FALLBACK_SEARCH_MODEL, "WebSearch")])
+        self.assertEqual(used, [ar.SEARCH_MODEL, "claude-%s" % ar.FALLBACK_SEARCH_MODEL])
+        # claude 에게 agy 전용 도구 이름을 말하면 헷갈린다.
+        self.assertNotIn("search_web", claude_calls[0][2])
 
 
 class ConcurrentRunTests(unittest.TestCase):
