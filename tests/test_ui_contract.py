@@ -1148,6 +1148,29 @@ class FirebaseHostingContractTests(unittest.TestCase):
                 self.assertNotIn(">다크 모드</button>", source)
 
 
+class GraphDragContractTests(unittest.TestCase):
+    """관계망에서 끌어다 놓은 노드가 출렁이지 않게 하는 뼈대(2026-10-25).
+
+    놓는 순간 고정을 풀었더니 노드가 놓은 자리에서 395px 까지 되튀며 4초 동안
+    방향을 일곱 번 바꿨다. 그리고 식는 속도가 프레임 수에 묶여 있어 화면 전체가
+    7초 넘게 흘렀다.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.graph = (ROOT / "web" / "graph.js").read_text(encoding="utf-8")
+
+    def test_dropped_node_stays_where_it_was_put(self):
+        self.assertIn("drag.node.pinned = true", self.graph)
+        # 두 번 누르면 풀 수 있어야 한다 — 놓아 둔 것을 되돌릴 길이 없으면 안 된다
+        self.assertIn('addEventListener("dblclick"', self.graph)
+
+    def test_handling_uses_calmer_physics_than_first_layout(self):
+        self.assertIn("DRAG_FRICTION", self.graph)
+        self.assertIn("MAX_STEP", self.graph)
+        self.assertIn("(interactive && !drag) ? 0.94 : 0.99", self.graph)
+
+
 class PhotoAltContractTests(unittest.TestCase):
     """대화 사진에는 대체 텍스트가 있어야 한다(2026-10-25).
 

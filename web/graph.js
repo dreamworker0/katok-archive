@@ -271,21 +271,32 @@
         drag.x = ev.clientX; drag.y = ev.clientY; applyView();
       } else if (drag.node) {
         var pt = toWorld(ev);
-        drag.node.fx = pt.x; drag.node.fy = pt.y; kick(0.3);
+        drag.node.fx = pt.x; drag.node.fy = pt.y; kick(DRAG_HEAT);
       }
     });
     s.addEventListener("pointerup", function () {
       if (!drag) return;
       if (drag.node) {
-        drag.node.fx = null; drag.node.fy = null;
-        if (!drag.moved) toggleSelect(drag.node);   // 제자리 클릭 → 선택
+        /* 끌어다 놓은 노드는 **놓은 자리에 둔다.**
+         *
+         * 예전에는 놓는 순간 고정을 풀었다. 그러면 멀리 끌려온 노드가 분류 자리와
+         * 연결선에 한꺼번에 당겨져 되돌아가며 출렁였다 — 실측 2026-10-25: 놓은
+         * 자리에서 395px 까지 되튀고 4초 동안 방향을 7번 바꿨다. 옮긴 사람은 거기
+         * 두려고 옮긴 것이다. 풀고 싶으면 두 번 누른다(bindNode). */
+        if (!drag.moved) {
+          drag.node.fx = drag.node.pinned ? drag.node.x : null;
+          drag.node.fy = drag.node.pinned ? drag.node.y : null;
+          toggleSelect(drag.node);                  // 제자리 클릭 → 선택
+        } else {
+          drag.node.pinned = true;
+        }
       } else if (drag.pan && !drag.moved) {
         clearSelect();                              // 빈 배경 클릭 → 해제
       }
       drag = null; s.classList.remove("grabbing");
     });
     s.addEventListener("pointercancel", function () {
-      if (drag && drag.node) { drag.node.fx = null; drag.node.fy = null; }
+      if (drag && drag.node && !drag.node.pinned) { drag.node.fx = null; drag.node.fy = null; }
       drag = null; s.classList.remove("grabbing");
     });
     function toWorld(ev) {
@@ -315,6 +326,12 @@
         drag = { node: n, x: ev.clientX, y: ev.clientY, moved: false };
         capture(ev);
       });
+      // 두 번 누르면 놓아 둔 노드를 풀어 제자리로 돌려보낸다.
+      n._g.addEventListener("dblclick", function (ev) {
+        ev.stopPropagation();
+        if (!n.pinned) return;
+        n.pinned = false; n.fx = null; n.fy = null; kick(DRAG_HEAT);
+      });
       n._g.addEventListener("pointerenter", function () { if (!selectedId) highlight(n.id); });
       n._g.addEventListener("pointerleave", function () { if (!selectedId) highlight(null); });
     }
@@ -343,6 +360,14 @@
 
     // ── 시뮬레이션 ──
     var alpha = 1, REP = 2600, SPRING = 0.035, LEN = 46, CLUSTER = 0.02, CENTER = 0.006;
+    /* 처음 자리 잡기(settle)와 사람이 만질 때는 물리를 다르게 둔다.
+     *
+     * 자리 잡기는 화면 밖에서 끝나므로 빨리 퍼지는 편이 낫다(마찰 0.82). 끌 때도
+     * 같은 값을 쓰니 주변 노드가 출렁이며 몇 초씩 멎지 않았다. 만질 때는 마찰을
+     * 세게, 데우는 정도를 낮게, 한 걸음 거리에 상한을 둔다 — 배치는 그대로고
+     * 움직임만 차분해진다. */
+    var FRICTION = 0.82, DRAG_FRICTION = 0.6, DRAG_HEAT = 0.12, MAX_STEP = 6;
+    var interactive = false;   // settle() 이 끝나면 켠다
     function tick() {
       for (var i = 0; i < nodes.length; i++) {
         var a = nodes[i];
@@ -369,8 +394,14 @@
         n.vx += (an.x - n.x) * kc + (0 - n.x) * CENTER;
         n.vy += (an.y - n.y) * kc + (0 - n.y) * CENTER;
         if (n.fx != null) { n.x = n.fx; n.y = n.fy; n.vx = 0; n.vy = 0; return; }
-        n.vx *= 0.82; n.vy *= 0.82;
-        n.x += n.vx * alpha; n.y += n.vy * alpha;
+        var fr = interactive ? DRAG_FRICTION : FRICTION;
+        n.vx *= fr; n.vy *= fr;
+        var sx = n.vx * alpha, sy = n.vy * alpha;
+        if (interactive) {
+          var sl = Math.sqrt(sx * sx + sy * sy);
+          if (sl > MAX_STEP) { sx *= MAX_STEP / sl; sy *= MAX_STEP / sl; }
+        }
+        n.x += sx; n.y += sy;
       });
     }
     /* 분류 이름 열둘은 늘 떠 있다. 두 분류가 가까이 앉으면 글자가 포개져 읽을 수
@@ -447,7 +478,10 @@
     var raf = null;
     function loop() {
       tick(); tick(); draw();
-      alpha *= 0.99;
+      /* 놓은 뒤에는 빨리 식힌다. 식는 속도가 '한 프레임에 1%' 라, 노드 300개의
+       * 힘 계산으로 프레임이 느려지면 멎기까지 7초를 넘겼다(2026-10-25 실측) —
+       * 그동안 화면 전체가 조금씩 흘렀다. 끄는 동안은 kick() 이 계속 데운다. */
+      alpha *= (interactive && !drag) ? 0.94 : 0.99;
       if (alpha > 0.03 || drag) raf = requestAnimationFrame(loop);
       else raf = null;                 // 멎으면 루프를 놓는다
     }
@@ -469,6 +503,7 @@
       var a = alpha;
       for (var i = 0; i < 700 && a > 0.03; i++) { tick(); a *= 0.99; alpha = a; }
       alpha = 0;   // 멈춘 상태로 시작 — 드래그하면 다시 데워진다
+      interactive = true;
       draw();
     }
     applyView(); settle();
