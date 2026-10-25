@@ -76,9 +76,13 @@
           ? '<span class="mine-thumbs">' +
             m.images.map(function (src, i) {
               var th = (m.thumbs || m.images)[i] || src;
+              // 지울 것을 고르는 화면이다 — 여러 장이면 몇 번째인지까지 말해야 고른다.
+              var alt = "내가 올린 사진" +
+                (m.images.length > 1 ? " " + (i + 1) + "/" + m.images.length : "") +
+                " · " + m.date + " " + (m.time || "");
               return '<img class="mine-thumb" data-img="' + esc(th) +
                 '" data-full="' + esc(src) +
-                '" alt="" title="클릭하면 크게 봅니다" />';
+                '" alt="' + esc(alt.trim()) + '" title="클릭하면 크게 봅니다" />';
             }).join("") +
             '<span class="mine-zoom">클릭하면 크게 보기</span></span>'
           : m.pii_hidden
@@ -101,7 +105,8 @@
               var th = (m.thumbs || [])[i] || src;
               return '<span class="im-video"><img class="mine-thumb" data-img="' + esc(th) +
                 '" data-full="' + esc(src) + '" data-video="1"' +
-                ' alt="" title="클릭하면 재생합니다" /><span class="play">▶</span></span>';
+                ' alt="' + esc(("내가 올린 동영상 · " + m.date + " " + (m.time || "")).trim()) +
+                '" title="클릭하면 재생합니다" /><span class="play">▶</span></span>';
             }).join("") +
             '<span class="mine-zoom">클릭하면 재생</span></span>'
           : '<span class="mine-muted">🎬 동영상' +

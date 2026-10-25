@@ -58,11 +58,15 @@
         "</div></div>",
         '<div class="gallery' + (list ? " as-list" : "") + '">'];
       items.forEach(function (it) {
+        // 누르면 크게 열리는 사진이다. 대체 텍스트가 비면 화면 낭독기는 이름 없는
+        // 단추 419개를 읽는다. 무엇이 찍혔는지는 모르니 누가 언제 올렸는지를 적는다.
+        var alt = (it.video ? "동영상" : "사진") + " — " + it.nick + " · " + it.date +
+          (it.time ? " " + it.time : "");
         html.push('<figure' + (it.video ? ' class="is-video"' : "") +
           ' data-jump="t-' + esc(it.tid || "") + '"><img data-img="' + esc(it.src) +
           '" data-full="' + esc(it.full || it.src) + '"' +
           (it.video ? ' data-video="1"' : "") +
-          ' alt="" />' + (it.video ? '<span class="play">▶</span>' : "") +
+          ' alt="' + esc(alt) + '" />' + (it.video ? '<span class="play">▶</span>' : "") +
           '<figcaption>' + esc(it.date) + " · " + esc(it.nick) + "</figcaption></figure>");
       });
       html.push("</div>");
@@ -214,6 +218,8 @@
       // 그 blob 을 그대로 띄우면 흐리게 보인다. data-full 이 원본 경로다.
       var full = img.getAttribute("data-full");
       var path = img.getAttribute("data-img");
+      // 크게 띄운 사진도 무엇인지 말한다 — 누른 칸의 대체 텍스트를 그대로 쓴다.
+      el.lightboxImg.alt = img.alt || "";
 
       // 동영상은 여기서 비로소 원본을 받는다. 갤러리에서는 포스터만 걸려 있었다.
       if (img.getAttribute("data-video") && full && window.ArchiveImages) {

@@ -1148,5 +1148,30 @@ class FirebaseHostingContractTests(unittest.TestCase):
                 self.assertNotIn(">다크 모드</button>", source)
 
 
+class PhotoAltContractTests(unittest.TestCase):
+    """대화 사진에는 대체 텍스트가 있어야 한다(2026-10-25).
+
+    갤러리 419장이 alt="" 였다. 누르면 크게 열리는 사진이라 화면 낭독기는 이름
+    없는 단추를 줄줄이 읽었다. 무엇이 찍혔는지는 모르니 누가 언제 올렸는지를
+    적는다. 꾸밈 그림(첫 화면 일러스트·빈 화면 그림)은 비워 두는 것이 맞다.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.web = ROOT / "web"
+
+    def read(self, name):
+        return (self.web / name).read_text(encoding="utf-8")
+
+    def test_photo_views_never_leave_alt_empty(self):
+        for name in ("gallery.js", "timeline.js", "mine.js"):
+            with self.subTest(file=name):
+                self.assertNotIn('alt=""', self.read(name),
+                                 "%s 에 빈 대체 텍스트가 남았습니다" % name)
+
+    def test_lightbox_takes_the_alt_of_the_photo_it_opens(self):
+        self.assertIn("el.lightboxImg.alt = img.alt", self.read("gallery.js"))
+
+
 if __name__ == "__main__":
     unittest.main()

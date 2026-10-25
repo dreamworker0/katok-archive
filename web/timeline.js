@@ -411,6 +411,8 @@
     function mediaHtml(rows, inline) {
       var imgs = [], files = [];
       rows.forEach(function (m) {
+        // 갤러리와 같은 꼴의 대체 텍스트 — 누가 언제 올렸는지(gallery.js renderGallery).
+        var who = " — " + m.nickname + " · " + m.date + (m.time ? " " + m.time : "");
         /* 동영상. 칸에는 포스터만 걸고 원본은 눌러서 받는다 — 보고서를 펼치기만
          * 해도 16MB 가 내려오면 안 된다. 라이트박스가 data-video 를 보고 <video>
          * 로 연다(갤러리와 같은 길). 이 가지가 없던 동안 동영상은 자리표를 채우지
@@ -419,7 +421,8 @@
           var vth = m.thumbs || [];
           m.videos.forEach(function (src, i) {
             imgs.push('<span class="im-video"><img data-img="' + esc(vth[i] || src) +
-              '" data-full="' + esc(src) + '" data-video="1" alt="" title="' +
+              '" data-full="' + esc(src) + '" data-video="1" alt="' + esc("동영상" + who) +
+              '" title="' +
               esc(m.nickname + " · " + m.date) + '" /><span class="play">▶</span></span>');
           });
         } else if (m.kind === "image" && m.images) {
@@ -427,7 +430,7 @@
           m.images.forEach(function (src, i) {
             // 칸에는 작은 사진, 누르면 원본(data-full)
             imgs.push('<img data-img="' + esc(th[i] || src) +
-              '" data-full="' + esc(src) + '" alt="" title="' +
+              '" data-full="' + esc(src) + '" alt="' + esc("사진" + who) + '" title="' +
               esc(m.nickname + " · " + m.date) + '" />');
           });
           // 개인정보가 찍혀 발행에서 뺀 사진. 칸을 아예 없애면 "여기 사진이 있었는데"
