@@ -233,8 +233,11 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .doc-sec-body { font-size: 14.5px; line-height: 1.75; margin: 0 0 4px; color: var(--ink-soft); }
 .doc-kw { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
 
-/* 자세히 보기 — 모바일에서만 나온다. 데스크톱은 늘 펼쳐져 있어 버튼이 필요 없다. */
-.doc-toggle { display: none; align-items: center; gap: 8px; width: 100%;
+/* 자세히 보기 — 폭과 상관없이 카드는 접힌 채로 시작한다.
+   예전에는 모바일만 접고 데스크톱은 늘 펼쳐 두었는데, 요지 산문의 절까지 다
+   펼치면 첫 화면이 33,000px(약 43화면, 2026-10-25 실측)이 되어 넓은 화면에서도
+   끝까지 보는 사람이 없었다. 제목·한 줄 요지·개요만 두고 나머지는 눌러서 연다. */
+.doc-toggle { display: flex; align-items: center; gap: 8px; width: 100%;
   min-height: 44px; margin-top: 4px; padding: 0 12px;
   border: 1px solid var(--line); border-radius: 11px;
   color: var(--ink-soft); background: var(--surface-2);
@@ -244,7 +247,12 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
   border-left: 5px solid transparent; border-right: 5px solid transparent;
   border-top: 6px solid currentColor; transition: transform .15s ease; }
 .doc.open .doc-toggle-icon { transform: rotate(180deg); }
-.doc-toggle-hint { margin-left: auto; color: var(--ink-faint); font-weight: 600; font-size: 12px; }
+.doc-toggle-hint { margin-left: auto; color: var(--ink-faint); font-weight: 600; font-size: 12px;
+  text-align: right; padding: 6px 0; }
+/* 안내가 길어지면 '자세히 보기' 가 '자세히 / 보기' 로 꺾였다. 꺾이는 쪽은 안내다. */
+.doc-toggle-label { white-space: nowrap; }
+.doc:not(.open) .doc-body { display: none; }
+.doc-body > .doc-sec:first-child { margin-top: 18px; }
 
 .doc-section { margin-top: 14px; }
 .doc-section h4 { font-size: 13px; font-weight: 700; color: var(--ink-soft); margin: 0 0 8px;
@@ -1022,10 +1030,8 @@ img.img-error {
   .mobile-more[hidden] { display: none; }
   .mobile-more button { width: 100%; border: 0; border-radius: 11px; padding: 11px 13px;
     color: var(--ink); background: var(--surface-2); cursor: pointer; text-align: left; }
-  /* 주제 카드는 기본으로 접는다. 12개가 전부 펼쳐지면 첫 화면이 25화면 분량
-     (20,375px)이 되어 아무도 끝까지 보지 않는다. 제목·개요만 두고 나머지는
-     눌러서 연다. 개요도 세 줄로 줄인다 — 개요만 12개여도 8화면이다.
-     데스크톱은 넓어서 견딜 만하므로 그대로 둔다. */
+  /* 주제 카드 접기는 폭과 상관없이 위(.doc-toggle)에서 한다. 모바일은 개요도
+     세 줄로 줄인다 — 개요만 12개여도 8화면이다. */
   /* 판을 통째로 덮으면 무엇을 눌렀는지가 안 보인다. 목록은 그 안에서 굴린다. */
   .node-panel { max-height: 62%; }
   /* 근거 단추는 패널 안의 작은 칩이지만 손가락으로 눌러야 한다. 데스크톱 26px
@@ -1033,8 +1039,6 @@ img.img-error {
   .node-panel .np-rel-go { min-height: 34px; padding: 4px 12px; font-size: 12px; }
   .node-panel .np-rel-row { padding: 5px 0; }
 
-  .doc-toggle { display: flex; }
-  .doc:not(.open) .doc-body { display: none; }
   .doc:not(.open) .doc-overview {
     display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
     overflow: hidden;

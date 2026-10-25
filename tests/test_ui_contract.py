@@ -747,16 +747,26 @@ class MobileDensityContractTests(unittest.TestCase):
         cls.app = front_end_js()
         cls.mobile = cls.css[cls.css.index("@media (max-width: 760px)"):]
 
-    def test_desktop_never_shows_the_toggle_and_never_collapses(self):
-        # 데스크톱은 넓어서 견딜 만하다. 기본값이 '펼침' 이어야 자바스크립트 없이도
-        # 온전히 읽힌다.
-        self.assertIn(".doc-toggle { display: none;", self.css)
-        before_mobile = self.css[:self.css.index("@media (max-width: 760px)")]
-        self.assertNotIn(".doc:not(.open) .doc-body", before_mobile)
+    def test_every_width_collapses_the_card_body(self):
+        """데스크톱도 접는다(2026-10-25).
 
-    def test_mobile_collapses_the_card_body_and_clamps_the_overview(self):
-        self.assertIn(".doc-toggle { display: flex; }", self.mobile)
-        self.assertIn(".doc:not(.open) .doc-body { display: none; }", self.mobile)
+        예전에는 '넓어서 견딜 만하다' 고 데스크톱은 늘 펼쳐 두었는데, 요지 산문의
+        절까지 다 펼치면 첫 화면이 33,000px(약 43화면)이었다. 접기 규칙이 모바일
+        구간 안에만 있으면 데스크톱이 다시 그 길이로 돌아간다.
+        """
+        before_mobile = self.css[:self.css.index("@media (max-width: 760px)")]
+        self.assertIn(".doc-toggle { display: flex;", before_mobile)
+        self.assertIn(".doc:not(.open) .doc-body { display: none; }", before_mobile)
+
+    def test_prose_sections_fold_with_the_body(self):
+        # 첫 화면을 길게 만든 것이 요지 산문의 절이다. 접히는 상자 밖에 두면
+        # 접어도 길이가 그대로다.
+        start = self.app.index("var body =")
+        body = self.app[start:self.app.index("return '<article class=\"doc\"", start)]
+        self.assertIn('class="doc-sec"', body)
+        self.assertIn('counts.push("소제목 "', self.app)
+
+    def test_mobile_clamps_the_overview(self):
         # 개요만 12개여도 8화면이라 세 줄로 줄인다.
         self.assertIn("-webkit-line-clamp: 3", self.mobile)
 

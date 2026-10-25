@@ -289,19 +289,26 @@
           '<span class="tl-n">💬 ' + t.count + "</span></div>";
       }).join("");
 
-      /* 모바일에서는 이 아래를 접는다. 12개 주제가 전부 펼쳐지면 첫 화면이 25화면
-       * 분량(20,375px)이 되어 아무도 끝까지 보지 않는다. 무엇이 들어 있는지 세어
+      /* 이 아래는 접는다(폭과 상관없이). 12개 주제가 전부 펼쳐지면 첫 화면이
+       * 33,000px 이 되어 아무도 끝까지 보지 않는다. 무엇이 들어 있는지 세어
        * 버튼에 적어 둔다 — 열어봐야 아는 상자는 안 열어보게 된다.
        *
        * 주제 개수는 세지 않는다: 카드 우상단 doc-meta 가 이미 "N개 주제" 를 적고
        * 있어서 같은 숫자가 위아래로 두 번 나온다. 접었을 때 어디에도 안 보이는
        * 것만 센다. */
       var counts = [];
+      if ((d.sections || []).length) counts.push("소제목 " + d.sections.length);
       if ((d.apps || []).length) counts.push("결과물 " + d.apps.length);
       if (links.length) counts.push("링크 " + links.length);
       if (alsoRows.length) counts.push("곁 주제 " + alsoRows.length);
 
       var body =
+        // 요지 산문의 절. 첫 화면을 길게 만드는 것이 이것이라 함께 접는다 — 개요가
+        // 이미 한 문단으로 요약하고 있다. 없으면 예전과 같다(주제가 적은 분류).
+        (d.sections || []).map(function (s) {
+          return '<h3 class="doc-sec">' + esc(s.title) + "</h3>" +
+            '<p class="doc-sec-body">' + esc(s.body) + "</p>";
+        }).join("") +
         (kw ? '<div class="doc-kw">' + kw + "</div>" : "") +
         (apps ? '<div class="doc-section"><h4>🧩 주요 결과물</h4>' +
           '<p class="doc-note">누르면 그 결과물을 <b>다룬 주제</b>를 봅니다. ' +
@@ -330,11 +337,6 @@
         (d.threads || []).length + "개 주제" + tidiedAt(d) + "</span></div>" +
         (d.headline ? '<p class="doc-headline">' + esc(d.headline) + "</p>" : "") +
         '<p class="doc-overview">' + esc(d.overview || "") + "</p>" +
-        // 요지 산문의 절. 없으면 예전과 같다(주제가 적은 분류).
-        (d.sections || []).map(function (s) {
-          return '<h3 class="doc-sec">' + esc(s.title) + "</h3>" +
-            '<p class="doc-sec-body">' + esc(s.body) + "</p>";
-        }).join("") +
         (body
           ? '<button class="doc-toggle" type="button" aria-expanded="false" ' +
             'aria-controls="docbody-' + cid + '">' +
@@ -347,8 +349,7 @@
         "</article>";
     }
 
-    /** 주제 카드를 펼치거나 접는다. 데스크톱은 CSS 가 항상 펼쳐 두므로 여기 상태는
-     *  모바일에서만 눈에 보인다. */
+    /** 주제 카드를 펼치거나 접는다. 폭과 상관없이 접힌 채로 시작한다. */
     function setDocOpen(doc, open) {
       if (!doc) return;
       doc.classList.toggle("open", open);
