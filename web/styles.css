@@ -628,6 +628,9 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
    느려지기만 하고 깨지지는 않는다. 높이가 어림값이 되는 대가는 app.js 의
    jumpToTimeline() 에서 되잡는다. */
 .tcard { content-visibility: auto; contain-intrinsic-size: auto 280px; }
+/* 나눠 그린 목록 끝의 '더 보기'. 보통은 화면에 닿기 전에 관찰자가 다음 묶음을 잇는다. */
+.tc-more-load { display: flex; justify-content: center; padding: 14px 0 28px; }
+.tc-more-load .btn { min-height: 44px; }
 .tc-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
   justify-content: space-between; margin-bottom: 6px; }
 .tc-meta { font-size: 12px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }

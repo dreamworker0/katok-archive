@@ -111,14 +111,7 @@
         '<button class="gal-mode' + (desc ? " on" : "") + '" data-tsort="desc">↓ 최신순</button>',
         '<button class="gal-mode' + (desc ? "" : " on") + '" data-tsort="asc">↑ 오래된순</button>',
         "</div></div>"];
-      var lastDate = null;
-      rows.forEach(function (t) {
-        if (t.start_date !== lastDate) {
-          html.push('<div class="date-sep">' + esc(fmtDate(t.start_date)) + "</div>");
-          lastDate = t.start_date;
-        }
-        html.push(renderThreadCard(t));
-      });
+      html.push('<div class="tc-list"></div>');
       el.view.innerHTML = html.join("");
       bindPickClear();
       Array.prototype.forEach.call(el.view.querySelectorAll("[data-tsort]"), function (b) {
@@ -128,9 +121,87 @@
           renderTimeline();
         };
       });
-      bindThreadCards(el.view);
+      startPaging(rows);
+    }
+
+    /* 카드는 나눠 그린다.
+     *
+     * 주제 500개를 한 번에 그리면 화면 요소가 1만 5천 개를 넘어(2026-10-25 실측)
+     * 휴대폰에서 탭을 누르고 한참 뒤에야 화면이 뜬다. content-visibility 는 그리기를
+     * 미룰 뿐 요소를 만드는 값은 그대로 치른다. 그래서 처음엔 PAGE 장만 만들고,
+     * 목록 끝이 화면에 다가오면 다음 묶음을 잇는다. 다른 화면에서 특정 주제로 오면
+     * (jumpToTimeline) 그 카드가 나올 때까지 미리 잇는다.
+     */
+    var PAGE = 30;
+    var paging = null, pageObserver = null;
+
+    function startPaging(rows) {
+      if (pageObserver) { pageObserver.disconnect(); pageObserver = null; }
+      paging = { rows: rows, next: 0, lastDate: null,
+                 list: el.view.querySelector(".tc-list") };
+      renderMore();
+    }
+
+    function renderMore(upTo) {
+      var p = paging;
+      if (!p || !p.list.isConnected || p.next >= p.rows.length) return;
+      var end = Math.min(p.rows.length, Math.max(p.next + PAGE, upTo || 0));
+      var html = [];
+      p.rows.slice(p.next, end).forEach(function (t) {
+        if (t.start_date !== p.lastDate) {
+          html.push('<div class="date-sep">' + esc(fmtDate(t.start_date)) + "</div>");
+          p.lastDate = t.start_date;
+        }
+        html.push(renderThreadCard(t));
+      });
+      p.next = end;
+      // 묶음마다 상자를 따로 둔다 — 묶기(bind)를 새 카드에만 하려는 것이다. 이미 그린
+      // 카드를 다시 묶으면 펼쳐 둔 보고서의 관찰자가 겹쳐 붙는다.
+      var chunk = document.createElement("div");
+      chunk.className = "tc-chunk";
+      chunk.innerHTML = html.join("");
+      var old = p.list.querySelector(".tc-more-load");
+      if (old) old.parentNode.removeChild(old);
+      p.list.appendChild(chunk);
+      bindThreadCards(chunk);
       // 검색 중이면 카드가 펼쳐진 채로 그려지므로 사진·첨부도 함께 채운다
-      Array.prototype.forEach.call(el.view.querySelectorAll(".tc-detail.on"), fillMedia);
+      Array.prototype.forEach.call(chunk.querySelectorAll(".tc-detail.on"), fillMedia);
+      if (p.next < p.rows.length) addLoadMore(p);
+    }
+
+    /* 목록 끝의 단추. 관찰자가 알아서 누르지만, 관찰자가 없는 브라우저나 키보드로
+       훑는 사람에게는 이 단추가 다음 묶음으로 가는 길이다. */
+    function addLoadMore(p) {
+      var left = p.rows.length - p.next;
+      p.list.insertAdjacentHTML("beforeend",
+        '<div class="tc-more-load"><button class="btn ghost" type="button">' +
+        "다음 주제 " + Math.min(PAGE, left) + "개 더 보기 (남은 " + left + "개)</button></div>");
+      var box = p.list.querySelector(".tc-more-load");
+      box.querySelector("button").onclick = function () { renderMore(); };
+      if (!("IntersectionObserver" in window)) return;
+      if (!pageObserver) {
+        pageObserver = new IntersectionObserver(function (entries) {
+          entries.forEach(function (en) {
+            if (!en.isIntersecting) return;
+            pageObserver.unobserve(en.target);
+            renderMore();
+          });
+        }, { rootMargin: "1200px" });
+      }
+      pageObserver.observe(box);
+    }
+
+    /** 이 주제 카드가 아직 안 그려졌으면 거기까지 잇는다. 그린 뒤의 요소를 돌려준다. */
+    function ensureCard(anchor) {
+      var found = document.getElementById(anchor);
+      if (found || !paging) return found;
+      for (var i = paging.next; i < paging.rows.length; i++) {
+        if ("t-" + paging.rows[i].id === anchor) {
+          renderMore(i + 1);
+          return document.getElementById(anchor);
+        }
+      }
+      return null;
     }
 
 
@@ -653,7 +724,7 @@
       el.search.value = ""; el.filter.value = "";
       setView("timeline");
       requestAnimationFrame(function () {
-        var t = document.getElementById(anchor);
+        var t = ensureCard(anchor);
         if (!t) return;
         t.scrollIntoView({ behavior: "smooth", block: "center" });
         /* 화면 밖 카드의 높이는 어림값이다(styles.css 의 content-visibility). 부드럽게
