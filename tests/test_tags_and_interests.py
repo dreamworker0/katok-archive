@@ -656,6 +656,52 @@ class BroaderTableTests(unittest.TestCase):
         self.assertEqual(["혼자뿐인말"], [t for t, _ in rows])
 
 
+class EchoParentTests(unittest.TestCase):
+    """승격이 만든 넓은 태그가 짝과 같은 주제만 가리키면 거둔다.
+
+    실측 2026-10-25: '요금·비용' 이름 안의 '요금' 이 또 붙어 둘이 같은 84개 주제를
+    가리켰다 — 태그 구름에 같은 입구가 둘 섰다.
+    """
+
+    def roll_and_drop(self, threads, **kw):
+        added = tags.rollup_parent_tags(threads, broader={},
+                                        short_parents=["요금"])
+        return tags.drop_echo_parents(threads, added, **kw)
+
+    def test_parent_that_echoes_its_child_is_dropped(self):
+        threads = [{"id": "t-1", "tags": ["요금·비용"]},
+                   {"id": "t-2", "tags": ["요금·비용"]}]
+        self.assertEqual(["요금"], self.roll_and_drop(threads))
+        self.assertEqual(["요금·비용"], threads[0]["tags"])
+
+    def test_parent_that_opens_more_topics_stays(self):
+        threads = [{"id": "t-1", "tags": ["요금·비용"]},
+                   {"id": "t-2", "tags": ["요금·비용"]},
+                   {"id": "t-3", "tags": ["요금제 비교"]}]
+        self.assertEqual([], self.roll_and_drop(threads))
+        self.assertIn("요금", threads[2]["tags"])
+
+    def test_a_tag_the_report_chose_is_never_dropped(self):
+        threads = [{"id": "t-1", "tags": ["요금·비용", "요금"]},
+                   {"id": "t-2", "tags": ["요금·비용"]}]
+        self.assertEqual([], self.roll_and_drop(threads))
+        self.assertIn("요금", threads[0]["tags"])
+
+    def test_single_topic_parent_stays_as_the_only_entrance(self):
+        # 태그 구름은 두 번 이상 쓰인 것만 세운다 — 한 건짜리는 겹칠 일이 없다
+        threads = [{"id": "t-1", "tags": ["요금·비용"]}]
+        self.assertEqual([], self.roll_and_drop(threads))
+
+    def test_a_person_tag_is_not_a_twin(self):
+        # 사람 이름은 구름에 서지 않으므로 넓은 태그가 유일한 입구다
+        parts = {"participants": [{"nickname": "김종원"}]}
+        threads = [{"id": "t-1", "tags": ["김종원"]}, {"id": "t-2", "tags": ["김종원"]}]
+        added = tags.rollup_parent_tags(threads, broader={tags.fold("김종원"): "사람들"},
+                                        short_parents=[])
+        self.assertEqual([("t-1", "사람들"), ("t-2", "사람들")], added)
+        self.assertEqual([], tags.drop_echo_parents(threads, added, parts))
+
+
 class DigestKeywordTests(unittest.TestCase):
     """요지 산문의 태그는 눌러서 갈 곳이 있어야 화면에 낸다."""
 

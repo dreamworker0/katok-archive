@@ -861,6 +861,12 @@ def build_data(
     if rolled:
         print("[태그] 넓은 태그 %d건 승격 (앞 5개: %s)"
               % (len(rolled), ", ".join("%s←%s" % r for r in rolled[:5])))
+    # 승격이 만든 넓은 태그가 다른 태그와 같은 주제만 가리키면 거둔다 — 태그
+    # 구름에 '요금 84', '요금·비용 84' 처럼 같은 입구가 둘 서지 않게 하는 몫이다.
+    echoes = taglib.drop_echo_parents(threads_meta, rolled, participants, places)
+    if echoes:
+        print("[태그] 다른 태그와 주제가 같아 거둔 넓은 태그 %d개: %s"
+              % (len(echoes), ", ".join(echoes)))
     warnlog.note("orphan_tags", [t for t, _ in orphans],
                  "[태그] 부모도 없고 한 번만 쓰인 태그",
                  advice="검색 말고는 입구가 없습니다. config/tag_broader.json 에 넣을지 보세요")

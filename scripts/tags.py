@@ -472,6 +472,54 @@ def rollup_parent_tags(threads: list[dict], participants: dict | None = None,
     return added
 
 
+def drop_echo_parents(threads: list[dict], added: list[tuple[str, str]],
+                      participants: dict | None = None,
+                      places: set[str] | None = None,
+                      min_count: int = 2) -> list[str]:
+    """승격으로 붙었는데 다른 태그와 주제가 똑같은 넓은 태그를 거둔다. 거둔 태그 목록.
+
+    '요금·비용' 은 표가 세운 넓은 태그인데 그 이름 안에 '요금'(짧은 부모)이 들어
+    있어서 '요금' 이 또 붙었다. 그 결과 둘이 같은 84개 주제를 가리켜 태그 구름에
+    '요금 84', '요금·비용 84' 가 나란히 섰다(실측 2026-10-25, 같은 꼴 다섯 쌍:
+    근태/근태관리, 계정/구글 계정, 텔레그램/텔레그램봇 …). 눌러도 같은 목록이
+    나오는 입구 둘은 하나만 못하다.
+
+    거두는 것은 **모든 주제에 승격으로만 붙은** 태그뿐이다 — 보고서가 직접 단
+    태그는 그대로 둔다. 짝이 되는 태그는 구름에 서는 것(`min_count` 이상, 사람·
+    지명 아님)이어야 한다. 그렇지 않으면 넓은 태그가 유일한 입구다.
+
+    주제가 하나라도 갈리면 다시 붙는다 — 매번 발행할 때 새로 판정하므로, '요금'
+    은 요금·비용 표 밖의 요금 이야기가 생기는 날 저절로 돌아온다.
+    """
+    people = person_names(participants or {})
+    places = places or set()
+    by_tag: dict[str, set[str]] = defaultdict(set)
+    for th in threads:
+        for t in th.get("tags") or []:
+            by_tag[t].add(th["id"])
+    rolled: dict[str, set[str]] = defaultdict(set)
+    for tid, t in added:
+        rolled[t].add(tid)
+
+    def stands(t: str) -> bool:
+        return (len(by_tag[t]) >= min_count and t not in people
+                and fold(t) not in places)
+
+    echoes = []
+    for p, tids in rolled.items():
+        if tids != by_tag[p] or not stands(p):
+            continue
+        if any(c != p and c not in echoes and by_tag[c] == tids and stands(c)
+               for c in by_tag):
+            echoes.append(p)
+    if echoes:
+        gone = set(echoes)
+        for th in threads:
+            if th.get("tags"):
+                th["tags"] = [t for t in th["tags"] if t not in gone]
+    return echoes
+
+
 def broader_candidates(threads: list[dict], broader: dict[str, str] | None = None,
                        participants: dict | None = None,
                        places: set[str] | None = None,
