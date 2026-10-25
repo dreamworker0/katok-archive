@@ -111,7 +111,9 @@
       var shown = rows.filter(function (m) {
         if (state.nick && m.nickname !== state.nick) return false;
         if (!q) return true;
-        var name = m.file ? m.file.name : (m.text || "");
+        // 원본이 없는 첨부는 이름이 m.name 에 있다(카드도 그것을 보인다). 예전에는
+        // m.text 만 봐서 만료된 파일을 이름으로 찾지 못했다.
+        var name = m.file ? m.file.name : (m.name || m.text || "");
         return (name + " " + m.nickname + " " + m.date).toLowerCase().indexOf(q) !== -1;
       });
       // 최근 첨부부터
@@ -126,41 +128,31 @@
         html.push(emptyState("search", "조건에 맞는 파일을 찾지 못했어요",
           "검색어를 줄이거나 참여자 필터를 비우고 다시 살펴보세요."));
       } else {
-        html.push('<div class="files">');
-        shown.forEach(function (m) {
-          var name = m.file ? m.file.name : (m.name || "");
-          html.push(
-            '<div class="file-card' + (m.file ? "" : " no-src") + '">' +
-            '<span class="fc-icon">' + fileIcon(name) + "</span>" +
-            '<div class="fc-body">' +
-            '<div class="fc-name" title="' + esc(name) + '">' + esc(name) + "</div>" +
-            '<div class="fc-meta">' + esc(m.nickname) + " · " + esc(m.date) +
-            (m.file ? " · " + fmtSize(m.file.size) : "") + "</div></div>" +
-            '<div class="fc-act">' +
-            (m.file
-              ? '<button class="btn ghost fc-dl" data-file="' + esc(m.file.path) +
-                '" data-name="' + esc(m.file.name) + '">받기</button>'
-              : m.file_expired
-                ? '<span class="fc-gone" title="카톡이 파일을 14일만 보관해 서랍에서 사라졌습니다">만료됨</span>'
-                : '<span class="fc-none" title="아직 받지 못했습니다 — 밤마다 다시 받아 옵니다">수집 대기</span>') +
-            '<button class="btn ghost fc-jump" data-jump="t-' + esc(m.thread_id || "") + '">주제</button>' +
-            "</div></div>"
-          );
-        });
-        html.push("</div>");
-        // 지금 화면에 없는 딱지는 설명하지 않는다. '수집 대기' 가 0건인 날에 그 말을
-        // 풀이하면 읽는 사람이 없는 것을 찾는다.
-        var pending = rows.length - have.length - gone.length;
-        if (have.length < rows.length) {
-          var note = [];
-          if (pending) {
-            note.push("‘수집 대기’는 아직 받지 못한 것입니다 — 밤마다 자동으로 다시 받아 옵니다.");
-          }
-          if (gone.length) {
-            note.push("‘만료됨’은 카톡이 파일을 14일만 보관해 서랍에서 사라진 것이라 " +
-              "자동으로는 채워지지 않습니다. 가지고 계신 분이 관리자에게 보내주시면 연결됩니다.");
-          }
-          html.push('<p class="hint" style="margin-top:14px">' + note.join(" ") + "</p>");
+        /* 받을 수 있는 것을 위에, 만료된 것은 아래에 접어 둔다.
+         *
+         * 78개 중 41개가 만료였는데(2026-10-25) 최근순으로 섞어 두니 받기 단추와
+         * '만료됨' 딱지가 번갈아 나와, 받을 것을 찾으려면 목록 전체를 훑어야 했다.
+         * 만료는 기다려도 줄지 않으므로 찾을 때만 열면 된다. '수집 대기' 는 밤에
+         * 채워질 수 있으니 받을 수 있는 것 바로 아래 둔다. */
+        var ready = shown.filter(function (m) { return m.file; });
+        var waiting = shown.filter(function (m) { return !m.file && !m.file_expired; });
+        var expired = shown.filter(function (m) { return !m.file && m.file_expired; });
+        var main = ready.concat(waiting);
+        if (main.length) {
+          html.push('<div class="files">' + main.map(fileCard).join("") + "</div>");
+        }
+        if (waiting.length) {
+          html.push('<p class="hint" style="margin-top:14px">‘수집 대기’는 아직 받지 못한 ' +
+            "것입니다 — 밤마다 자동으로 다시 받아 옵니다.</p>");
+        }
+        if (expired.length) {
+          // 걸러 보는 중이면 펴 둔다 — 찾은 파일이 접힌 상자 안에 숨으면 못 찾은 줄 안다.
+          var filtering = !!(q || state.nick);
+          html.push('<details class="more-fold files-gone"' + (filtering ? " open" : "") +
+            "><summary>만료되어 받을 수 없는 파일 " + expired.length + "개</summary>" +
+            '<p class="doc-note">카톡이 파일을 14일만 보관해 서랍에서 사라진 것이라 ' +
+            "자동으로는 채워지지 않습니다. 가지고 계신 분이 관리자에게 보내주시면 연결됩니다.</p>" +
+            '<div class="files">' + expired.map(fileCard).join("") + "</div></details>");
         }
       }
 
@@ -169,6 +161,25 @@
         b.onclick = function () { jumpToTimeline(b.getAttribute("data-jump")); };
       });
       bindFiles(el.view);
+    }
+
+    function fileCard(m) {
+      var name = m.file ? m.file.name : (m.name || "");
+      return '<div class="file-card' + (m.file ? "" : " no-src") + '">' +
+        '<span class="fc-icon">' + fileIcon(name) + "</span>" +
+        '<div class="fc-body">' +
+        '<div class="fc-name" title="' + esc(name) + '">' + esc(name) + "</div>" +
+        '<div class="fc-meta">' + esc(m.nickname) + " · " + esc(m.date) +
+        (m.file ? " · " + fmtSize(m.file.size) : "") + "</div></div>" +
+        '<div class="fc-act">' +
+        (m.file
+          ? '<button class="btn ghost fc-dl" data-file="' + esc(m.file.path) +
+            '" data-name="' + esc(m.file.name) + '">받기</button>'
+          : m.file_expired
+            ? '<span class="fc-gone" title="카톡이 파일을 14일만 보관해 서랍에서 사라졌습니다">만료됨</span>'
+            : '<span class="fc-none" title="아직 받지 못했습니다 — 밤마다 다시 받아 옵니다">수집 대기</span>') +
+        '<button class="btn ghost fc-jump" data-jump="t-' + esc(m.thread_id || "") + '">주제</button>' +
+        "</div></div>";
     }
 
     function bindFiles(scope) {

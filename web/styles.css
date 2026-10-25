@@ -775,6 +775,18 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 
 /* ---------- 첨부파일 탭 ---------- */
 .files { display: grid; gap: 8px; }
+/* 만료된 첨부를 접어 둔 상자. 받을 수 있는 목록 아래 놓이는 한 덩어리라 작은
+   '더 보기' 글씨보다 크게, 손가락으로 누를 수 있는 높이로 둔다. */
+.files-gone { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 6px; }
+.files-gone > summary { font-size: 13.5px; min-height: 44px; display: flex; align-items: center;
+  gap: 8px; list-style: none; }
+/* display:flex 가 기본 펼침 표시(▸)를 지운다. 눌러 연다는 것이 안 보이면 그냥 제목이다. */
+.files-gone > summary::-webkit-details-marker { display: none; }
+.files-gone > summary::before { content: ""; width: 0; height: 0; flex: 0 0 auto;
+  border-top: 5px solid transparent; border-bottom: 5px solid transparent;
+  border-left: 6px solid currentColor; transition: transform .15s ease; }
+.files-gone[open] > summary::before { transform: rotate(90deg); }
+.files-gone > .doc-note { margin: 2px 0 10px; }
 .file-card { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center;
   background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
   padding: 12px 14px; box-shadow: var(--shadow-sm); }

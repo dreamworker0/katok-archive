@@ -174,8 +174,19 @@ class FileOriginContractTests(unittest.TestCase):
 
     def test_the_note_does_not_explain_a_label_that_is_not_shown(self):
         block = fn_body(self.app, "renderFiles")
-        self.assertIn("if (pending)", block[:4000])
-        self.assertIn("if (gone.length)", block[:4000])
+        self.assertIn("if (waiting.length)", block[:5000])
+        self.assertIn("if (expired.length)", block[:5000])
+
+    def test_downloadable_files_come_first_and_expired_ones_fold(self):
+        """받을 수 있는 것이 위, 만료된 것은 접힌 상자(2026-10-25).
+
+        78개 중 41개가 만료였는데 최근순으로 섞여 받기 단추와 '만료됨' 이 번갈아
+        나왔다. 걸러 보는 중에는 상자를 펴 둔다 — 찾은 것이 숨으면 못 찾은 줄 안다.
+        """
+        block = fn_body(self.app, "renderFiles")
+        self.assertIn("ready.concat(waiting)", block)
+        self.assertIn('<details class="more-fold files-gone"', block)
+        self.assertIn("filtering = !!(q || state.nick)", block)
 
     def test_the_screen_and_the_publisher_agree_on_the_field(self):
         """화면이 보는 이름과 발행이 적는 이름이 같아야 한다."""
