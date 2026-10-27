@@ -311,18 +311,41 @@
       state.refreshUnsub = null;
     }
 
+    /** 신청서 이름과 비슷한 참여자 — 부분 문자열 양방향(scripts/approve_claims.js
+     *  similarNicknames 와 같은 규칙).
+     *
+     *  신청서에는 '홍길동' 이라고 적고 대화명은 '홍길동🌳(gildong)' 인 경우가 실제로
+     *  있었다(2026-10-27). 글자가 똑같아야만 대조하면 방에서 인사까지 한 사람이
+     *  '× 명단에 없음' 으로 나오고, 그대로 승인하면 '내 글' 이 비어 버린다. */
+    function similarParticipants(nickname, parts) {
+      var n = (nickname || "").trim();
+      if (n.length < 2) return [];
+      // 한 글자 대화명은 후보로 삼지 않는다 — 어느 이름에나 들어 있을 수 있다.
+      return Object.keys(parts).filter(function (known) {
+        return known !== n && known.length >= 2 &&
+          (known.indexOf(n) !== -1 || n.indexOf(known) !== -1);
+      }).slice(0, 5);
+    }
+
     function adminClaimRow(c, parts) {
       var hit = parts[c.nickname];
+      var near = hit ? [] : similarParticipants(c.nickname, parts);
+      // 후보가 하나면 선택 칸에 미리 골라 둔다. 여럿이면 사람이 고르게 둔다.
+      var preset = near.length === 1 ? near[0] : (c.nickname || "");
       var match = hit
         ? '<span class="ok">○ 참여자 ' + esc(c.nickname) + " · " + hit.message_count + "건</span>"
-        : '<span class="bad">× 명단에 없음</span>';
+        : near.length
+          ? '<span class="warn">△ 같은 이름은 없고 비슷한 참여자: ' + near.map(function (k) {
+              return esc(k) + " · " + parts[k].message_count + "건";
+            }).join(", ") + (near.length === 1 ? " — 아래에 골라 두었습니다" : "") + "</span>"
+          : '<span class="bad">× 명단에 없음</span>';
       return '<div class="adm-row" data-email="' + esc(c.id) + '">' +
         '<div class="adm-main"><b>' + esc(c.nickname || "(이름 없음)") + "</b> " +
         '<span class="adm-mail">' + esc(c.id) + "</span></div>" +
         '<div class="adm-meta">' + match +
         (c.displayName ? ' · 구글 계정명 ' + esc(c.displayName) : "") + "</div>" +
         '<div class="adm-act">' +
-        participantSelect(c.nickname || "", "adm-pick") +
+        participantSelect(preset, "adm-pick") +
         '<button class="btn" data-act="approve">승인</button> ' +
         '<button class="btn ghost" data-act="reject">반려</button>' +
         "</div></div>";

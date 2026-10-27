@@ -1148,6 +1148,50 @@ class FirebaseHostingContractTests(unittest.TestCase):
                 self.assertNotIn(">다크 모드</button>", source)
 
 
+class ClaimSimilarNameContractTests(unittest.TestCase):
+    """열람 신청 이름이 대화명과 조금 다를 때 관리 화면이 알아보는가(2026-10-27).
+
+    신청서에는 '홍길동' 이라 적고 대화명은 '홍길동🌳(gildong)' 인 사람이 방에서
+    인사까지 했는데 '× 명단에 없음' 으로 나왔다. 로컬 도구(approve_claims.js)는
+    이미 '비슷한 이름' 을 알려 주고 있었고 웹만 몰랐다.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.admin = (ROOT / "web" / "admin.js").read_text(encoding="utf-8")
+
+    def test_similar_participant_is_found_and_preselected(self):
+        row = fn_body(self.admin, "adminClaimRow")
+        self.assertIn("similarParticipants(c.nickname, parts)", row)
+        self.assertIn("participantSelect(preset,", row)
+
+    def test_same_rule_as_the_local_tool(self):
+        # 부분 문자열 양방향 — 한쪽만 바꾸면 웹과 로컬 도구가 다른 답을 한다
+        body = fn_body(self.admin, "similarParticipants")
+        self.assertIn("(known.indexOf(n) !== -1 || n.indexOf(known) !== -1)", body)
+        tool = (ROOT / "scripts" / "approve_claims.js").read_text(encoding="utf-8")
+        self.assertIn("known.includes(n) || n.includes(known)", tool)
+
+    def test_similar_name_behaves(self):
+        """진짜로 불러 본다 — 가짜 이름으로(이 저장소는 공개다)."""
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node 가 없습니다")
+        body = fn_body(self.admin, "similarParticipants")
+        script = (
+            "const f = new Function('return ' + process.argv[1])();"
+            "const parts = {'홍길동🌳(gildong)': {}, '김철수': {}, '홍': {}};"
+            "console.log(JSON.stringify([f('홍길동', parts), f('홍', parts), f('', parts),"
+            " f('김철수', parts)]));"
+        )
+        out = subprocess.run([node, "-e", script, body], capture_output=True,
+                             text=True, encoding="utf-8", check=True).stdout
+        self.assertEqual(json.loads(out),
+                         [["홍길동🌳(gildong)"], [], [], []])
+
+
 class GraphDragContractTests(unittest.TestCase):
     """관계망에서 끌어다 놓은 노드가 출렁이지 않게 하는 뼈대(2026-10-25).
 

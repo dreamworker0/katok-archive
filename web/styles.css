@@ -895,6 +895,8 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .adm-meta { font-size: 12.5px; color: var(--ink-soft); }
 .adm-meta .ok { color: #16a34a; font-weight: 600; }
 .adm-meta .bad, .adm-line .bad { color: #dc2626; font-weight: 600; }
+/* 같은 이름은 없지만 비슷한 참여자가 있다 — 틀린 것도 맞은 것도 아니라 확인할 것. */
+.adm-meta .warn { color: #b45309; font-weight: 600; }
 .adm-act { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
 .adm-nick { padding: 6px 9px; font: inherit; font-size: 13.5px; color: var(--ink);
   background: var(--bg); border: 1px solid var(--line); border-radius: 8px; min-width: 160px; }
