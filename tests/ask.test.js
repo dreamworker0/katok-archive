@@ -162,3 +162,20 @@ test("verifyResultHtml: 출처는 http(s) 주소만 링크로, 글 속 태그는
   assert.match(h, /찾은 출처 3곳 중 1곳 열림/);
   assert.match(h, /실제로 열어 본 출처만/);
 });
+
+test("ArchiveAnswer: PC 가 받아 running 이 된 직후(아직 forAskedAt 없음)에도 단추가 다시 뜨지 않는다", async () => {
+  const ASKED = 1000;
+  let vcb;
+  const doc = { question: "질문이에요", state: "done", askedAt: ASKED, answer: "답", cites: [{ id: "t-1", title: "주제" }] };
+  const reqs = { ask: () => Promise.resolve(), watchAsk: (cb) => { cb(doc); return () => {}; },
+    verify: () => Promise.resolve(), watchVerify: (cb) => { vcb = cb; return () => {}; } };
+  const A = K.ArchiveAnswer({ esc: T.esc, state: { session: { requests: reqs } }, jumpToTimeline: () => {} });
+  A.boxHtml("질문이에요");                 // 듣기 시작
+  vcb({ state: "running", askedAt: ASKED + 500, startedAt: new Date().toISOString() });
+  const h = A.boxHtml("질문이에요");
+  assert.doesNotMatch(h, /data-ai-verify/);
+  assert.match(h, /ai-verify-wait/);
+  // 지난 답의 확인(forAskedAt 다름)은 감추고 단추를 보인다
+  vcb({ state: "done", forAskedAt: ASKED - 1, body: "옛 확인" });
+  assert.match(A.boxHtml("질문이에요"), /data-ai-verify/);
+});

@@ -453,9 +453,12 @@
       if (!v) return null;
       if (v.local) return v;
       if (v.forAskedAt != null) return v.forAskedAt === askMs ? v : null;
-      // PC 가 아직 받지 않은 부탁 — 이 답이 나온 뒤에 누른 것이면 이 답의 것이다.
+      // 어느 답의 것인지(forAskedAt) 아직 안 적힌 부탁 — 이 답이 나온 뒤에 누른 것이면 이
+      // 답의 것이다. PC 가 받아 running 으로 바꾼 직후에도 forAskedAt 은 첫 진행 줄과 함께
+      // 오므로, queued 만 보면 그 사이에 단추가 한 번 다시 뜬다(깜빡임, 2026-10-30 지적).
       var at = millisOf(v.askedAt);
-      return (v.state === "queued" && (at === null || askMs === null || at >= askMs)) ? v : null;
+      var pending = v.state === "queued" || v.state === "running";
+      return (pending && (at === null || askMs === null || at >= askMs)) ? v : null;
     }
 
     function verifyHtml() {
@@ -472,7 +475,7 @@
           : v.stage === "open" ? "찾은 출처 " + (v.total || 0) + "곳을 직접 열어 보는 중이에요… (" + (v.opened || 0) + "곳 열림)"
           : v.stage === "write" ? "열린 출처로 정리하는 중이에요…"
           : "웹에서 출처를 찾는 중이에요…";
-        // 세 걸음 중 어디쯤인지. 찾기가 대부분(2분 중 1분 40초)이라 거기서 오래 머문다.
+        // 세 걸음 중 어디쯤인지. 찾기가 대부분(1분 중 30~40초)이라 거기서 오래 머문다.
         var at = st === "queued" ? -1 : v.stage === "open" ? 1 : v.stage === "write" ? 2 : 0;
         var steps = ["① 출처 찾기", "② 직접 열어 보기", "③ 정리하기"].map(function (s, i) {
           return '<li class="' + (i < at ? "done" : i === at ? "on" : "") + '"' +
@@ -480,7 +483,7 @@
         }).join("");
         return '<div class="ai-verify-wait"><p class="ai-answer__wait"><span class="ai-answer__dot" aria-hidden="true"></span>' +
           esc(msg) + '</p><ol class="ai-steps">' + steps + "</ol>" +
-          '<p class="ai-answer__note">보통 2분쯤 걸려요. 화면을 떠났다 와도 결과는 남아요.</p></div>';
+          '<p class="ai-answer__note">보통 1분쯤 걸려요. 화면을 떠났다 와도 결과는 남아요.</p></div>';
       }
       if (st === "done") {
         if (v.skipped || !v.body) {
@@ -495,7 +498,7 @@
       }
       return '<div class="ai-verify-ask">' + verifyButton("🔎 지금 기준으로 다시 확인") +
         '<p class="ai-answer__note">대화는 몇 달 전 것일 수 있어요. 누르면 웹에서 출처를 찾아 이 PC가 ' +
-        "직접 열어 보고, 요금·행사·제품처럼 바뀌기 쉬운 내용을 지금 기준으로 정리해요. 2분쯤 · 하루 3번.</p></div>";
+        "직접 열어 보고, 요금·행사·제품처럼 바뀌기 쉬운 내용을 지금 기준으로 정리해요. 1분쯤 · 하루 3번.</p></div>";
     }
 
     function askButton(label) {
@@ -561,6 +564,7 @@
 
     /** 문서가 바뀌면 칸 안만 다시 그린다 — 타임라인 전체를 다시 그리면 읽던 자리를 잃는다. */
     function paint() {
+      if (typeof document === "undefined") return;   // node 검사에서는 그릴 곳이 없다
       var box = document.getElementById("aiAnswer");
       if (!box) return;
       box.innerHTML = inner(box.getAttribute("data-q"));

@@ -581,7 +581,7 @@ async function handle(db, snap, { say, dry }) {
  * 멤버가 verifies/{이메일} 에 '확인해 달라' 는 표시만 쓰면, 이 PC 가 그 사람의
  * asks/{이메일} 에서 질문과 답을 직접 읽어 scripts/verify_answer.py 에 넘긴다(찾기 →
  * 이 PC 가 열기 → 열린 것만 정리). 확인할 글을 멤버가 보내지 않으므로, 아카이브 답
- * 아닌 글이 웹 검색 모델로 나갈 길이 없다. 한 번에 2분쯤(검색이 대부분)이라 한도가 좁다. */
+ * 아닌 글이 웹 검색 모델로 나갈 길이 없다. 한 번에 1분쯤(검색이 대부분)·claude 검색이라 한도가 좁다. */
 const VERIFY_PER_DAY = 3;
 const VERIFY_TOTAL_PER_DAY = 40;
 const VERIFY_GAP_MS = 60 * 1000;
@@ -667,6 +667,9 @@ async function handleVerify(db, snap, { say, dry }) {
     await finish({ state: "limited", message: limited, forAskedAt });
     return;
   }
+  // 어느 답의 확인인지 곧바로 적는다. 첫 진행 줄(몇 초 뒤)까지 비워 두면 화면이 그
+  // 사이 이 부탁을 남의 답 것으로 보아 단추를 한 번 다시 띄웠다(2026-10-30 깜빡임).
+  await writeIfSame(db, ref, askedAtMs, { stage: "search", forAskedAt });
 
   const t0 = Date.now();
   let last = 0;

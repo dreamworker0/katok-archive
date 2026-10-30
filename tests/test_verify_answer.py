@@ -78,5 +78,32 @@ class CitedNumbers(unittest.TestCase):
     def test_years_outside_citation_are_not_numbers(self):
         self.assertEqual(V.cited_numbers("2026년 10월 기준이에요"), set())
 
+class SearchOrder(unittest.TestCase):
+    """사람이 기다리는 단추라 claude 가 먼저, 안 되면 agy. 엔진 기록은 실제로 찾은 쪽만."""
+
+    def setUp(self):
+        self.calls = []
+        self._agy, self._claude = V.AR.call_agy, V.call_claude
+        V.AR.call_agy = lambda p, t: self.calls.append("agy") or self.agy_out
+        V.call_claude = lambda p, m, t, tools="": self.calls.append("claude") or self.claude_out
+
+    def tearDown(self):
+        V.AR.call_agy, V.call_claude = self._agy, self._claude
+
+    def test_claude_first(self):
+        self.claude_out, self.agy_out = "찾음", "agy"
+        used = []
+        self.assertEqual(V.search("p", V.DEFAULT_ENGINE, used), "찾음")
+        self.assertEqual(self.calls, ["claude"])
+        self.assertEqual(used, ["claude-sonnet"])
+
+    def test_falls_back_to_agy(self):
+        self.claude_out, self.agy_out = None, "agy 가 찾음"
+        used = []
+        self.assertEqual(V.search("p", "claude", used), "agy 가 찾음")
+        self.assertEqual(self.calls, ["claude", "agy"])
+        self.assertEqual(used, [V.AR.SEARCH_MODEL])
+
+
 if __name__ == "__main__":
     unittest.main()

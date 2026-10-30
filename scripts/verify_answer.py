@@ -2,8 +2,9 @@
 """'AI에게 물어보기' 답을 **지금 기준으로** 다시 확인한다 — 멤버가 누르는 단추 하나.
 
 밤 갱신의 AI 검증 주석(scripts/ai_reports.py)과 같은 세 걸음이다.
-    1. 찾는다 — agy(검색 도구 하나만 가진 Gemini 에이전트)가 웹에서 근거 주소를 댄다.
-       안 되면 claude 웹 검색이 대신 찾는다.
+    1. 찾는다 — claude 웹 검색(서버 쪽 도구 하나만)이 근거 주소를 댄다. 안 되면 agy(검색
+       도구 하나만 가진 Gemini 에이전트)가 대신 찾는다. 밤과 순서가 반대인 까닭은
+       DEFAULT_ENGINE 머리말 — 사람이 기다리는 단추라 빠른 쪽이 먼저다.
     2. 연다   — **이 PC 가 그 주소를 실제로 열어 본다**(ai_reports.open_url — 내부망
        주소는 열지 않는다). 열린 것만 단정의 근거가 된다.
     3. 쓴다   — claude 가 열린 것과 안 열린 것을 갈라 받아 '확인됨 / 달라짐 / 확인 못함'
@@ -17,7 +18,7 @@
     - 대상이 주제 보고서가 아니라 **멤버가 받은 답**이다. 답은 발행본으로만 쓴 글이라
       바깥으로 나가는 것은 밤 검증과 같은 범위다(발행된 글).
     - 사람이 기다린다. 죽은 주소 되짚기(recover_links)는 하지 않는다 — 한 번에 1분이
-      더 든다. 하나도 못 열었을 때만 claude 웹 검색으로 한 번 더 찾는다.
+      더 든다. 하나도 못 열었을 때만 다른 엔진으로 한 번 더 찾는다.
     - claude 는 llm.call_claude 가 아니라 여기서 더 좁게 띄운다. 멤버가 누르는 단추라
       ask_worker 와 같은 격리(공용 설정·CLAUDE.md 를 안 읽고 빈 임시 폴더에서, 토큰류
       환경 변수 없이)를 쓴다.
@@ -45,6 +46,11 @@ from concurrent.futures import ThreadPoolExecutor
 from scripts import ai_reports as AR
 
 WRITE_MODEL = "sonnet"
+# 먼저 찾는 쪽. 2026-10-30 두 답×다섯 설정 실측 — claude 웹 검색 45~57초(검색 28~43초),
+# 출처 4/6·2/2 열림 / agy(아르곤 high) 93~117초(검색 77~100초), 2/4·2/3 열림. 사람이
+# 기다리는 단추라 claude 를 앞에 둔다. 검색 한 번에 claude 요금제 환산 $0.09~0.16 이
+# 더 들고(agy 는 구글 요금제), 안 되면 agy 가 대신 찾는다. 밤 검증은 그대로 agy 가 먼저다.
+DEFAULT_ENGINE = "claude"
 SEARCH_TIMEOUT_SEC = 240        # 사람이 기다린다 — 밤(420초)보다 짧게
 WRITE_TIMEOUT_SEC = 150
 MAX_CLAIMS = 5
@@ -211,16 +217,29 @@ def cited_numbers(body: str) -> set[int]:
     return out
 
 
-def search(prompt: str, engine: str, used: list[str]) -> str | None:
-    if engine != "claude":
+def search_with(name: str, prompt: str, used: list[str]) -> str | None:
+    """한 엔진으로 찾는다. name 은 'claude' 나 'agy'."""
+    if name == "agy":
         out = AR.call_agy(prompt, SEARCH_TIMEOUT_SEC)
         if out is not None:
             used.append(AR.SEARCH_MODEL)
-            return out
-        log("agy 가 안 돼 claude 웹 검색으로 찾습니다.")
+        return out
     out = call_claude(prompt, "sonnet", SEARCH_TIMEOUT_SEC, tools="WebSearch")
     if out is not None:
         used.append("claude-sonnet")
+    return out
+
+
+def other(name: str) -> str:
+    return "agy" if name == "claude" else "claude"
+
+
+def search(prompt: str, engine: str, used: list[str]) -> str | None:
+    """먼저 engine 으로, 안 되면 다른 쪽으로 찾는다."""
+    out = search_with(engine, prompt, used)
+    if out is None:
+        log("%s 검색이 안 돼 %s 로 찾습니다." % (engine, other(engine)))
+        out = search_with(other(engine), prompt, used)
     return out
 
 
@@ -232,7 +251,7 @@ def open_all(urls: list[str]) -> list[dict]:
     return links
 
 
-def run(question: str, answer: str, today: str, engine: str = "agy") -> dict:
+def run(question: str, answer: str, today: str, engine: str = DEFAULT_ENGINE) -> dict:
     t0 = time.time()
     used: list[str] = []
     stage("search")
@@ -244,14 +263,15 @@ def run(question: str, answer: str, today: str, engine: str = "agy") -> dict:
                 "total": 0, "engine": " + ".join(used), "sec": round(time.time() - t0)}
 
     links = open_all(AR.extract_urls(findings, MAX_LINKS))
-    if not any(l["ok"] and not l.get("root") for l in links) and "claude-sonnet" not in used:
-        # 하나도 못 열었으면(agy 의 일회성 중계 주소 등) claude 웹 검색으로 한 번만 더.
-        log("열린 주소가 없어 claude 웹 검색으로 한 번 더 찾습니다.")
+    tried = {"agy" if u == AR.SEARCH_MODEL else "claude" for u in used}
+    if not any(l["ok"] and not l.get("root") for l in links) and len(tried) < 2:
+        # 하나도 못 열었으면 다른 엔진으로 한 번만 더 찾는다. 같은 쪽을 되풀이하면
+        # 같은 죽은 주소를 또 댄다(ai_reports.recover_links 머리말).
+        nxt = other(next(iter(tried))) if tried else other(engine)
+        log("열린 주소가 없어 %s 로 한 번 더 찾습니다." % nxt)
         stage("search")
-        again = call_claude(build_search_prompt(question, answer, today), "sonnet",
-                            SEARCH_TIMEOUT_SEC, tools="WebSearch")
+        again = search_with(nxt, build_search_prompt(question, answer, today), used)
         if again and not AR.is_skip(again):
-            used.append("claude-sonnet")
             findings = findings + "\n\n" + again
             seen = {l["url"] for l in links}
             links += open_all([u for u in AR.extract_urls(again, MAX_LINKS) if u not in seen])
@@ -284,7 +304,7 @@ def main() -> None:
     else:
         req = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     today = req.get("today") or time.strftime("%Y-%m-%d")
-    engine = a.engine or req.get("engine") or "agy"
+    engine = a.engine or req.get("engine") or DEFAULT_ENGINE
     try:
         out = run(str(req.get("question", "")), str(req.get("answer", "")), today, engine)
     except Exception as e:                      # 실패는 결과다 — 던지지 않는다
