@@ -73,9 +73,12 @@ const HEARTBEAT_MS = 5 * 60 * 1000;
 
 // 프롬프트에 넣을 주제 수와 주제 하나의 보고서 길이. 많이 넣을수록 느리고 비싸며,
 // 검색 순위 아래쪽은 대개 스친 주제다.
+// 답을 길게 쓰게 하려면 읽을 거리도 늘려야 한다 — 보고서 앞 1800자만 주었더니 자세히
+// 써 달라고 해도 쓸 말이 없었다(2026-10-30, 멤버가 '더 길게' 를 청함).
 const MAX_CANDIDATES = 8;
-const REPORT_CHARS = 1800;
-const ANSWER_CHARS = 1200;
+const REPORT_CHARS = 3000;
+const ANSWER_CHARS = 2500;
+const MAX_CITES = 6;
 
 /* ---------- 발행본 읽기 (바뀌었을 때만 다시) ---------- */
 
@@ -199,9 +202,12 @@ function buildPrompt(question, list, catLabel) {
     "규칙",
     "- <topics> 에 있는 내용만으로 답하세요. 없는 사실·날짜·숫자·사람을 지어내지 마세요.",
     "- 자료에 답이 없으면 '기록에서 찾지 못했어요' 라고 솔직히 말하고, 가까운 주제가 있으면 알려 주세요.",
-    "- 존댓말로 3~6문장, 600자 이내로 짧게. 누가 언제 무엇을 했는지를 구체적으로.",
+    "- 존댓말로 2~4문단, 800~1500자로 자세히. 주제마다 누가 언제 무엇을 했고, 어떻게 쓰는지,",
+    "  써 본 사람들의 반응·평가·주의할 점은 무엇이었는지를 구체적으로 풀어 주세요.",
+    "- 첫 문단은 질문에 대한 바로 답(한두 문장으로 핵심)으로 시작하세요.",
+    "- 자료가 적으면 억지로 늘리지 말고 있는 만큼만 쓰세요. 길이를 채우려고 지어내면 안 됩니다.",
     "- 마크다운·표·제목 없이 문장만 쓰세요. 문단은 빈 줄로 나눕니다.",
-    "- 답에 실제로 쓴 주제의 id 만 cites 에 넣으세요(최대 4개).",
+    `- 답에 실제로 쓴 주제의 id 만 cites 에 넣으세요(최대 ${MAX_CITES}개).`,
     "",
     '출력은 JSON 하나만: {"answer": "...", "cites": ["t-001", ...]}',
     "",
@@ -293,7 +299,7 @@ function parseAnswer(text, allowedIds) {
   const answer = String(obj && obj.answer ? obj.answer : s).trim().slice(0, ANSWER_CHARS);
   const cites = (obj && Array.isArray(obj.cites) ? obj.cites : [])
     .map(String).filter((id, i, arr) => allowedIds.includes(id) && arr.indexOf(id) === i)
-    .slice(0, 4);
+    .slice(0, MAX_CITES);
   return { answer, cites };
 }
 
