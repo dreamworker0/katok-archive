@@ -202,6 +202,15 @@ def clean(body: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", body).strip()
 
 
+def cited_numbers(body: str) -> set[int]:
+    """글에서 단 출처 번호. '(출처 2, 3)'·'(출처 1·2)' 처럼 묶어 적기도 한다 —
+    처음엔 첫 번호만 잡아 출처 3 의 링크가 빠졌다(실측 2026-10-30)."""
+    out: set[int] = set()
+    for grp in re.findall(r"출처\s*((?:\d+\s*(?:,|·|및|와|과)?\s*)+)", body or ""):
+        out.update(int(n) for n in re.findall(r"\d+", grp))
+    return out
+
+
 def search(prompt: str, engine: str, used: list[str]) -> str | None:
     if engine != "claude":
         out = AR.call_agy(prompt, SEARCH_TIMEOUT_SEC)
@@ -256,7 +265,7 @@ def run(question: str, answer: str, today: str, engine: str = "agy") -> dict:
     body = clean(body)
     skipped = AR.is_skip(body)
     # 글에서 실제로 단 번호의 출처만 남긴다 — 안 쓴 주소까지 늘어놓으면 근거처럼 보인다.
-    cited = {int(n) for n in re.findall(r"출처\s*(\d+)", body)}
+    cited = cited_numbers(body)
     return {"ok": True, "skipped": skipped, "body": "" if skipped else body,
             "sources": [s for s in sources if s["n"] in cited],
             "opened": len(sources), "total": len(links), "engine": " + ".join(used),

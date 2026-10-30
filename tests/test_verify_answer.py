@@ -69,5 +69,14 @@ class ChildEnv(unittest.TestCase):
             del os.environ["SOME_API_KEY"]
 
 
+
+class CitedNumbers(unittest.TestCase):
+    def test_grouped_citations_are_all_kept(self):
+        body = "맞아요 (출처 1)\n- 달라졌어요 (출처 2, 3)\n- 그대로 (출처 4·5) 2026년 기준"
+        self.assertEqual(V.cited_numbers(body), {1, 2, 3, 4, 5})
+
+    def test_years_outside_citation_are_not_numbers(self):
+        self.assertEqual(V.cited_numbers("2026년 10월 기준이에요"), set())
+
 if __name__ == "__main__":
     unittest.main()
