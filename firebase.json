@@ -89,7 +89,7 @@
       ],
       "rewrites": [
         {
-          "source": "/@(admin|files|gallery|graph|mine|stats|summary|tags|timeline)",
+          "source": "/@(admin|files|gallery|graph|help|mine|stats|summary|tags|timeline)",
           "destination": "/index.html"
         }
       ]
@@ -183,7 +183,7 @@
       ],
       "rewrites": [
         {
-          "source": "/@(admin|files|gallery|graph|mine|stats|summary|tags|timeline)",
+          "source": "/@(admin|files|gallery|graph|help|mine|stats|summary|tags|timeline)",
           "destination": "/index.html"
         }
       ]

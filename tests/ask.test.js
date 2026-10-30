@@ -78,3 +78,31 @@ test("isHowTo: 사용법을 묻는 말투", () => {
   assert.equal(K.isHowTo("글자를 크게 하려면?"), true);
   assert.equal(K.isHowTo("파이어베이스 요금"), false);
 });
+
+test("smartSearch: 말이 여럿이면 가장 많이 맞은 주제만 남긴다", () => {
+  const r = K.smartSearch(THREADS, "한글 자동화 얘기 어디 있었지?", []);
+  assert.deepEqual(r.threads.map((t) => t.id), ["t-1"]);
+  assert.equal(r.partial, false);
+  assert.equal(r.weak, false);
+});
+
+test("smartSearch: 다 맞는 주제가 없으면 partial 로 알린다", () => {
+  const r = K.smartSearch(THREADS, "파이어베이스 마라톤", []);
+  assert.deepEqual(r.threads.map((t) => t.id), ["t-3"]);
+  assert.equal(r.partial, true);
+});
+
+test("smartSearch: 본문에서만 스친 말은 weak 로 알린다", () => {
+  const thread = [{ id: "t-9", title: "모임 공지", summary: "", tags: [], participants: [],
+    start_date: "2026-04-01", report: "마라톤 이야기가 잠깐 나왔다", ai_report: "" }];
+  const r = K.smartSearch(thread, "마라톤", []);
+  assert.deepEqual(r.threads.map((t) => t.id), ["t-9"]);
+  assert.equal(r.weak, true);
+});
+
+test("smartSearch: 이름은 찾을 말이 아니라 사람 거르기로 쓴다", () => {
+  const r = K.smartSearch(THREADS, "다라 파이어베이스", ["가나", "다라"]);
+  assert.deepEqual(r.people, ["다라"]);
+  assert.deepEqual(r.terms, ["파이어베이스"]);
+  assert.deepEqual(r.threads.map((t) => t.id), ["t-3"]);
+});

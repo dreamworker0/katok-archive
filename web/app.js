@@ -157,6 +157,8 @@
     bindFiles: bindFiles, bindImages: bindImages, bindKeywordChips: bindKeywordChips,
     fileIcon: fileIcon, isAdmin: isAdmin, render: render, setView: setView,
     stats: function () { return STATSV; },
+    // 검색어가 사용법을 묻는 말이면 타임라인 위에 도움말로 가는 쪽지를 띄운다.
+    helpHint: function (q) { return HELP.hintHtml(q); }, openHelp: openHelp,
   });
   function renderTimeline() { return TIMELINE.renderTimeline(); }
   function threadMatches(t) { return TIMELINE.threadMatches(t); }
@@ -245,11 +247,15 @@
   function renderAdmin() { return ADMIN.renderAdmin(); }
 
 
-  // ---------- 물어보기(떠 있는 질문 단추) → web/ask.js ----------
-  var ASK = window.ArchiveAsk.ArchiveAsk({
-    data: appData, el: el, esc: esc, tagFold: tagFold, TAG_PICK_MAX: TAG_PICK_MAX,
-    jumpToTimeline: jumpToTimeline, pickThreads: pickThreads, setView: setView,
+  // ---------- 도움말 → web/ask.js ----------
+  var HELP = window.ArchiveAsk.ArchiveHelp({
+    el: el, esc: esc, TAG_PICK_MAX: TAG_PICK_MAX, setView: setView,
   });
+  /** 도움말 화면의 한 안내로 간다(검색 결과 위 쪽지에서). */
+  function openHelp(id) {
+    setView("help");
+    HELP.renderHelp(id);
+  }
 
 
   // ---------- 검색·라우팅 ----------
@@ -408,6 +414,7 @@
       '<button type="button" data-view="tags">태그</button>',
       '<button type="button" data-view="files">첨부파일</button>',
       '<button type="button" data-view="stats">통계</button>',
+      '<button type="button" data-view="help">도움말</button>',
     ];
     if (isAdmin()) html.push('<button type="button" data-view="admin">관리자</button>');
     // 다른 항목과 같은 전체폭 행으로 둔다. 순서는 사이드바와 같다(글자 크기 다음 테마).
@@ -541,6 +548,7 @@
     else if (state.view === "stats") renderStats();
     else if (state.view === "mine") renderMine();
     else if (state.view === "admin") renderAdmin();
+    else if (state.view === "help") HELP.renderHelp();
   }
 
   // 로그인한 사용자 표시 + 로그아웃 (보호모드에서만 세션이 주어진다)
@@ -689,7 +697,6 @@
     applyFont(FONT_STEPS.some(function (s) { return s.id === savedFont; })
       ? savedFont : FONT_STEPS[0].id);
     if (el.fontBtn) el.fontBtn.addEventListener("click", cycleFont);
-    ASK.mount();
 
     /* 뒤로 가기·앞으로 가기. hashchange 와 popstate 를 모두 듣는다 — pushState 로
      * 바꾼 주소는 브라우저에 따라 popstate 만 오는 경우가 있다. 우리가 주소를

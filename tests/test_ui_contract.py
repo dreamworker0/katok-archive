@@ -16,6 +16,7 @@ VIEWS = {
     "stats",
     "mine",
     "admin",
+    "help",
 }
 REQUIRED_IDS = {
     "appRoot",

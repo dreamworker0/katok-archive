@@ -1,15 +1,18 @@
-/* ============ 물어보기 — 떠 있는 질문 단추 (web/ask.js) ============
+/* ============ 말로 찾기·도움말 (web/ask.js) ============
  *
- * 오른쪽 아래 단추를 누르면 대화창 모양의 칸이 열린다. "한글 자동화 얘기 어디
- * 있었지?" 처럼 말로 물으면 주제 카드를 찾아 보여 주고, "내 글 내리려면?" 같은
- * 사용법 질문에는 정해 둔 안내를 보여 준다.
+ * 위쪽 검색창은 글자가 똑같아야 찾는다(timeline.js threadMatches). "한글 자동화
+ * 얘기 어디 있었지?" 처럼 말로 치면 한 건도 안 나온다. 그럴 때 여기서 질문을 찾을
+ * 말로 바꿔 주제를 고른다(smartSearch). "글자 크게 하려면?" 같은 사용법 질문은
+ * 도움말 화면의 안내로 잇는다(matchGuides · ArchiveHelp).
  *
- * AI 를 부르지 않는다(1단계). 이미 화면에 받아 둔 주제(ctx.data().THREADS)에서만
- * 찾으므로 새로 드러나는 자료가 없다 — 숨긴 주제·내려 달라고 한 글은 애초에 여기
- * 오지 않는다. 나중에 claude -p 로 답을 붙이면 이 칸이 그 앞단이 되고, 여기서 찾은
- * 주제가 그 답의 근거 후보가 된다.
+ * 처음엔 오른쪽 아래에 떠 있는 '물어보기' 대화창이었다(2026-10-30). 뜻을 헤아리지
+ * 못하는데 대화 모양이라 '알아듣는다' 는 기대를 주고, 위쪽 검색창과 찾는 칸이 둘이
+ * 되어 검색창과 도움말로 나눴다. 대화 모양은 claude -p 로 답을 붙일 때 다시 쓴다.
  *
- * 위쪽 절반은 순수 함수(검사는 tests/ask.test.js), 아래 ArchiveAsk 는 화면이다.
+ * AI 를 부르지 않는다. 이미 받아 둔 주제(ctx.data().THREADS)에서만 찾으므로 새로
+ * 드러나는 자료가 없다 — 숨긴 주제·내려 달라고 한 글은 애초에 여기 오지 않는다.
+ *
+ * 위쪽은 순수 함수(검사는 tests/ask.test.js), 아래 ArchiveHelp 는 도움말 화면이다.
  * text.js 와 같은 방식으로 브라우저에서는 전역, node 에서는 require 로 쓴다.
  */
 (function () {
@@ -159,6 +162,9 @@
    * (로그인 안 한 사람의 '내 글 관리') 단추를 그리지 않는다 — 화면 쪽이 가린다. */
   function guides(pickMax) {
     return [
+      { id: "search", q: "검색은 어떻게 해요?",
+        keys: ["검색", "찾는 법", "찾으려면"],
+        a: "위쪽 검색창에 낱말을 치면 그 글자가 들어간 주제가 나와요. 글자가 똑같은 주제가 없으면 말로 친 질문(\"한글 자동화 얘기 어디 있었지?\")에서 낱말을 골라 맞는 주제를 찾아 드려요. 사람 이름을 같이 쓰면 그 사람이 참여한 주제로 좁혀요." },
       { id: "remove", q: "내 글을 내리고 싶어요",
         keys: ["삭제", "지우", "지워", "내리", "내려", "숨기", "숨겨", "내 글", "내글", "개인정보"],
         a: "'내 글 관리'에서 내 기록을 골라 내려 달라고 요청할 수 있어요. 요청한 기록은 다음 발행부터 빠지고, 되돌리려면 관리자에게 요청해야 해요.",
@@ -222,200 +228,83 @@
   var HOWTO = /(어떻게|방법|하려면|하나요|싶어|싶은|어디서|되나요|돼요|되요|할 수|있어요\?)/;
   function isHowTo(q) { return HOWTO.test(String(q || "")); }
 
-  var api = { queryTerms: queryTerms, namesIn: namesIn, tagHits: tagHits, rankThreads: rankThreads,
-              guides: guides, matchGuides: matchGuides, isHowTo: isHowTo, stem: stem };
-
-  /* ---------- 화면 ---------- */
-
-  var SHOW = 5;   // 한 번에 보여 줄 주제 수. 더 있으면 '모두 보기' 로 타임라인에 넘긴다.
-
-  function ArchiveAsk(ctx) {
-    var esc = ctx.esc, el = ctx.el;
-    var ui = {}, mounted = false;
-
-    function viewExists(v) {
-      // 패널 안 단추는 data-view 를 쓰지 않는다 — app.js 가 그것을 탭으로 알고
-      // 활성 표시를 붙이고, 없는 화면이 있는 것처럼 보이게 된다.
-      return !!document.querySelector('#tabs [data-view="' + v + '"], #mobileNav [data-view="' + v + '"], #mobileMore [data-view="' + v + '"]');
-    }
-
-    function setOpen(open) {
-      ui.panel.hidden = !open;
-      ui.fab.hidden = open;
-      ui.fab.setAttribute("aria-expanded", open ? "true" : "false");
-      if (open) {
-        if (!ui.log.childNodes.length) greet();
-        ui.input.focus();
-      } else {
-        ui.fab.focus();
-      }
-    }
-
-    function push(kind, html) {
-      var div = document.createElement("div");
-      div.className = "ask-msg ask-msg--" + kind;
-      div.innerHTML = html;
-      ui.log.appendChild(div);
-      ui.log.scrollTop = ui.log.scrollHeight;
-      return div;
-    }
-
-    function chip(text) {
-      return '<button class="ask-chip" type="button" data-ask-q="' + esc(text) + '">' +
-        esc(text) + "</button>";
-    }
-
-    function greet() {
-      var d = ctx.data();
-      var tags = ((d.TAGIDX && d.TAGIDX.tags) || []).slice(0, 2).map(function (r) {
-        return r.tag + " 얘기 찾아줘"; });
-      var how = ["내 글을 내리고 싶어요", "글자를 크게 하려면?"];
-      push("bot", "<p>무엇이 궁금하세요? 대화에서 나온 주제를 찾아 드리거나, 사이트 쓰는 법을 알려 드려요.</p>" +
-        '<div class="ask-chips">' + tags.concat(how).map(chip).join("") + "</div>");
-    }
-
-    function hitHtml(t, catLabel) {
-      return '<li><button class="ask-hit" type="button" data-ask-jump="t-' + esc(t.id) + '">' +
-        '<b class="ask-hit__title">' + esc(t.title) + "</b>" +
-        '<span class="ask-hit__meta">' + esc(t.start_date || "") +
-        (catLabel[t.category] ? " · " + esc(catLabel[t.category]) : "") + "</span>" +
-        (t.summary ? '<span class="ask-hit__sum">' + esc(t.summary) + "</span>" : "") +
-        "</button></li>";
-    }
-
-    function guideHtml(g) {
-      return '<div class="ask-guide"><b>' + esc(g.q) + "</b><p>" + esc(g.a) + "</p>" +
-        (g.view && viewExists(g.view)
-          ? '<button class="ask-go" type="button" data-ask-view="' + esc(g.view) + '">' +
-            esc(g.go) + " →</button>" : "") + "</div>";
-    }
-
-    // 답마다 '모두 보기' 에 넘길 주제 묶음을 둔다. 단추에는 번호만 단다.
-    var moreSets = [];
-    function moreButton(set, text) {
-      moreSets.push(set);
-      return '<button class="ask-go" type="button" data-ask-more="' + (moreSets.length - 1) +
-        '">' + esc(text) + " →</button>";
-    }
-
-    function hitsHtml(rows, catLabel) {
-      return '<ul class="ask-hits">' + rows.slice(0, SHOW).map(function (r) {
-        return hitHtml(r.thread, catLabel); }).join("") + "</ul>";
-    }
-
-    function answer(q) {
-      var d = ctx.data();
-      var names = (d.STATS.participants || []).map(function (p) { return p.nickname; });
-      var people = namesIn(q, names);
-      // 이름은 사람 거르기로 쓰고 찾을 말에서는 뺀다('김OO이' 의 '김OO').
-      var terms = queryTerms(q).filter(function (w) {
-        return !people.some(function (p) { return w.indexOf(p.toLowerCase()) === 0; }); });
-      var rows = (terms.length || people.length) ? rankThreads(d.THREADS, terms, people) : [];
-      /* 말이 여럿이면 가장 많이 맞은 주제들만 남긴다. '한글 자동화' 에 '자동화' 만
-       * 맞은 주제 79개를 세어 주면 찾은 게 아니다. 하나도 다 맞지 않으면 그렇다고
-       * 말한다 — 뜻을 헤아려 고르는 것은 AI 를 붙이는 2단계의 몫이다. */
-      var best = rows.reduce(function (m, r) { return Math.max(m, r.strong); }, 0);
-      var strong = rows.filter(function (r) { return r.strong > 0 && r.strong === best; });
-      var partial = best > 0 && best < terms.length;
-      var found = matchGuides(q, guides(ctx.TAG_PICK_MAX)).slice(0, 2);
-      // 사용법을 묻는 말투에 맞는 안내가 있으면 안내가 답이다. 본문에서만 스친
-      // 주제까지 늘어놓으면 답이 묻힌다.
-      var howFirst = found.length > 0 && (isHowTo(q) || !strong.length);
-      var tagRows = people.length ? [] :
-        tagHits(q, (d.TAGIDX && d.TAGIDX.tags) || [], ctx.tagFold).slice(0, 2);
-
-      var parts = [];
-      var guidesPart = found.map(guideHtml).join("");
-      if (howFirst) parts.push(guidesPart);
-      var shown = strong.length ? strong : (howFirst ? [] : rows);
-      if (shown.length) {
-        var who = people.length ? people.join("·") + "님이 참여한 " : "";
-        var lead = !strong.length
-          ? "제목·요약에는 없고 본문에서만 나온 주제 <b>" + shown.length + "개</b>예요"
-          : partial
-            ? "물으신 말이 모두 들어간 주제는 없어요. 일부만 맞는 " + esc(who) + "주제 <b>" +
-              shown.length + "개</b>예요"
-            : esc(who) + "주제 <b>" + shown.length + "개</b>를 찾았어요";
-        parts.push("<p>" + lead +
-          (shown.length > SHOW ? ". 가까운 것부터 " + SHOW + "개를 보여 드려요." : ".") + "</p>" +
-          hitsHtml(shown, d.CAT_LABEL));
-        if (shown.length > SHOW) {
-          parts.push(moreButton({ ids: shown.map(function (r) { return r.thread.id; }),
-                                  label: people.concat(terms).join(" "), kind: "subject" },
-                                shown.length + "개 모두 타임라인에서 보기"));
-        }
-      }
-      tagRows.forEach(function (r) {
-        var ids = d.TAG_THREADS[ctx.tagFold(r.tag)] || [];
-        if (ids.length) {
-          parts.push(moreButton({ ids: ids, label: "#" + r.tag, kind: "tag" },
-                                "#" + r.tag + " 태그가 붙은 주제 " + ids.length + "개 보기"));
-        }
-      });
-      if (!howFirst && guidesPart) {
-        parts.push('<p class="ask-aside">혹시 사용법을 찾으셨나요?</p>' + guidesPart);
-      }
-      if (!parts.length) {
-        parts.push("<p>맞는 주제를 찾지 못했어요. 도구 이름이나 사람 이름처럼 대화에 나왔을 말로 다시 물어봐 주세요.</p>" +
-          '<div class="ask-chips">' + chip("사진은 어디서 봐요?") + chip("태그로 모아 보려면?") + "</div>");
-      }
-      push("bot", parts.join(""));
-    }
-
-    function ask(q) {
-      q = String(q || "").trim();
-      if (!q) return;
-      push("me", "<p>" + esc(q) + "</p>");
-      answer(q);
-    }
-
-    function onLogClick(e) {
-      var b = e.target.closest("button");
-      if (!b || !ui.log.contains(b)) return;
-      if (b.hasAttribute("data-ask-q")) { ask(b.getAttribute("data-ask-q")); return; }
-      // 화면을 옮기는 단추는 칸을 닫고 간다. 대화는 남아 있어 다시 열면 이어진다.
-      if (b.hasAttribute("data-ask-jump")) {
-        setOpen(false); ctx.jumpToTimeline(b.getAttribute("data-ask-jump"));
-      } else if (b.hasAttribute("data-ask-view")) {
-        setOpen(false); ctx.setView(b.getAttribute("data-ask-view"));
-      } else if (b.hasAttribute("data-ask-more")) {
-        var set = moreSets[+b.getAttribute("data-ask-more")];
-        if (set) { setOpen(false); ctx.pickThreads(set.ids, set.label, set.kind); }
-      }
-    }
-
-    function mount() {
-      if (mounted) return;
-      ui = {
-        fab: document.getElementById("askFab"),
-        panel: document.getElementById("askPanel"),
-        close: document.getElementById("askClose"),
-        log: document.getElementById("askLog"),
-        form: document.getElementById("askForm"),
-        input: document.getElementById("askInput"),
-      };
-      if (!ui.fab || !ui.panel) return;
-      mounted = true;
-      ui.fab.addEventListener("click", function () { setOpen(true); });
-      ui.close.addEventListener("click", function () { setOpen(false); });
-      ui.log.addEventListener("click", onLogClick);
-      ui.form.addEventListener("submit", function (e) {
-        e.preventDefault();
-        var q = ui.input.value;
-        ui.input.value = "";
-        ask(q);
-      });
-      document.addEventListener("keydown", function (e) {
-        if (e.key === "Escape" && !ui.panel.hidden && !el.lightbox.classList.contains("on")) {
-          setOpen(false);
-        }
-      });
-    }
-
-    return { mount: mount, ask: ask };
+  /**
+   * 검색창에 친 말을 주제로. 글자 그대로 찾아서 없을 때 timeline.js 가 부른다.
+   * 말이 여럿이면 가장 많이 맞은 주제들만 남긴다 — '한글 자동화' 에 '자동화' 만
+   * 맞은 주제 79개를 늘어놓으면 찾은 게 아니다(실측). 제목·태그·요약에 하나도 안
+   * 맞으면 본문에서만 스친 주제를 준다(weak).
+   * @returns {threads, terms, people, partial, weak}
+   */
+  function smartSearch(threads, q, names) {
+    var people = namesIn(q, names);
+    // 이름은 사람 거르기로 쓰고 찾을 말에서는 뺀다('김OO이' 의 '김OO').
+    var terms = queryTerms(q).filter(function (w) {
+      return !people.some(function (p) { return w.indexOf(p.toLowerCase()) === 0; }); });
+    var rows = (terms.length || people.length) ? rankThreads(threads, terms, people) : [];
+    var best = rows.reduce(function (m, r) { return Math.max(m, r.strong); }, 0);
+    var picked = best > 0
+      ? rows.filter(function (r) { return r.strong === best; }) : rows;
+    return { threads: picked.map(function (r) { return r.thread; }), terms: terms,
+             people: people, partial: best > 0 && best < terms.length, weak: best === 0 };
   }
 
-  api.ArchiveAsk = ArchiveAsk;
+  var api = { queryTerms: queryTerms, namesIn: namesIn, tagHits: tagHits, rankThreads: rankThreads,
+              smartSearch: smartSearch, guides: guides, matchGuides: matchGuides,
+              isHowTo: isHowTo, stem: stem };
+
+  /* ---------- 도움말 화면 ----------
+   * 사용법 안내를 한 화면에 모았다. 묻는 사람만 볼 수 있는 대화창 안에 두면 있는
+   * 줄 몰라 안 쓴다. 안내가 가리키는 화면이 이 사람에게 없으면(로그인 안 한 사람의
+   * '내 글 관리') 단추를 그리지 않는다. 단추에 data-view 를 쓰지 않는 것은 app.js 가
+   * 그것을 탭으로 알고 '그 화면이 있다' 고 판단하기 때문이다(applyHash). */
+  function ArchiveHelp(ctx) {
+    var esc = ctx.esc, el = ctx.el;
+
+    function viewExists(v) {
+      return !!document.querySelector('#tabs [data-view="' + v + '"], #mobileNav [data-view="' +
+        v + '"], #mobileMore [data-view="' + v + '"]');
+    }
+
+    function renderHelp(focusId) {
+      var list = guides(ctx.TAG_PICK_MAX);
+      el.view.innerHTML = '<section class="help">' +
+        '<p class="eyebrow">도움말</p><h1 class="help-title">이 아카이브를 쓰는 법</h1>' +
+        '<p class="help-lead">궁금한 것은 위쪽 검색창에 말로 쳐도 돼요. ' +
+        '"한글 자동화 얘기 어디 있었지?" 처럼 쓰면 맞는 주제를 찾아 드려요.</p>' +
+        '<div class="help-list">' + list.map(function (g) {
+          return '<article class="help-item" id="help-' + esc(g.id) + '" tabindex="-1">' +
+            "<h2>" + esc(g.q) + "</h2><p>" + esc(g.a) + "</p>" +
+            (g.view && viewExists(g.view)
+              ? '<button class="btn ghost" type="button" data-help-go="' + esc(g.view) + '">' +
+                esc(g.go) + " →</button>" : "") +
+            "</article>";
+        }).join("") + "</div></section>";
+      Array.prototype.forEach.call(el.view.querySelectorAll("[data-help-go]"), function (b) {
+        b.onclick = function () { ctx.setView(b.getAttribute("data-help-go")); };
+      });
+      var target = focusId && document.getElementById("help-" + focusId);
+      if (target) {
+        target.classList.add("on");
+        target.scrollIntoView({ block: "center" });
+        target.focus({ preventScroll: true });
+      }
+    }
+
+    /** 검색창에 친 말에 맞는 안내 — 타임라인 위에 띄울 쪽지 HTML. 없으면 "". */
+    function hintHtml(q) {
+      var found = matchGuides(q, guides(ctx.TAG_PICK_MAX)).slice(0, 2);
+      if (!found.length) return "";
+      return '<div class="help-hint"><span>사용법을 찾으셨나요?</span>' +
+        found.map(function (g) {
+          return '<button class="help-hint__go" type="button" data-help-id="' + esc(g.id) +
+            '">' + esc(g.q) + " →</button>";
+        }).join("") + "</div>";
+    }
+
+    return { renderHelp: renderHelp, hintHtml: hintHtml };
+  }
+
+  api.ArchiveHelp = ArchiveHelp;
   if (typeof window !== "undefined") window.ArchiveAsk = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })();

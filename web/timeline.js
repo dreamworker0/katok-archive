@@ -62,8 +62,49 @@
       return (t.start_date || "") + " " + (t.start_time || "");
     }
 
+    /* 글자 그대로 찾아서 하나도 없으면 말로 찾는다(web/ask.js smartSearch).
+     * 검색창에 "한글 자동화 얘기 어디 있었지?" 를 치면 그 문장이 통째로 들어간
+     * 주제는 없다. 추림(pick)이 걸려 있을 때는 하지 않는다 — 추린 것 안에서 찾는
+     * 중이다. 찾은 말은 강조에 쓴다(fuzzy.terms). */
+    var fuzzy = null;
+    function smartRows(base) {
+      var d = ctx.data();
+      var names = (d.STATS.participants || []).map(function (p) { return p.nickname; });
+      var r = window.ArchiveAsk.smartSearch(d.THREADS, state.q, names);
+      if (!r.threads.length) return [];
+      fuzzy = r;
+      return r.threads.filter(function (t) {
+        return !state.nick || (t.participants || []).indexOf(state.nick) !== -1; });
+    }
+
+    /** 검색어 강조. 말로 찾았으면 고른 낱말마다, 아니면 친 글자 그대로. */
+    function hl(html) {
+      if (!fuzzy) return highlightText(html, state.q);
+      return fuzzy.terms.reduce(function (h, w) { return highlightText(h, w); }, html);
+    }
+
+    function fuzzyBar(n) {
+      if (!fuzzy) return "";
+      var said = fuzzy.people.concat(fuzzy.terms).map(function (w) {
+        return "<b>" + esc(w) + "</b>"; }).join("·");
+      var lead = fuzzy.weak
+        ? "제목·요약에는 없고 본문에서만 " + said + " 이(가) 나온 주제 "
+        : fuzzy.partial
+          ? "물으신 말이 모두 들어간 주제는 없어요. " + said + " 중 일부가 들어간 주제 "
+          : said + " 이(가) 들어간 주제 ";
+      // .pick-bar 는 flex 라 조각마다 띄운다. 문장 하나로 읽히게 한 덩이로 싼다.
+      return '<div class="pick-bar"><span>🔎 글자가 똑같은 주제가 없어 낱말로 찾았어요 — ' +
+        lead + n + "개</span></div>";
+    }
+
     function renderTimeline() {
       var rows = ctx.data().THREADS.filter(threadMatches);
+      fuzzy = null;
+      var hint = state.q && ctx.helpHint ? ctx.helpHint(state.q) : "";
+      if (state.q && !rows.length && !state.pick) rows = smartRows();
+      // 사용법을 물었는데('글자를 크게 하려면?') 본문에서만 스친 주제 50개를 늘어놓으면
+      // 쪽지가 묻힌다(실측). 맞는 안내가 있으면 그것이 답이다.
+      if (hint && fuzzy && fuzzy.weak) { rows = []; fuzzy = null; }
       /* 두 길이 서로 다른 규칙으로 돈다. 라벨이 같으면 무엇을 보고 있는지 알 수
        * 없다 — '차량 운행일지'가 결과물 버튼으로는 6개(원문에 언급된 것), 태그로는
        * 5개(태그가 붙은 것)로 다르게 나오는데 안내문이 같았다. */
@@ -89,9 +130,10 @@
           "전체 보기</button></div>"
         : "";
       if (!rows.length) {
-        el.view.innerHTML = pickBar + emptyState("search", "조건에 맞는 이야기를 찾지 못했어요",
+        el.view.innerHTML = hint + pickBar + emptyState("search", "조건에 맞는 이야기를 찾지 못했어요",
           "검색어를 조금 줄이거나 참여자 필터를 비우고 다시 살펴보세요.");
         bindPickClear();
+        bindHelpHint();
         return;
       }
 
@@ -103,7 +145,7 @@
         return (ka < kb ? -1 : 1) * (desc ? -1 : 1);
       });
 
-      var html = [pickBar, '<div class="gal-head">',
+      var html = [hint, pickBar, fuzzyBar(rows.length), '<div class="gal-head">',
         '<p class="room-sub">주제 ' + rows.length +
         "개" + (rows.length !== ctx.data().THREADS.length ? " / 전체 " + ctx.data().THREADS.length : "") +
         " · 대화 원문은 보관만 하고 공개하지 않습니다</p>",
@@ -114,6 +156,7 @@
       html.push('<div class="tc-list"></div>');
       el.view.innerHTML = html.join("");
       bindPickClear();
+      bindHelpHint();
       Array.prototype.forEach.call(el.view.querySelectorAll("[data-tsort]"), function (b) {
         b.onclick = function () {
           state.tsort = b.getAttribute("data-tsort");
@@ -234,11 +277,12 @@
 
     function detailBlock(t, contextualLinks) {
       if (!t.report) return "";
-      var open = !!state.q;
+      // 말로 찾은 결과(fuzzy)는 제목·요약에 걸린 것이라 접어 둔다 — 펴면 목록이 길어질 뿐이다.
+      var open = !!state.q && !fuzzy;
       // 걸린 말이 AI 보고서에만 있으면 그쪽을 펴 두어야 한다. 카드가 결과에 떴는데
       // 어디가 걸렸는지 안 보이면 고장으로 읽힌다. 반대로 사람 보고서에 걸린
       // 검색까지 AI 쪽을 열면 안 본다고 한 글이 매번 따라 나온다.
-      var aiOpen = !!(state.q && t.ai_report &&
+      var aiOpen = !!(state.q && !fuzzy && t.ai_report &&
         t.ai_report.toLowerCase().indexOf(state.q.toLowerCase()) !== -1);
       var n = mediaOf(t.id).length;
       var hasResources = n || contextualLinks.length;
@@ -334,7 +378,7 @@
         (meta.length ? '<span class="tc-ai-meta">' + meta.join(" · ") + "</span>" : "") +
         "</div>" +
         '<div class="tc-ai-body md">' +
-        highlightText(renderMarkdown(t.ai_report), state.q) + "</div>" +
+        hl(renderMarkdown(t.ai_report)) + "</div>" +
         '<p class="tc-ai-foot">사람이 쓴 위 보고서를 두 AI 가 따로 검토해 ' +
         '<strong>합의한 것만</strong> 적었습니다. 기계의 말이니 그대로 인용하기 전에 ' +
         '원 출처를 한 번 확인해 주세요.</p></section>';
@@ -360,7 +404,7 @@
       if (!t) return;
       body.setAttribute("data-filled", "1");
       body.innerHTML =
-        highlightText(linkifyHosts(renderMarkdown(t.report), splitLinks(t).inline), state.q) +
+        hl(linkifyHosts(renderMarkdown(t.report), splitLinks(t).inline)) +
         (body.getAttribute("data-res")
           ? '<div class="tc-media" data-media="' + esc(t.id) + '"></div>' : "");
       fillMedia(box);
@@ -619,8 +663,8 @@
         esc(ctx.data().CAT_LABEL[t.category] || t.category) + "</span>" +
         '<span class="tc-meta">' + esc(range) + " · 대화 " + (t.count || 0) + "건" +
         (t.media_count ? " · 사진·첨부 " + t.media_count : "") + "</span></div>" +
-        '<h3 class="tc-title">' + highlightText(esc(t.title), state.q) + "</h3>" +
-        '<p class="tc-summary">' + highlightText(esc(t.summary || ""), state.q) + "</p>" +
+        '<h3 class="tc-title">' + hl(esc(t.title)) + "</h3>" +
+        '<p class="tc-summary">' + hl(esc(t.summary || "")) + "</p>" +
         originLine(t) +
         // 원본(`keywords`)이 아니라 발행 때 통일·승격한 `tags` 를 보여준다. '온톨로지
         // 모델링' 주제를 '온톨로지' 로 찾아 들어왔는데 카드에 '온톨로지' 가 없으면
@@ -647,6 +691,12 @@
             esc(t.id) + '" data-title="' + esc(t.title) + '">발행 제외</button></div>'
           : "") +
         "</article>";
+    }
+
+    function bindHelpHint() {
+      Array.prototype.forEach.call(el.view.querySelectorAll("[data-help-id]"), function (b) {
+        b.onclick = function () { ctx.openHelp(b.getAttribute("data-help-id")); };
+      });
     }
 
     function bindPickClear() {
