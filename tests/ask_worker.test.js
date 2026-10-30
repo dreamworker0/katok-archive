@@ -184,12 +184,12 @@ test("parseStage: 진행 줄만 골라 읽는다", () => {
   assert.equal(W.parseStage("@@stage rm -rf"), null);
 });
 
-test("takeVerifyQuota: 1분 간격·하루 3번, 질문 한도와 따로 센다", () => {
+test("takeVerifyQuota: 한도를 켜면 1분 간격·하루 3번, 질문 한도와 따로 센다", () => {
   const t0 = Date.parse("2026-10-30T11:00:00");
-  assert.equal(W.takeVerifyQuota("v@x", t0), null);
-  assert.match(W.takeVerifyQuota("v@x", t0 + 10 * 1000), /1분 뒤/);
-  for (let i = 1; i < W.VERIFY_PER_DAY; i++) assert.equal(W.takeVerifyQuota("v@x", t0 + i * 120000), null);
-  assert.match(W.takeVerifyQuota("v@x", t0 + 99 * 120000), /하루 3번/);
+  assert.equal(W.takeVerifyQuota("v@x", t0, true), null);
+  assert.match(W.takeVerifyQuota("v@x", t0 + 10 * 1000, true), /1분 뒤/);
+  for (let i = 1; i < W.VERIFY_PER_DAY; i++) assert.equal(W.takeVerifyQuota("v@x", t0 + i * 120000, true), null);
+  assert.match(W.takeVerifyQuota("v@x", t0 + 99 * 120000, true), /하루 3번/);
   // 질문 한도는 그대로다
   assert.equal(W.takeQuota("v@x", t0 + 999 * 120000), null);
 });
@@ -200,4 +200,11 @@ test("parseAnswer: 답 속 따옴표를 안 고친 깨진 JSON 에서도 답과 
   assert.deepEqual(r.cites, ["t-489", "t-160"]);
   assert.match(r.answer, /^그는 "90일 제한"이라고 했어요\.\n\n\*\*확인할 점\*\*/);
   assert.doesNotMatch(r.answer, /"answer"|"cites"/);
+});
+
+test("takeVerifyQuota: 한도를 끄면(지금 기본) 막지 않고 세기만 한다", () => {
+  const t0 = Date.parse("2026-10-30T12:00:00");
+  for (let i = 0; i < 10; i++) assert.equal(W.takeVerifyQuota("w@x", t0 + i * 1000), null);
+  const u = JSON.parse(require("fs").readFileSync(process.env.KATOK_ASK_USAGE_FILE, "utf8"));
+  assert.equal(u.verify.users["w@x"].count, 10);
 });

@@ -593,17 +593,29 @@ async function handle(db, snap, { say, dry }) {
  * 멤버가 verifies/{이메일} 에 '확인해 달라' 는 표시만 쓰면, 이 PC 가 그 사람의
  * asks/{이메일} 에서 질문과 답을 직접 읽어 scripts/verify_answer.py 에 넘긴다(찾기 →
  * 이 PC 가 열기 → 열린 것만 정리). 확인할 글을 멤버가 보내지 않으므로, 아카이브 답
- * 아닌 글이 웹 검색 모델로 나갈 길이 없다. 한 번에 1분쯤(검색이 대부분)·claude 검색이라 한도가 좁다. */
+ * 아닌 글이 웹 검색 모델로 나갈 길이 없다. 한 번에 1분쯤(검색이 대부분)·claude 검색.
+ *
+ * 한도는 2026-10-30 사용자 결정으로 **껐다**(VERIFY_LIMITS) — 처음에 시험으로 많이 쓰겠다고
+ * 했다. 세는 것은 그대로 남긴다(logs/ask-usage.json 의 verify) — 다시 켤 때 기준이 된다.
+ * 켜면 1인 하루 3번·1분 간격·방 전체 40번. 이 PC 의 claude 요금제를 4봇·다른 웹앱과 같이
+ * 쓰므로, 시험이 끝나면 다시 켤지 사용자에게 묻는다. */
+const VERIFY_LIMITS = false;
 const VERIFY_PER_DAY = 3;
 const VERIFY_TOTAL_PER_DAY = 40;
 const VERIFY_GAP_MS = 60 * 1000;
 const VERIFY_TIMEOUT_MS = 7 * 60 * 1000;
 const PYTHON = process.env.KATOK_PYTHON || "python";
 
-function takeVerifyQuota(email, now) {
+function takeVerifyQuota(email, now, limits = VERIFY_LIMITS) {
   const u = loadUsage();
   const v = u.verify || (u.verify = { total: 0, users: {} });
   const me = v.users[email] || { count: 0, last: 0 };
+  if (!limits) {
+    v.users[email] = { count: me.count + 1, last: now };
+    v.total += 1;
+    saveUsage(u);
+    return null;
+  }
   if (now - me.last < VERIFY_GAP_MS) return "조금 전에 확인하셨어요. 1분 뒤에 다시 눌러 주세요.";
   if (me.count >= VERIFY_PER_DAY) return `확인은 하루 ${VERIFY_PER_DAY}번까지예요. 내일 다시 눌러 주세요.`;
   if (v.total >= VERIFY_TOTAL_PER_DAY) return "오늘 방 전체의 확인 한도를 다 썼어요. 내일 다시 눌러 주세요.";

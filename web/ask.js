@@ -498,7 +498,7 @@
       }
       return '<div class="ai-verify-ask">' + verifyButton("🔎 지금 기준으로 다시 확인") +
         '<p class="ai-answer__note">대화는 몇 달 전 것일 수 있어요. 누르면 웹에서 출처를 찾아 이 PC가 ' +
-        "직접 열어 보고, 요금·행사·제품처럼 바뀌기 쉬운 내용을 지금 기준으로 정리해요. 1분쯤 · 하루 3번.</p></div>";
+        "직접 열어 보고, 요금·행사·제품처럼 바뀌기 쉬운 내용을 지금 기준으로 정리해요. 1분쯤 걸려요.</p></div>";
     }
 
     function askButton(label) {
