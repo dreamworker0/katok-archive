@@ -444,7 +444,7 @@
     }
 
     function verifyButton(label) {
-      return '<button class="btn ghost" type="button" data-ai-verify>' + esc(label) + "</button>";
+      return '<button class="btn ai-verify-btn" type="button" data-ai-verify>' + esc(label) + "</button>";
     }
 
     /** 지금 보이는 답(doc)에 딸린 확인인가. 새 질문을 하면 지난 확인은 감춘다. */
@@ -472,8 +472,15 @@
           : v.stage === "open" ? "찾은 출처 " + (v.total || 0) + "곳을 직접 열어 보는 중이에요… (" + (v.opened || 0) + "곳 열림)"
           : v.stage === "write" ? "열린 출처로 정리하는 중이에요…"
           : "웹에서 출처를 찾는 중이에요…";
+        // 세 걸음 중 어디쯤인지. 찾기가 대부분(2분 중 1분 40초)이라 거기서 오래 머문다.
+        var at = st === "queued" ? -1 : v.stage === "open" ? 1 : v.stage === "write" ? 2 : 0;
+        var steps = ["① 출처 찾기", "② 직접 열어 보기", "③ 정리하기"].map(function (s, i) {
+          return '<li class="' + (i < at ? "done" : i === at ? "on" : "") + '"' +
+            (i === at ? ' aria-current="step"' : "") + ">" + (i < at ? "✓ " : "") + esc(s) + "</li>";
+        }).join("");
         return '<div class="ai-verify-wait"><p class="ai-answer__wait"><span class="ai-answer__dot" aria-hidden="true"></span>' +
-          esc(msg) + '</p><p class="ai-answer__note">보통 2분쯤 걸려요. 화면을 떠났다 와도 결과는 남아요.</p></div>';
+          esc(msg) + '</p><ol class="ai-steps">' + steps + "</ol>" +
+          '<p class="ai-answer__note">보통 2분쯤 걸려요. 화면을 떠났다 와도 결과는 남아요.</p></div>';
       }
       if (st === "done") {
         if (v.skipped || !v.body) {

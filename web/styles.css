@@ -12,6 +12,7 @@
   --accent-soft: #F4DDCF;
   --accent-ink: #FFFDF8;
   --sage: #879D78;
+  --verify-btn: #5E7552; --verify-btn-ink: #FFFDF8;   /* 🔎 확인 단추 — 흰 글씨 대비 5:1 */
   --danger: #B85F4B;
   --danger-soft: #FAE7E0;
   --shadow-sm: 0 8px 24px rgba(62, 49, 38, .06);
@@ -30,6 +31,7 @@
     --ink: #F4EBDD; --ink-soft: #CABBAC; --ink-faint: #9F9081;
     --line: #514840; --line-strong: #665A50; --accent: #DF8B6D;
     --accent-soft: #573D34; --accent-ink: #292521; --sage: #9CAE8C;
+    --verify-btn: #A9BC98; --verify-btn-ink: #1E241A;
     --danger: #E18470; --danger-soft: #573632;
     --shadow-sm: 0 8px 24px rgba(0,0,0,.22); --shadow: 0 20px 56px rgba(0,0,0,.34);
   }
@@ -40,6 +42,7 @@
   --bg:#FBF6EE;--surface:#FFFDF8;--surface-2:#F4EEE5;--ink:#3C332C;--ink-soft:#706257;
   --ink-faint:#99887A;--line:#E7DDD1;--line-strong:#D6C8BA;--accent:#CA7154;
   --accent-soft:#F4DDCF;--accent-ink:#FFFDF8;--sage:#879D78;--danger:#B85F4B;
+  --verify-btn:#5E7552;--verify-btn-ink:#FFFDF8;
   --danger-soft:#FAE7E0;--shadow-sm:0 8px 24px rgba(62,49,38,.06);
   --shadow:0 18px 52px rgba(62,49,38,.10);
 }
@@ -47,6 +50,7 @@
   --bg:#292521;--surface:#37312C;--surface-2:#403933;--ink:#F4EBDD;--ink-soft:#CABBAC;
   --ink-faint:#9F9081;--line:#514840;--line-strong:#665A50;--accent:#DF8B6D;
   --accent-soft:#573D34;--accent-ink:#292521;--sage:#9CAE8C;--danger:#E18470;
+  --verify-btn:#A9BC98;--verify-btn-ink:#1E241A;
   --danger-soft:#573632;--shadow-sm:0 8px 24px rgba(0,0,0,.22);
   --shadow:0 20px 56px rgba(0,0,0,.34);
 }
@@ -1217,9 +1221,24 @@ img.img-error {
 /* 🔎 지금 기준으로 다시 확인 — 단추·진행·결과. 결과는 '확인할 점' 과 같은 세이지 빛이되
    테두리를 온전히 둘러, 답 본문 밖에서 따로 온 글이라는 것이 보이게 한다. */
 .ai-verify-ask, .ai-verify-wait { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
-  margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line-strong); }
+  margin-top: 14px; padding: 14px 16px; border: 1.5px solid var(--sage); border-radius: 12px;
+  background: color-mix(in srgb, var(--sage) 10%, var(--surface)); }
 .ai-verify-ask .btn { flex: none; }
+.ai-verify-ask .ai-answer__note { flex: 1 1 240px; }
 .ai-verify-wait .ai-answer__note { flex-basis: 100%; }
+/* 답 아래에서 가장 먼저 눈에 들어와야 하는 단추 — 다른 단추보다 크고 짙게 */
+.btn.ai-verify-btn { min-height: 46px; padding: 11px 20px; border-radius: 12px;
+  border-color: var(--verify-btn); background: var(--verify-btn); color: var(--verify-btn-ink);
+  font-size: 15px; font-weight: 800; letter-spacing: -.01em;
+  box-shadow: 0 2px 0 color-mix(in srgb, var(--verify-btn) 55%, black),
+              0 6px 16px color-mix(in srgb, var(--verify-btn) 28%, transparent);
+  transition: transform .12s ease, filter .12s ease; }
+.btn.ai-verify-btn:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
+.btn.ai-verify-btn:active:not(:disabled) { transform: translateY(1px); }
+.btn.ai-verify-btn:focus-visible { outline: 3px solid color-mix(in srgb, var(--verify-btn) 45%, transparent);
+  outline-offset: 2px; }
+@media (max-width: 560px) { .ai-verify-ask .btn.ai-verify-btn { flex: 1 1 100%; } }
+@media (prefers-reduced-motion: reduce) { .btn.ai-verify-btn { transition: none; } }
 .ai-verify { margin-top: 14px; padding: 14px 16px 10px; border: 1.5px solid var(--sage);
   border-radius: 12px; background: color-mix(in srgb, var(--sage) 7%, var(--surface)); }
 .ai-verify__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0 0 10px; }
@@ -1232,7 +1251,25 @@ img.img-error {
   color: color-mix(in srgb, var(--sage) 60%, var(--ink)); }
 .ai-verify__foot { margin: 6px 0 0; padding-top: 8px; border-top: 1px dashed var(--line-strong);
   font-size: 11.5px; line-height: 1.6; color: var(--ink-faint); }
-.ai-answer__wait { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--ink-soft); }
-.ai-answer__dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent);
-  animation: ai-pulse 1.2s ease-in-out infinite; flex: none; }
-@keyframes ai-pulse { 50% { opacity: .25; transform: scale(.8); } }
+/* 기다리는 동안의 표시. 작은 점이 숨 쉬듯 커졌다 작아지는 것만으로는 '돌고 있다' 는
+   것이 잘 안 보였다(사용자 지적 2026-10-30) — 도는 고리와 굵은 글씨로 바꾼다. */
+.ai-answer__wait { display: flex; align-items: center; gap: 12px; margin: 0;
+  color: var(--ink); font-size: 15px; font-weight: 700; }
+.ai-answer__dot { position: relative; width: 24px; height: 24px; flex: none; border-radius: 50%;
+  border: 3px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-top-color: var(--accent); animation: ai-spin .8s linear infinite; }
+.ai-verify-wait .ai-answer__dot { border-color: color-mix(in srgb, var(--verify-btn) 22%, transparent);
+  border-top-color: var(--verify-btn); }
+@keyframes ai-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .ai-answer__dot { animation: ai-pulse 1.6s ease-in-out infinite; border-top-color: currentColor; }
+}
+@keyframes ai-pulse { 50% { opacity: .35; } }
+/* 검증 세 걸음 — 지금 어디쯤인지 */
+.ai-steps { display: flex; flex-wrap: wrap; gap: 6px; flex-basis: 100%; margin: 2px 0 0; padding: 0;
+  list-style: none; }
+.ai-steps li { padding: 5px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 700;
+  color: var(--ink-faint); background: var(--surface-2); border: 1px solid var(--line); }
+.ai-steps li.done { color: color-mix(in srgb, var(--sage) 60%, var(--ink));
+  background: color-mix(in srgb, var(--sage) 16%, var(--surface)); border-color: transparent; }
+.ai-steps li.on { color: var(--verify-btn-ink); background: var(--verify-btn); border-color: var(--verify-btn); }
