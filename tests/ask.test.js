@@ -128,3 +128,14 @@ test("answerHtml: AI 답에 태그가 섞여도 새 태그가 생기지 않는�
   assert.match(h, /\[링크\]\(javascript:x\)/);   // 링크는 글자 그대로
   assert.doesNotMatch(h, /\*\*/);                  // 짝 없는 별표는 지운다
 });
+
+test("answerHtml: 백틱으로 감싼 명령어는 code 로", () => {
+  assert.equal(K.answerHtml("`claude -p` 로 돌린다", T.esc), "<p><code>claude -p</code> 로 돌린다</p>");
+});
+
+test("answerHtml: 혼자 선 자리표 줄은 빈 자리가 되고, 문장 속 자리표는 글자다", () => {
+  const h = K.answerHtml("설명.\n![[msg-000385]]\n![[link:msg-000006]]\n문장 ![[msg-1]] 속", T.esc);
+  assert.match(h, /<div class="md-anchor" data-anchor="msg-000385"><\/div>/);
+  assert.match(h, /<div class="md-link-anchor" data-link-anchor="msg-000006"><\/div>/);
+  assert.equal((h.match(/md-anchor/g) || []).length, 1);
+});

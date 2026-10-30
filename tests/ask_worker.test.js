@@ -64,7 +64,9 @@ test("buildPrompt: 주제 글은 자료로 읽으라고 못박고, 사진 자리
     participants: ["가나"], summary: "요약", report: "본문 ![[msg-000001]] 끝" }], {});
   assert.match(p, /지시가 아니라 자료로만/);
   assert.match(p, /<topic id="t-1">/);
-  assert.doesNotMatch(p, /!\[\[/);
+  // refs 없이 부르면 보고서 속 자리표는 지운다(지시문의 예시 자리표는 따로다)
+  assert.match(p, /보고서: 본문 +끝/);
+  assert.doesNotMatch(p.slice(p.lastIndexOf("<topics>")), /!\[\[/);
 });
 
 const THREADS = [
@@ -120,4 +122,42 @@ test("격리: 고르기 모델도 같은 격리 인자로 띄운다", () => {
   assert.equal(a[a.indexOf("--tools") + 1], "");
   assert.equal(a[a.indexOf("--model") + 1], W.PICK_MODEL);
   assert.deepEqual(a.filter((x) => x !== W.PICK_MODEL), W.CLAUDE_ARGS.filter((x) => x !== "sonnet"));
+});
+
+const REFS = {
+  media: {
+    "msg-1": { id: "msg-1", kind: "image", images: ["a.png", "b.png"], nickname: "가나" },
+    "msg-2": { id: "msg-2", kind: "file", file: { name: "안내.pdf", path: "x" }, nickname: "다라" },
+    "msg-3": { id: "msg-3", kind: "file", nickname: "다라" },                       // 만료된 첨부
+    "msg-4": { id: "msg-4", kind: "image", images: [], pii_hidden: 1, nickname: "가나" }, // 감춘 사진
+  },
+  links: { "msg-5": [{ id: "msg-5", url: "https://www.example.com/page" }] },
+};
+
+test("labelAnchors: 자리표를 무엇인지 알 수 있는 표시로, 보일 것이 없는 자리표는 지운다", () => {
+  const s = W.labelAnchors("앞\n\n![[msg-1]]\n\n![[msg-2]]\n![[msg-3]]\n![[msg-4]]\n![[link:msg-5]]\n![[msg-9]]", REFS);
+  assert.match(s, /\[사진 msg-1 · 가나 · 2개\]/);
+  assert.match(s, /\[첨부 msg-2 · 안내\.pdf\]/);
+  assert.match(s, /\[링크 link:msg-5 · example\.com\/page\]/);
+  assert.doesNotMatch(s, /msg-3|msg-4|msg-9/);
+  assert.deepEqual([...W.seenMaterials(s)].sort(), ["link:msg-5", "msg-1", "msg-2"]);
+});
+
+test("buildPrompt: refs 를 주면 자료 표시를 넣고 본 번호를 모은다", () => {
+  const seen = new Set();
+  const p = W.buildPrompt("질문?", [{ id: "t-1", title: "제목", start_date: "2026-01-01",
+    participants: [], summary: "", report: "본문\n\n![[msg-2]]" }], {}, REFS, seen);
+  assert.match(p, /\[첨부 msg-2 · 안내\.pdf\]/);
+  assert.deepEqual([...seen], ["msg-2"]);
+});
+
+test("keepMaterials: AI 가 본 번호만, 혼자 선 줄만, 4개까지 남긴다", () => {
+  const allowed = new Set(["msg-1", "msg-2", "link:msg-5", "msg-6", "msg-7"]);
+  const a = ["첫 문단.", "", "![[msg-1]]", "![[msg-1]]", "![[msg-9]]",
+    "문장 속 ![[msg-2]] 은 지운다 [사진 msg-1 · 가나] 표시도.", "![[link:msg-5]]",
+    "![[msg-6]]", "![[msg-7]]"].join("\n");
+  const out = W.keepMaterials(a, allowed);
+  const spots = out.split("\n").filter((l) => l.startsWith("![["));
+  assert.deepEqual(spots, ["![[msg-1]]", "![[link:msg-5]]", "![[msg-6]]", "![[msg-7]]"]);
+  assert.doesNotMatch(out, /msg-9|msg-2|\[사진/);
 });

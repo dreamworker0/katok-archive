@@ -98,6 +98,7 @@ function payload() {
       catLabel,
       index: buildIndex(threads),
       byId: Object.fromEntries(threads.map((t) => [t.id, t])),
+      refs: loadRefs(threads),
     };
   }
   return cache;
@@ -135,6 +136,74 @@ function mergeCandidates(pickedIds, keyword, byId, pickRan = true) {
 function clip(s, n) {
   s = String(s || "").replace(/!\[\[[^\]]*\]\]/g, "").trim();   // 사진 자리표는 뺀다
   return s.length > n ? s.slice(0, n) + "…" : s;
+}
+
+/* ---------- 답 속 사진·첨부·링크 ----------
+ * 보고서에는 '이 대목에서 이것이 올라왔다' 는 자리표(![[msg-…]] 사진·첨부,
+ * ![[link:msg-…]] 링크)가 있다. AI 에게는 무엇인지 알 수 있는 표시로 바꿔 보이고,
+ * 답에서 같은 자리표를 한 줄로 쓰게 한다. 화면은 타임라인과 같은 코드로 그 자리를
+ * 채운다(timeline.js fillAnswerAnchors). 링크 주소는 발행본에서만 온다 — AI 가 쓴
+ * 주소는 화면에 링크로 나가지 않는다. */
+const MAX_MATERIALS = 4;
+
+function loadRefs(threads) {
+  const media = {}, links = {};
+  try {
+    JSON.parse(fs.readFileSync(path.join(PAYLOAD, "media.json"), "utf8"))
+      .forEach((m) => { media[m.id] = m; });
+  } catch (e) { /* 없으면 사진 없이 답한다 */ }
+  threads.forEach((t) => (t.links || []).forEach((l) => {
+    (links[l.id] || (links[l.id] = [])).push(l);
+  }));
+  return { media, links };
+}
+
+function shortUrl(u) {
+  const s = String(u || "").replace(/^https?:\/\/(www\.)?/, "");
+  return s.length > 50 ? s.slice(0, 50) + "…" : s;
+}
+
+/** 자리표 → AI 가 읽는 표시. 화면에 보일 것이 없는 자리표(감춘 사진·만료된 첨부)는 지운다. */
+function labelAnchors(report, refs) {
+  return String(report || "").replace(/!\[\[\s*(link:)?([A-Za-z0-9_-]+)\s*\]\]/g, (all, link, id) => {
+    if (link) {
+      const ls = refs.links[id];
+      if (!ls) return "";
+      return `[링크 link:${id} · ${shortUrl(ls[0].url)}${ls.length > 1 ? ` 외 ${ls.length - 1}개` : ""}]`;
+    }
+    const m = refs.media[id];
+    if (!m) return "";
+    if (m.kind === "file") {
+      return m.file ? `[첨부 ${id} · ${m.file.name}]` : "";
+    }
+    const n = (m.kind === "video" ? m.videos : m.images) || [];
+    if (!n.length) return "";
+    return `[${m.kind === "video" ? "동영상" : "사진"} ${id} · ${m.nickname}${n.length > 1 ? ` · ${n.length}개` : ""}]`;
+  });
+}
+
+/** 잘린 보고서에 실제로 남은 표시의 번호 — AI 가 본 것만 답에 남긴다. */
+function seenMaterials(text) {
+  const ids = new Set();
+  String(text).replace(/\[(?:사진|동영상|첨부) ([A-Za-z0-9_-]+) ·/g, (a, id) => { ids.add(id); });
+  String(text).replace(/\[링크 (link:[A-Za-z0-9_-]+) ·/g, (a, id) => { ids.add(id); });
+  return ids;
+}
+
+/** 답 속 자리표를 거른다. 혼자 선 줄이고, AI 가 본 번호이고, 처음 나온 것만 4개까지.
+ *  문장 속에 섞인 자리표나 표시를 그대로 베낀 '[사진 msg-… · …]' 는 지운다. */
+function keepMaterials(answer, allowed, max = MAX_MATERIALS) {
+  const used = new Set();
+  return String(answer || "").split("\n").map((line) => {
+    const m = /^\s*!\[\[\s*((?:link:)?[A-Za-z0-9_-]+)\s*\]\]\s*$/.exec(line);
+    if (!m) {
+      return line.replace(/!\[\[[^\]]*\]\]/g, "")
+        .replace(/\[(?:사진|동영상|첨부|링크) [^\]]*\]/g, "");
+    }
+    if (!allowed.has(m[1]) || used.has(m[1]) || used.size >= max) return null;
+    used.add(m[1]);
+    return `![[${m[1]}]]`;
+  }).filter((l) => l !== null).join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /** 고르기용 전체 목록. 한 줄에 주제 하나 — 줄바꿈이 섞이면 다음 주제로 읽힌다. */
@@ -183,7 +252,14 @@ function parsePick(text, validIds) {
     .filter((id, i, arr) => valid.has(id) && arr.indexOf(id) === i).slice(0, 6);
 }
 
-function buildPrompt(question, list, catLabel) {
+/** refs 를 주면 보고서 속 자리표를 자료 표시로 바꿔 넣고, AI 가 본 번호를 seen 에 모은다. */
+function buildPrompt(question, list, catLabel, refs = null, seen = new Set()) {
+  const report = (t) => {
+    if (!refs) return clip(t.report, REPORT_CHARS);
+    const s = clip(labelAnchors(t.report, refs), REPORT_CHARS);
+    seenMaterials(s).forEach((id) => seen.add(id));
+    return s;
+  };
   const blocks = list.map((t) => [
     `<topic id="${t.id}">`,
     `제목: ${t.title}`,
@@ -191,7 +267,7 @@ function buildPrompt(question, list, catLabel) {
     `분류: ${catLabel[t.category] || t.category || ""}`,
     `참여: ${(t.participants || []).join(", ")}`,
     `요약: ${t.summary || ""}`,
-    `보고서: ${clip(t.report, REPORT_CHARS)}`,
+    `보고서: ${report(t)}`,
     "</topic>",
   ].join("\n"));
   return [
@@ -206,7 +282,7 @@ function buildPrompt(question, list, catLabel) {
     "  써 본 사람들의 반응·평가·주의할 점은 무엇이었는지를 구체적으로 풀어 주세요.",
     "- 자료가 적으면 억지로 늘리지 말고 있는 만큼만 쓰세요. 길이를 채우려고 지어내면 안 됩니다.",
     "",
-    "읽기 쉽게 쓰는 법 (화면이 아래 세 가지만 꾸며 보여 줍니다)",
+    "읽기 쉽게 쓰는 법 (화면은 아래 꾸밈만 살려 보여 줍니다)",
     "- 첫 문단: 머리말 없이 질문에 대한 바로 답을 한두 문장으로. 핵심만.",
     "- 그다음 문단마다 첫 줄에 짧은 머리말을 '**머리말**' 처럼 혼자 한 줄로 쓰고, 다음 줄부터",
     "  설명합니다. 머리말은 2~10자(예: **처음 소개**, **rhwp studio**, **써 본 반응**, **주의할 점**).",
@@ -214,6 +290,15 @@ function buildPrompt(question, list, catLabel) {
     "- 문장 속에서는 도구 이름이나 꼭 기억할 결론만 '**굵게**'. 한 문단에 한두 곳, 남발하지 마세요.",
     "- 방법·도구·주의점을 셋 이상 늘어놓을 때만 '- ' 로 시작하는 목록 줄을 씁니다.",
     "- 그 밖의 꾸밈(#, 표, 링크, 코드 블록)은 쓰지 마세요. 문단은 빈 줄로 나눕니다.",
+    "",
+    "사진·첨부·링크 넣기",
+    "- 보고서 속 [사진 msg-…], [동영상 msg-…], [첨부 msg-…], [링크 link:msg-…] 표시는 그 대목에서",
+    "  실제로 공유된 자료입니다.",
+    "- 답에서 그 이야기를 한 문단 바로 아래에 '![[msg-000385]]' 나 '![[link:msg-000006]]' 처럼",
+    `  자리표만 혼자 한 줄로 쓰면, 화면이 그 자리에 사진·파일·링크를 보여 줍니다. 최대 ${MAX_MATERIALS}개.`,
+    "- 질문에 실제로 도움이 되는 것만 넣으세요(도구 화면, 공유된 문서, 소개된 사이트 등).",
+    "  인사·축하 사진처럼 답과 상관없는 것은 넣지 마세요. 표시에 없는 번호는 쓰지 마세요.",
+    "- 링크 주소나 [사진 …] 같은 표시를 글 속에 옮겨 적지 마세요. 자리표 한 줄이면 됩니다.",
     `- 답에 실제로 쓴 주제의 id 만 cites 에 넣으세요(최대 ${MAX_CITES}개).`,
     "",
     '출력은 JSON 하나만: {"answer": "...", "cites": ["t-001", ...]}',
@@ -403,7 +488,7 @@ async function handle(db, snap, { say, dry }) {
   }
 
   const t0 = Date.now();
-  const { catLabel, index, byId } = payload();
+  const { catLabel, index, byId, refs } = payload();
   const keyword = candidates(question);
   const pp = buildPickPrompt(question, index);
   const pick = await callClaude(pp.user,
@@ -419,14 +504,18 @@ async function handle(db, snap, { say, dry }) {
     return;
   }
 
-  const r = await callClaude(buildPrompt(question, list, catLabel));
+  const seen = new Set();
+  const r = await callClaude(buildPrompt(question, list, catLabel, refs, seen));
   if (r.error) {
     say(`답변 실패 — ${email}: ${r.error}`, "ERROR");
     await finish({ state: "failed", message: "답을 쓰지 못했어요. 잠시 뒤 다시 물어봐 주세요." });
     return;
   }
   const ids = list.map((t) => t.id);
-  const { answer, cites } = parseAnswer(r.text, ids);
+  const parsed = parseAnswer(r.text, ids);
+  const cites = parsed.cites;
+  const answer = keepMaterials(parsed.answer, seen);
+  const materials = (answer.match(/^!\[\[/gm) || []).length;
   const wrote = await finish({
     state: "done",
     answer,
@@ -435,7 +524,7 @@ async function handle(db, snap, { say, dry }) {
   });
   const cost = (pick.cost || 0) + (r.cost || 0);
   say(`답변 ${wrote ? "완료" : "버림(그새 새 질문)"} — ${email} 후보 ${list.length}` +
-      `(고름 ${picked.length}·낱말 ${keyword.length}) 근거 ${cites.length} ` +
+      `(고름 ${picked.length}·낱말 ${keyword.length}) 근거 ${cites.length} 자료 ${materials} ` +
       `${Math.round((Date.now() - t0) / 1000)}초(고르기 ${pickSec}초)` +
       (cost ? ` 환산 $${cost.toFixed(4)}` : ""));
 }
@@ -498,7 +587,8 @@ function start(db, { say, dry = false, once = false, onIdle } = {}) {
 }
 
 module.exports = { start, candidates, mergeCandidates, buildIndex, buildPickPrompt, parsePick,
-                   buildPrompt, parseAnswer, takeQuota, childEnv, claudeArgs, callClaude, payload,
+                   buildPrompt, parseAnswer, labelAnchors, seenMaterials, keepMaterials,
+                   takeQuota, childEnv, claudeArgs, callClaude, payload,
                    CLAUDE_ARGS, PICK_MODEL, ASK_PER_DAY };
 
 if (require.main === module) {

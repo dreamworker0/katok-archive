@@ -256,6 +256,7 @@
   // 검색 결과 위 'AI에게 물어보기' 칸. 답은 이 PC 의 claude -p 가 쓴다(ask_worker.js).
   var ANSWER = window.ArchiveAsk.ArchiveAnswer({
     esc: esc, state: state, jumpToTimeline: jumpToTimeline,
+    fillMedia: function (box) { TIMELINE.fillAnswerAnchors(box); },
   });
   /** 도움말 화면의 한 안내로 간다(검색 결과 위 쪽지에서). */
   function openHelp(id) {

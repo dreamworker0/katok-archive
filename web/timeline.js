@@ -516,6 +516,32 @@
         (files.length ? '<div class="tcf-list">' + files.join("") + "</div>" : "");
     }
 
+    /** AI 답(ask.js answerHtml) 속 빈 자리를 채운다. 답은 여러 주제에 걸치므로 주제가
+     *  아니라 message id 로 찾는다. 발행본에 없는 번호는 자리째 지운다 — 빈 칸이 남으면
+     *  고장으로 보인다. 링크 주소는 여기 발행본에서만 온다. */
+    function fillAnswerAnchors(box) {
+      var D = ctx.data();
+      Array.prototype.forEach.call(box.querySelectorAll(".md-link-anchor:not([data-filled])"), function (a) {
+        var id = a.getAttribute("data-link-anchor"), rows = [];
+        D.THREADS.forEach(function (t) {
+          (t.links || []).forEach(function (l) { if (l.id === id) rows.push(l); });
+        });
+        if (!rows.length) { a.parentNode.removeChild(a); return; }
+        a.innerHTML = contextualLinkHtml(rows);
+        a.setAttribute("data-filled", "1");
+      });
+      Array.prototype.forEach.call(box.querySelectorAll(".md-anchor:not([data-filled])"), function (a) {
+        var id = a.getAttribute("data-anchor");
+        var rows = D.MEDIA.filter(function (m) { return m.id === id; });
+        var html = rows.length ? mediaHtml(rows, true) : "";
+        if (!html) { a.parentNode.removeChild(a); return; }
+        a.innerHTML = html;
+        a.setAttribute("data-filled", "1");
+      });
+      bindImages(box);
+      bindFiles(box);
+    }
+
     function contextualLinkHtml(rows) {
       return rows.map(function (l) {
         var host = hostOf(l.url) || "외부 링크";
@@ -804,6 +830,6 @@
 
     /** 사진·첨부 정렬 키. 같은 날 여러 건이라 시각까지 봐야 순서가 맞는다. */
 
-    return { renderTimeline: renderTimeline, pickThreads: pickThreads, jumpToTimeline: jumpToTimeline, attachAiReports: attachAiReports, threadMatches: threadMatches };
+    return { renderTimeline: renderTimeline, pickThreads: pickThreads, jumpToTimeline: jumpToTimeline, attachAiReports: attachAiReports, threadMatches: threadMatches, fillAnswerAnchors: fillAnswerAnchors };
   };
 })();

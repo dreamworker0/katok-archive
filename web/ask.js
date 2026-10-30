@@ -316,12 +316,16 @@
    * 답은 AI 가 쓴 글이라 글자로 그린다(esc 뒤 머리말·굵게·목록만 — answerHtml). 근거는 PC 가 후보 안에서만 고른
    * 주제이고, 눌러서 직접 확인하게 한다. 로그인 세션이 없는 로컬 미리보기에는
    * 칸 자체가 없다. */
-  /** AI 답 → HTML. 먼저 글자를 모두 esc 하고, 그 위에서 정해 둔 세 가지만 살린다:
-   *  혼자 선 '**머리말**' 줄은 문단 머리말, 문장 속 '**말**' 은 굵게, '- ' 줄은 목록.
-   *  나머지 마크다운(#·표·링크)은 글자로 남는다 — 태그가 새로 생길 길은 이 셋뿐이다. */
+  /** AI 답 → HTML. 먼저 글자를 모두 esc 하고, 그 위에서 정해 둔 것만 살린다:
+   *  혼자 선 '**머리말**' 줄은 문단 머리말, 문장 속 '**말**' 은 굵게, '- ' 줄은 목록,
+   *  혼자 선 '![[msg-…]]'·'![[link:msg-…]]' 줄은 빈 자리(타임라인과 같은 md-anchor).
+   *  빈 자리는 화면이 발행본에서 사진·첨부·링크를 찾아 채운다(timeline.js
+   *  fillAnswerAnchors) — 링크 주소가 AI 글에서 오는 길은 없다.
+   *  나머지 마크다운(#·표·링크)은 글자로 남는다 — 태그가 새로 생길 길은 이것뿐이다. */
   function answerHtml(text, esc) {
     function inline(s) {
-      return esc(s).replace(/\*\*([^*\n]{1,80}?)\*\*/g, "<strong>$1</strong>").replace(/\*\*/g, "");
+      return esc(s).replace(/\*\*([^*\n]{1,80}?)\*\*/g, "<strong>$1</strong>").replace(/\*\*/g, "")
+        .replace(/`([^`\n]{1,60})`/g, "<code>$1</code>");   // 명령어(`claude -p`)
     }
     return String(text || "").split(/\n\s*\n/).map(function (block) {
       var out = [], para = [], list = [];
@@ -332,7 +336,13 @@
         if (!line) return;
         var head = /^\*\*([^*\n]{1,40})\*\*$/.exec(line);
         var item = /^[-•]\s+(.+)$/.exec(line);
-        if (head) { flushPara(); flushList(); out.push('<p class="ai-answer__sub">' + esc(head[1]) + "</p>"); }
+        var spot = /^!\[\[(link:)?([A-Za-z0-9_-]+)\]\]$/.exec(line);
+        if (spot) {
+          flushPara(); flushList();
+          out.push(spot[1]
+            ? '<div class="md-link-anchor" data-link-anchor="' + esc(spot[2]) + '"></div>'
+            : '<div class="md-anchor" data-anchor="' + esc(spot[2]) + '"></div>');
+        } else if (head) { flushPara(); flushList(); out.push('<p class="ai-answer__sub">' + esc(head[1]) + "</p>"); }
         else if (item) { flushPara(); list.push("<li>" + inline(item[1]) + "</li>"); }
         else { flushList(); para.push(inline(line)); }
       });
@@ -419,6 +429,7 @@
     function bind() {
       var box = document.getElementById("aiAnswer");
       if (!box) return;
+      if (ctx.fillMedia) ctx.fillMedia(box);   // 답 속 사진·첨부·링크 자리를 채운다
       var b = box.querySelector("[data-ai-ask]");
       if (b) b.onclick = function () {
         var q = box.getAttribute("data-q");
