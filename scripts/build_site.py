@@ -46,7 +46,7 @@ WEB = ROOT / "web"
 SITE = ROOT / "site"
 
 STATIC_FILES = ("index.html", "app.js", "text.js", "timeline.js", "summary.js", "graph-view.js", "tags.js",
-                "gallery.js", "stats.js", "mine.js", "admin.js", "styles.css", "graph.js",
+                "gallery.js", "stats.js", "mine.js", "admin.js", "ask.js", "styles.css", "graph.js",
                 "images.js", "favicon.svg")
 STATIC_DIRS = ("art",)
 

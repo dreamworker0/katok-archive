@@ -47,6 +47,7 @@
     "stats.js",
     "mine.js",
     "admin.js",
+    "ask.js",
     "app.js",
     "boot.js",
     "pwa.js",

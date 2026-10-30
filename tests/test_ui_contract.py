@@ -52,7 +52,7 @@ def front_end_js() -> str:
     """
     parts = [(ROOT / "web" / name).read_text(encoding="utf-8")
              for name in ("app.js", "text.js", "timeline.js", "summary.js", "graph-view.js", "tags.js",
-                          "gallery.js", "stats.js", "mine.js", "admin.js")]
+                          "gallery.js", "stats.js", "mine.js", "admin.js", "ask.js")]
     return "".join(parts)
 
 

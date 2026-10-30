@@ -1153,3 +1153,92 @@ img.img-error {
   font-size: 11.5px; line-height: 1.65; color: var(--ink-faint);
   word-break: keep-all;
 }
+
+/* ---------- 물어보기 (web/ask.js) ----------
+   오른쪽 아래에 떠 있다. 열면 단추는 숨고 그 자리에 칸이 선다 — 단추와 칸이
+   같이 있으면 휴대폰에서 칸 위쪽이 너무 올라간다. 닫기는 칸 머리의 ×. */
+.ask-fab {
+  position: fixed; z-index: 45; right: 24px; bottom: 24px;
+  display: inline-flex; align-items: center; gap: 8px; min-height: 48px;
+  padding: 0 18px 0 14px; border: 0; border-radius: 999px;
+  color: var(--accent-ink); background: var(--accent); box-shadow: var(--shadow);
+  font: inherit; font-size: 14px; font-weight: 800; cursor: pointer;
+}
+.ask-fab svg { width: 22px; height: 22px; flex: none; }
+.ask-fab:hover { filter: brightness(1.05); }
+.ask-fab:focus-visible, .ask-panel button:focus-visible, .ask-form input:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px;
+}
+.ask-fab[hidden] { display: none; }
+.ask-panel {
+  position: fixed; z-index: 45; right: 24px; bottom: 24px;
+  display: flex; flex-direction: column;
+  width: min(400px, calc(100vw - 48px)); height: min(620px, calc(100vh - 48px));
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); box-shadow: var(--shadow); overflow: hidden;
+}
+.ask-panel[hidden] { display: none; }
+.ask-head { display: flex; align-items: flex-start; gap: 12px; padding: 16px 16px 12px 20px;
+  border-bottom: 1px solid var(--line); }
+.ask-head h2 { margin: 0; font-size: 16px; font-weight: 800; color: var(--ink); }
+.ask-sub { margin: 3px 0 0; font-size: 12.5px; color: var(--ink-soft); word-break: keep-all; }
+.ask-close { margin-left: auto; flex: none; width: 36px; height: 36px; border: 0;
+  border-radius: 10px; color: var(--ink-soft); background: transparent; font-size: 22px;
+  line-height: 1; cursor: pointer; }
+.ask-close:hover { background: var(--surface-2); color: var(--ink); }
+.ask-log { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 16px;
+  display: flex; flex-direction: column; gap: 12px; background: var(--bg); }
+.ask-msg { max-width: 92%; font-size: 14px; line-height: 1.6; color: var(--ink);
+  word-break: keep-all; overflow-wrap: anywhere; }
+.ask-msg p { margin: 0 0 8px; }
+.ask-msg p:last-child { margin-bottom: 0; }
+.ask-msg--me { align-self: flex-end; padding: 9px 13px; border-radius: 16px 16px 4px 16px;
+  color: var(--accent-ink); background: var(--accent); }
+.ask-msg--bot { align-self: flex-start; padding: 12px 14px; border: 1px solid var(--line);
+  border-radius: 16px 16px 16px 4px; background: var(--surface); }
+.ask-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.ask-chip { min-height: 34px; padding: 6px 12px; border: 1px solid var(--line-strong);
+  border-radius: 999px; color: var(--ink); background: var(--surface); font: inherit;
+  font-size: 13px; cursor: pointer; text-align: left; }
+.ask-chip:hover { border-color: var(--accent); color: var(--accent); }
+.ask-hits { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.ask-hit { display: grid; gap: 2px; width: 100%; padding: 9px 11px; border: 1px solid var(--line);
+  border-radius: 12px; color: var(--ink); background: var(--surface-2); font: inherit;
+  text-align: left; cursor: pointer; }
+.ask-hit:hover { border-color: var(--accent); }
+.ask-hit__title { font-size: 13.5px; font-weight: 800; }
+.ask-hit__meta { font-size: 11.5px; color: var(--ink-faint); }
+.ask-hit__sum { font-size: 12.5px; color: var(--ink-soft);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.ask-guide { padding: 10px 12px; border-radius: 12px; background: var(--accent-soft); }
+.ask-guide + .ask-guide, .ask-guide + p, .ask-hits + .ask-go { margin-top: 8px; }
+.ask-guide b { display: block; font-size: 13.5px; margin-bottom: 3px; }
+.ask-guide p { font-size: 13.5px; }
+.ask-aside { margin-top: 12px !important; font-size: 12.5px; color: var(--ink-soft); }
+.ask-go { display: inline-block; margin-top: 8px; min-height: 34px; padding: 6px 12px; border: 0;
+  border-radius: 10px; color: var(--accent); background: var(--surface); font: inherit;
+  font-size: 13px; font-weight: 800; cursor: pointer; }
+.ask-msg--bot > .ask-go { background: var(--accent-soft); }
+.ask-form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line);
+  background: var(--surface); }
+.ask-form input { flex: 1; min-width: 0; min-height: 44px; padding: 0 14px;
+  border: 1px solid var(--line-strong); border-radius: 12px; color: var(--ink);
+  background: var(--bg); font: inherit; font-size: 15px; }
+.ask-send { flex: none; min-height: 44px; padding: 0 16px; border: 0; border-radius: 12px;
+  color: var(--accent-ink); background: var(--accent); font: inherit; font-weight: 800;
+  cursor: pointer; }
+
+@media (max-width: 760px) {
+  /* 아래 단추줄(.mobile-nav) 위에 선다. 더보기 칸(z 50)이 열리면 그 아래로 간다. */
+  .ask-fab { right: 16px; bottom: calc(72px + env(safe-area-inset-bottom));
+    width: 52px; height: 52px; padding: 0; justify-content: center; }
+  .ask-fab__label { position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap; }
+  .ask-panel { right: 8px; left: 8px; width: auto;
+    bottom: calc(68px + env(safe-area-inset-bottom));
+    height: calc(100vh - 68px - env(safe-area-inset-bottom) - 16px);
+    height: calc(100dvh - 68px - env(safe-area-inset-bottom) - 16px); }
+  /* 맨 아래 내용이 떠 있는 단추에 가리지 않게 여유를 더 준다. */
+  .view { padding-bottom: 140px; }
+}
+@media print { .ask-fab, .ask-panel { display: none !important; } }

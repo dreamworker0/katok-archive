@@ -245,6 +245,13 @@
   function renderAdmin() { return ADMIN.renderAdmin(); }
 
 
+  // ---------- 물어보기(떠 있는 질문 단추) → web/ask.js ----------
+  var ASK = window.ArchiveAsk.ArchiveAsk({
+    data: appData, el: el, esc: esc, tagFold: tagFold, TAG_PICK_MAX: TAG_PICK_MAX,
+    jumpToTimeline: jumpToTimeline, pickThreads: pickThreads, setView: setView,
+  });
+
+
   // ---------- 검색·라우팅 ----------
   function runSearch(q) {
     state.q = q || ""; el.search.value = state.q;
@@ -682,6 +689,7 @@
     applyFont(FONT_STEPS.some(function (s) { return s.id === savedFont; })
       ? savedFont : FONT_STEPS[0].id);
     if (el.fontBtn) el.fontBtn.addEventListener("click", cycleFont);
+    ASK.mount();
 
     /* 뒤로 가기·앞으로 가기. hashchange 와 popstate 를 모두 듣는다 — pushState 로
      * 바꾼 주소는 브라우저에 따라 popstate 만 오는 경우가 있다. 우리가 주소를

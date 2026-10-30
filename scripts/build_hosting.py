@@ -29,6 +29,7 @@ FILES = [
     ("stats.js", "stats.js"),
     ("mine.js", "mine.js"),
     ("admin.js", "admin.js"),
+    ("ask.js", "ask.js"),
     ("graph.js", "graph.js"),
     ("images.js", "images.js"),
     ("boot.js", "boot.js"),
