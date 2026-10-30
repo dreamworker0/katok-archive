@@ -161,3 +161,17 @@ test("keepMaterials: AI 가 본 번호만, 혼자 선 줄만, 4개까지 남긴�
   assert.deepEqual(spots, ["![[msg-1]]", "![[link:msg-5]]", "![[msg-6]]", "![[msg-7]]"]);
   assert.doesNotMatch(out, /msg-9|msg-2|\[사진/);
 });
+
+test("buildPrompt: 검증 주석을 날짜와 함께 넣되 근거 주소 목록은 뺀다, 주석 없으면 '없음'", () => {
+  const refs = { media: {}, links: {}, checks: {
+    "t-1": { date: "2026-08-28", text: "## 바로잡은 자리\n하루 360MB 다.\n\n## 근거\n- [문서](https://example.com)" } } };
+  const p = W.buildPrompt("질문?", [
+    { id: "t-1", title: "가", start_date: "2026-01-01", participants: [], summary: "", report: "" },
+    { id: "t-2", title: "나", start_date: "2026-01-02", participants: [], summary: "", report: "" },
+  ], {}, refs);
+  assert.match(p, /검증 주석: \(2026-08-28 확인\) ## 바로잡은 자리\n하루 360MB 다\./);
+  assert.doesNotMatch(p, /example\.com/);
+  assert.match(p, /<topic id="t-2">[\s\S]*검증 주석: 없음/);
+  assert.match(p, /확인할 점/);
+  assert.match(p, /오늘은 \d{4}-\d{2}-\d{2} 입니다/);
+});
