@@ -1174,3 +1174,25 @@ img.img-error {
   color: var(--accent); background: var(--surface); font: inherit; font-weight: 800;
   cursor: pointer; }
 .help-hint__go:hover { filter: brightness(1.03); }
+
+/* ---------- AI 에게 묻기 (검색 결과 위) ---------- */
+.ai-answer { margin-bottom: 16px; padding: 16px 18px; border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-sm); }
+.ai-answer__ask { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.ai-answer__ask .btn { flex: none; }
+.ai-answer__note { flex: 1 1 260px; margin: 0; font-size: 12.5px; line-height: 1.6;
+  color: var(--ink-soft); word-break: keep-all; }
+.ai-answer__note--warn { color: var(--danger); margin-bottom: 10px; }
+.ai-answer__label { margin: 0 0 6px; font-size: 12px; font-weight: 800; color: var(--accent); }
+.ai-answer__body { margin-bottom: 12px; color: var(--ink); line-height: 1.75; word-break: keep-all; }
+.ai-answer__body p { margin: 0 0 8px; }
+.ai-answer__cites { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.ai-answer__cite { min-height: 34px; padding: 6px 12px; border: 1px solid var(--line-strong);
+  border-radius: 10px; color: var(--ink); background: var(--surface-2); font: inherit;
+  font-size: 13px; font-weight: 700; text-align: left; cursor: pointer; }
+.ai-answer__cite span { margin-left: 4px; font-weight: 400; color: var(--ink-faint); }
+.ai-answer__cite:hover { border-color: var(--accent); }
+.ai-answer__wait { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--ink-soft); }
+.ai-answer__dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent);
+  animation: ai-pulse 1.2s ease-in-out infinite; flex: none; }
+@keyframes ai-pulse { 50% { opacity: .25; transform: scale(.8); } }

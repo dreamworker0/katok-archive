@@ -157,6 +157,39 @@ service cloud.firestore {
       allow delete: if isMember() && callerEmail() == reqEmail;
     }
 
+    // ── AI 에게 묻기: 본인 질문 문서 한 장만 ──
+    //
+    // 검색창의 'AI에게 물어보기'. 멤버는 질문만 쓰고, 답은 이 PC 의 감시 스크립트
+    // (scripts/ask_worker.js, Admin SDK — 규칙 우회)만 쓴다. 문서 ID 를 본인
+    // 이메일로 못박아 한 사람이 한 번에 질문 하나만 걸 수 있다 — 새로 물으면 지난
+    // 질문과 답을 덮는다(set). 그래서 hasOnly 가 답 필드를 막는다: 멤버가 답을
+    // 지어 넣을 수 없다.
+    //
+    // 하루 몇 번까지, 몇 초 간격으로 물을 수 있는지는 PC 쪽이 센다. 규칙으로는
+    // 날마다 세는 수를 셀 수 없다(다른 문서를 쌓아 읽어야 한다).
+    function askWrite(askEmail) {
+      return isMember()
+        && callerEmail() == askEmail
+        && request.resource.data.keys().hasOnly(['question', 'state', 'askedAt'])
+        && request.resource.data.question is string
+        && request.resource.data.question.size() >= 2
+        && request.resource.data.question.size() <= 200
+        && request.resource.data.state == 'queued'
+        && request.resource.data.askedAt == request.time;
+    }
+    match /asks/{askEmail} {
+      allow get:  if signedIn() && (callerEmail() == askEmail || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if askWrite(askEmail);
+      allow delete: if false;
+    }
+
+    // ── 공개 상태: 멤버가 읽는 PC 하트비트 ──
+    //
+    // status/ask  AI 답변을 쓰는 PC 가 듣고 있는가(seenAt). settings 는 관리자만
+    // 읽어서 멤버 화면이 'PC 가 꺼져 있어요' 를 말할 근거가 없었다. 쓰기는 PC 만.
+    match /status/{docId} { allow read: if isMember(); allow write: if false; }
+
     // 그 밖의 모든 경로 차단
     match /{document=**} { allow read, write: if false; }
   }

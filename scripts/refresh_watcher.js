@@ -22,6 +22,7 @@
  * 덤으로 하는 일
  *   관리자 명단(members, role == admin)도 듣는다. 바뀌면 디스코드로 알린다 —
  *   이 PC 에 늘 붙어 있는 리스너가 여기뿐이라 얹었다. 자세한 것은 admin_alert.js.
+ *   검색창의 'AI에게 물어보기' 질문(asks)도 같은 이유로 여기서 듣는다 — ask_worker.js.
  *
  * 이 스크립트가 하지 않는 일
  *   - 요청을 만들지 않는다. 만드는 것은 requestRefresh Function 뿐이다.
@@ -41,6 +42,7 @@ const admin = require("firebase-admin");
 const ROOT = path.resolve(__dirname, "..");
 const KEY = require("./sa_key");   // 프로젝트 밖으로 옮겼다 — sa_key.js 참고
 const adminAlert = require("./admin_alert");
+const askWorker = require("./ask_worker");
 const LOG_DIR = path.join(ROOT, "logs");
 const PROJECT_ID = "katok-crawling-project";
 
@@ -426,6 +428,10 @@ async function main() {
       });
     };
     watchAdmins();
+
+    // 'AI에게 물어보기' 질문 — 갱신과 따로 듣고 따로 다시 붙는다. 갱신이 몇 분씩
+    // 도는 동안에도 질문은 답한다(claude -p 는 카톡 창을 건드리지 않는다).
+    askWorker.start(admin.firestore(), { say, dry: DRY });
   }
 
   process.on("SIGINT", () => stop(0, "종료 신호 — 감시를 멈춥니다."));

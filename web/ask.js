@@ -40,7 +40,7 @@
 
   // 끝이 이렇게 맺히면 묻는 말(동사)이다. 명사 끝('이미지'의 '지')은 건드리지 않게
   // 맺음 전체로만 본다.
-  var ENDING = /(했던|했었지|했었|했지|했나|했어|하던|하나요|인가요|인가|인지|있었지|있었나|있었어|있나요|있어요|있나|있어|었지|았지|던가|나요|까요|세요|해줘|알려줘|찾아줘|보여줘|줘요|줘)$/;
+  var ENDING = /(했던|했었지|했었|했지|했나|했어|하던|하나요|인가요|인가|인지|있었지|있었나|있었어|있나요|있어요|있나|있어|었지|았지|됐어|됐나|됐지|됐던|되었|던가|나요|까요|세요|해줘|알려줘|찾아줘|보여줘|줘요|줘)$/;
 
   function cutOne(w, list) {
     for (var i = 0; i < list.length; i++) {
@@ -50,7 +50,8 @@
     return w;
   }
 
-  function stem(word) { return cutOne(cutOne(word, JOSA), VERB_END); }
+  // 복수 '들' 은 조사 앞에 붙는다('도구들이' → '도구들' → '도구'). 조사를 뗀 뒤 한 번 더.
+  function stem(word) { return cutOne(cutOne(cutOne(word, JOSA), ["들"]), VERB_END); }
 
   /** 질문 → 찾을 말 목록. 겹치는 말은 한 번만. */
   function queryTerms(q) {
@@ -165,6 +166,9 @@
       { id: "search", q: "검색은 어떻게 해요?",
         keys: ["검색", "찾는 법", "찾으려면"],
         a: "위쪽 검색창에 낱말을 치면 그 글자가 들어간 주제가 나와요. 글자가 똑같은 주제가 없으면 말로 친 질문(\"한글 자동화 얘기 어디 있었지?\")에서 낱말을 골라 맞는 주제를 찾아 드려요. 사람 이름을 같이 쓰면 그 사람이 참여한 주제로 좁혀요." },
+      { id: "ai", q: "AI에게 물어보려면?",
+        keys: ["ai에게", "물어보", "챗봇", "질문하"],
+        a: "검색창에 궁금한 것을 치면 결과 위에 'AI에게 물어보기' 단추가 나와요. 누르면 검색에 걸린 주제를 AI가 읽고 짧게 답하고, 근거가 된 주제를 달아 줘요. 하루 20번까지 물을 수 있고, AI가 쓴 답이라 틀릴 수 있으니 근거 주제에서 확인해 주세요." },
       { id: "remove", q: "내 글을 내리고 싶어요",
         keys: ["삭제", "지우", "지워", "내리", "내려", "숨기", "숨겨", "내 글", "내글", "개인정보"],
         a: "'내 글 관리'에서 내 기록을 골라 내려 달라고 요청할 수 있어요. 요청한 기록은 다음 발행부터 빠지고, 되돌리려면 관리자에게 요청해야 해요.",
@@ -304,7 +308,132 @@
     return { renderHelp: renderHelp, hintHtml: hintHtml };
   }
 
+  /* ---------- AI 에게 묻기 (검색 결과 위 칸) ----------
+   * 검색창에 친 질문을 이 PC 의 claude -p 가 발행본 주제를 읽고 답한다
+   * (scripts/ask_worker.js). 웹은 asks/{내 이메일} 에 질문을 쓰고 그 문서를 듣는다.
+   * 누르기 전에는 묻지 않는다 — 검색할 때마다 부르면 글자를 칠 때마다 요금제를 쓴다.
+   *
+   * 답은 AI 가 쓴 글이라 글자로만 그린다(esc). 근거는 PC 가 후보 안에서만 고른
+   * 주제이고, 눌러서 직접 확인하게 한다. 로그인 세션이 없는 로컬 미리보기에는
+   * 칸 자체가 없다. */
+  var ASK_MAX = 200;           // firestore.rules askWrite 의 상한과 같다
+  var STALE_MS = 12 * 60 * 1000;   // 하트비트(5분)를 두 번 놓치면 꺼진 것으로 본다
+  var WAIT_HINT_MS = 45 * 1000;
+
+  function ArchiveAnswer(ctx) {
+    var esc = ctx.esc, state = ctx.state;
+    var doc = null, unsub = null, pcAsleep = false, waitTimer = null;
+
+    function reqs() { return state.session && state.session.requests; }
+    function enabled() { var r = reqs(); return !!(r && r.ask && r.watchAsk); }
+
+    function watch() {
+      if (unsub || !enabled()) return;
+      unsub = reqs().watchAsk(function (d) { doc = d; paint(); });
+    }
+
+    function paragraphs(text) {
+      return String(text || "").split(/\n\s*\n/).map(function (p) {
+        return "<p>" + esc(p.trim()).replace(/\n/g, "<br>") + "</p>"; }).join("");
+    }
+
+    function askButton(label) {
+      return '<button class="btn" type="button" data-ai-ask>' + esc(label) + "</button>";
+    }
+
+    function inner(q) {
+      var mine = doc && doc.question === q;
+      if (!mine) {
+        if (q.length > ASK_MAX) {
+          return '<p class="ai-answer__note">AI에게는 ' + ASK_MAX + "자 이내로 물을 수 있어요.</p>";
+        }
+        return '<div class="ai-answer__ask">' + askButton("🤖 AI에게 물어보기") +
+          '<p class="ai-answer__note">검색에 걸린 주제를 AI가 읽고 짧게 답해요. ' +
+          "하루 20번까지 물을 수 있고, 답은 틀릴 수 있으니 근거 주제를 꼭 확인해 주세요.</p></div>";
+      }
+      var st = doc.state;
+      if (st === "queued" || st === "running") {
+        return '<p class="ai-answer__wait"><span class="ai-answer__dot" aria-hidden="true"></span>' +
+          (st === "running" ? "기록을 읽고 답을 쓰는 중이에요… 보통 10~30초 걸려요."
+                            : "질문을 보냈어요. 답을 쓸 PC가 받으면 시작해요…") + "</p>" +
+          (st === "queued" && pcAsleep
+            ? '<p class="ai-answer__note">답을 쓰는 PC가 지금 꺼져 있는 것 같아요. 켜지면 답하고, 30분이 지나면 취소돼요.</p>'
+            : "");
+      }
+      if (st === "done") {
+        var cites = doc.cites || [];
+        return '<p class="ai-answer__label">🤖 AI 답변</p>' +
+          '<div class="ai-answer__body">' + paragraphs(doc.answer) + "</div>" +
+          (cites.length
+            ? '<p class="ai-answer__label">근거 주제</p><div class="ai-answer__cites">' +
+              cites.map(function (c) {
+                return '<button class="ai-answer__cite" type="button" data-ai-jump="' +
+                  esc(c.id) + '">' + esc(c.title) + ' <span>' + esc(c.date || "") +
+                  "</span></button>"; }).join("") + "</div>"
+            : "") +
+          '<p class="ai-answer__note">AI가 기록을 읽고 쓴 답이에요. 틀릴 수 있으니 근거 주제에서 확인해 주세요.</p>';
+      }
+      // failed · limited · expired — PC 가 적어 준 문장을 그대로 보인다.
+      return '<p class="ai-answer__note ai-answer__note--warn">' +
+        esc(doc.message || "답을 받지 못했어요.") + "</p>" +
+        (st === "limited" ? "" : askButton("다시 물어보기"));
+    }
+
+    function boxHtml(q) {
+      q = String(q || "").trim();
+      if (!enabled() || q.length < 2) return "";
+      watch();
+      return '<section class="ai-answer" id="aiAnswer" aria-live="polite" data-q="' +
+        esc(q) + '">' + inner(q) + "</section>";
+    }
+
+    /** 문서가 바뀌면 칸 안만 다시 그린다 — 타임라인 전체를 다시 그리면 읽던 자리를 잃는다. */
+    function paint() {
+      var box = document.getElementById("aiAnswer");
+      if (!box) return;
+      box.innerHTML = inner(box.getAttribute("data-q"));
+      bind();
+    }
+
+    function bind() {
+      var box = document.getElementById("aiAnswer");
+      if (!box) return;
+      var b = box.querySelector("[data-ai-ask]");
+      if (b) b.onclick = function () {
+        var q = box.getAttribute("data-q");
+        b.disabled = true;
+        pcAsleep = false;
+        // 화면은 바로 '보냈어요' 로 — 스냅샷이 오기 전에도 누른 것이 먹었는지 보이게.
+        doc = { question: q, state: "queued" };
+        paint();
+        reqs().ask(q).catch(function (e) {
+          doc = { question: q, state: "failed",
+                  message: "질문을 보내지 못했어요: " + (e && e.message ? e.message : e) };
+          paint();
+        });
+        clearTimeout(waitTimer);
+        waitTimer = setTimeout(checkPc, WAIT_HINT_MS);
+      };
+      Array.prototype.forEach.call(box.querySelectorAll("[data-ai-jump]"), function (c) {
+        c.onclick = function () { ctx.jumpToTimeline("t-" + c.getAttribute("data-ai-jump")); };
+      });
+    }
+
+    /** 한참 지나도 PC 가 안 받으면 하트비트를 본다. 꺼져 있으면 그렇다고 말한다. */
+    function checkPc() {
+      if (!doc || doc.state !== "queued" || !reqs().askSeenAt) return;
+      reqs().askSeenAt().then(function (seen) {
+        var t = seen ? Date.parse(seen) : NaN;
+        pcAsleep = !(t > Date.now() - STALE_MS);
+        paint();
+      }, function () { /* 못 읽으면 말하지 않는다 */ });
+    }
+
+    return { boxHtml: boxHtml, bind: bind };
+  }
+
   api.ArchiveHelp = ArchiveHelp;
+  api.ArchiveAnswer = ArchiveAnswer;
   if (typeof window !== "undefined") window.ArchiveAsk = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })();

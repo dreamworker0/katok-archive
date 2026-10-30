@@ -159,6 +159,8 @@
     stats: function () { return STATSV; },
     // 검색어가 사용법을 묻는 말이면 타임라인 위에 도움말로 가는 쪽지를 띄운다.
     helpHint: function (q) { return HELP.hintHtml(q); }, openHelp: openHelp,
+    answerBox: function (q) { return ANSWER.boxHtml(q); },
+    bindAnswer: function () { ANSWER.bind(); },
   });
   function renderTimeline() { return TIMELINE.renderTimeline(); }
   function threadMatches(t) { return TIMELINE.threadMatches(t); }
@@ -250,6 +252,10 @@
   // ---------- 도움말 → web/ask.js ----------
   var HELP = window.ArchiveAsk.ArchiveHelp({
     el: el, esc: esc, TAG_PICK_MAX: TAG_PICK_MAX, setView: setView,
+  });
+  // 검색 결과 위 'AI에게 물어보기' 칸. 답은 이 PC 의 claude -p 가 쓴다(ask_worker.js).
+  var ANSWER = window.ArchiveAsk.ArchiveAnswer({
+    esc: esc, state: state, jumpToTimeline: jumpToTimeline,
   });
   /** 도움말 화면의 한 안내로 간다(검색 결과 위 쪽지에서). */
   function openHelp(id) {

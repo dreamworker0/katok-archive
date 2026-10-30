@@ -26,7 +26,7 @@
  *
  * 검사 범위: preferences 말고도 발행본 다섯 갈래(meta·threads·media·digests·graph),
  * chunks, myMessages, settings, messagesSource, members, claims, deletionRequests,
- * 그리고 마지막 catch-all. 예전에는 preferences 9건만 봤다.
+ * asks·status(AI 에게 묻기), 그리고 마지막 catch-all. 예전에는 preferences 9건만 봤다.
  */
 const fs = require("fs");
 const path = require("path");
@@ -364,6 +364,42 @@ const CASES = [
     del(`deletionRequests/${MEMBER}`, MEMBER), IN),
   testCase("남의 삭제 요청은 철회하지 못한다", "DENY",
     del(`deletionRequests/${OTHER}`, MEMBER), IN),
+
+  // ── AI 에게 묻기: 본인 질문 한 장, 답은 PC 만 ──
+  testCase("멤버가 질문을 건다", "ALLOW",
+    write(`asks/${MEMBER}`, { question: "한글 자동화 얘기?", state: "queued", askedAt: NOW },
+      MEMBER, "create"), IN),
+  testCase("새 질문으로 지난 질문을 덮는다", "ALLOW",
+    write(`asks/${MEMBER}`, { question: "파이어베이스 요금", state: "queued", askedAt: NOW },
+      MEMBER), IN),
+  testCase("남의 이름으로는 묻지 못한다", "DENY",
+    write(`asks/${OTHER}`, { question: "한글 자동화 얘기?", state: "queued", askedAt: NOW },
+      MEMBER, "create"), IN),
+  testCase("명부에 없는 사람은 묻지 못한다", "DENY",
+    write(`asks/${MEMBER}`, { question: "한글 자동화 얘기?", state: "queued", askedAt: NOW },
+      MEMBER, "create"), OUT),
+  // 답을 지어 넣거나 '끝났음' 으로 바꿔 화면을 속이는 것을 막는다.
+  testCase("멤버가 답을 써 넣지 못한다", "DENY",
+    write(`asks/${MEMBER}`, { question: "질문", state: "queued", askedAt: NOW, answer: "가짜" },
+      MEMBER), IN),
+  testCase("멤버가 상태를 done 으로 바꾸지 못한다", "DENY",
+    write(`asks/${MEMBER}`, { question: "질문", state: "done", askedAt: NOW }, MEMBER), IN),
+  testCase("200자를 넘는 질문은 막는다", "DENY",
+    write(`asks/${MEMBER}`, { question: "가".repeat(201), state: "queued", askedAt: NOW },
+      MEMBER), IN),
+  testCase("질문 시각을 위조하면 막는다", "DENY",
+    write(`asks/${MEMBER}`, { question: "질문", state: "queued",
+                              askedAt: "2020-01-01T00:00:00Z" }, MEMBER), IN),
+  testCase("본인 질문과 답은 읽는다", "ALLOW", read(`asks/${MEMBER}`, MEMBER), IN),
+  testCase("남의 질문은 못 읽는다", "DENY", read(`asks/${OTHER}`, MEMBER), IN),
+  testCase("멤버는 질문 목록을 훑지 못한다", "DENY", read("asks", MEMBER, "list"), IN),
+  testCase("질문 문서는 지우지 못한다", "DENY", del(`asks/${MEMBER}`, MEMBER), IN),
+
+  // ── 공개 상태(PC 하트비트): 멤버는 읽고, 아무도 쓰지 못한다 ──
+  testCase("멤버는 PC 상태를 읽는다", "ALLOW", read("status/ask", MEMBER), IN),
+  testCase("명부에 없으면 PC 상태를 못 읽는다", "DENY", read("status/ask", OUTSIDER), OUT),
+  testCase("PC 상태에 클라이언트가 쓰지 못한다", "DENY",
+    write("status/ask", { seenAt: NOW }, MEMBER), ADMIN),
 
   // ── 그 밖의 모든 경로는 막힌다 ──
   //

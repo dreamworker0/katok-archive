@@ -28,6 +28,11 @@ test("queryTerms: 조사·묻는 말끝·흔한 말을 떼고 남긴다", () => 
   assert.deepEqual(K.queryTerms("제미나이 비교한 거"), ["제미나", "비교"]);
 });
 
+test("queryTerms: 복수 '들'·'됐어' 같은 말끝도 뗀다", () => {
+  assert.deepEqual(K.queryTerms("한글 문서 자동화는 어떤 도구들이 소개됐어?"),
+                   ["한글", "문서", "자동화", "도구"]);
+});
+
 test("queryTerms: 두 글자 '글을'·'님이' 는 묻는 말이라 버린다", () => {
   assert.deepEqual(K.queryTerms("내 글을 내리고 싶어요"), []);
   assert.deepEqual(K.queryTerms("님이 올린"), []);

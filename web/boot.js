@@ -448,6 +448,7 @@
     var email = user.email.toLowerCase();
     var prefs = db.collection("preferences").doc(email);
     var dels = db.collection("deletionRequests").doc(email);
+    var asks = db.collection("asks").doc(email);
     var stamp = function () { return firebase.firestore.FieldValue.serverTimestamp(); };
 
     return {
@@ -490,6 +491,22 @@
         });
       },
       clearDeletion: function () { return dels.delete(); },
+      /* 'AI에게 물어보기'. 한 사람 한 문서라 새로 물으면 지난 질문을 덮는다.
+       * 답은 이 PC 의 scripts/ask_worker.js 가 같은 문서에 쓴다. */
+      ask: function (question) {
+        return asks.set({ question: question, state: "queued", askedAt: stamp() });
+      },
+      /** 내 질문 문서를 듣는다. 멈추는 함수를 돌려준다. */
+      watchAsk: function (cb) {
+        return asks.onSnapshot(function (d) { cb(d.exists ? d.data() : null); },
+                               function () { cb(null); });
+      },
+      /** 답을 쓰는 PC 가 마지막으로 들은 때(ISO 문자열) — 없으면 null. */
+      askSeenAt: function () {
+        return db.collection("status").doc("ask").get().then(function (d) {
+          return d.exists ? (d.data().seenAt || null) : null;
+        });
+      },
     };
   }
 

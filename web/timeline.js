@@ -101,6 +101,8 @@
       var rows = ctx.data().THREADS.filter(threadMatches);
       fuzzy = null;
       var hint = state.q && ctx.helpHint ? ctx.helpHint(state.q) : "";
+      // 'AI에게 물어보기' 칸. 결과가 없어도 띄운다 — 낱말이 안 맞아도 AI 는 가까운 것을 찾는다.
+      var aiBox = state.q && ctx.answerBox ? ctx.answerBox(state.q) : "";
       if (state.q && !rows.length && !state.pick) rows = smartRows();
       // 사용법을 물었는데('글자를 크게 하려면?') 본문에서만 스친 주제 50개를 늘어놓으면
       // 쪽지가 묻힌다(실측). 맞는 안내가 있으면 그것이 답이다.
@@ -130,10 +132,11 @@
           "전체 보기</button></div>"
         : "";
       if (!rows.length) {
-        el.view.innerHTML = hint + pickBar + emptyState("search", "조건에 맞는 이야기를 찾지 못했어요",
+        el.view.innerHTML = hint + aiBox + pickBar + emptyState("search", "조건에 맞는 이야기를 찾지 못했어요",
           "검색어를 조금 줄이거나 참여자 필터를 비우고 다시 살펴보세요.");
         bindPickClear();
         bindHelpHint();
+        if (ctx.bindAnswer) ctx.bindAnswer();
         return;
       }
 
@@ -145,7 +148,7 @@
         return (ka < kb ? -1 : 1) * (desc ? -1 : 1);
       });
 
-      var html = [hint, pickBar, fuzzyBar(rows.length), '<div class="gal-head">',
+      var html = [hint, aiBox, pickBar, fuzzyBar(rows.length), '<div class="gal-head">',
         '<p class="room-sub">주제 ' + rows.length +
         "개" + (rows.length !== ctx.data().THREADS.length ? " / 전체 " + ctx.data().THREADS.length : "") +
         " · 대화 원문은 보관만 하고 공개하지 않습니다</p>",
@@ -157,6 +160,7 @@
       el.view.innerHTML = html.join("");
       bindPickClear();
       bindHelpHint();
+      if (ctx.bindAnswer) ctx.bindAnswer();
       Array.prototype.forEach.call(el.view.querySelectorAll("[data-tsort]"), function (b) {
         b.onclick = function () {
           state.tsort = b.getAttribute("data-tsort");
