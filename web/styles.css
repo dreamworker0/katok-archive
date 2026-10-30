@@ -1186,6 +1186,13 @@ img.img-error {
 .ai-answer__label { margin: 0 0 6px; font-size: 12px; font-weight: 800; color: var(--accent); }
 .ai-answer__body { margin-bottom: 12px; color: var(--ink); line-height: 1.75; word-break: keep-all; }
 .ai-answer__body p { margin: 0 0 8px; }
+/* 첫 문단은 질문에 대한 바로 답 — 훑어 읽는 사람이 여기서 멈춰도 되게 */
+.ai-answer__body > p:first-child { font-size: 1.04em; font-weight: 700; }
+.ai-answer__body .ai-answer__sub { margin: 14px 0 2px; font-size: 13px; font-weight: 800;
+  color: var(--accent); }
+.ai-answer__body strong { font-weight: 800; color: var(--ink); }
+.ai-answer__body ul { margin: 0 0 8px; padding-left: 1.2em; }
+.ai-answer__body li { margin: 0 0 4px; }
 .ai-answer__cites { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .ai-answer__cite { min-height: 34px; padding: 6px 12px; border: 1px solid var(--line-strong);
   border-radius: 10px; color: var(--ink); background: var(--surface-2); font: inherit;

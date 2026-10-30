@@ -111,3 +111,20 @@ test("smartSearch: 이름은 찾을 말이 아니라 사람 거르기로 쓴다"
   assert.deepEqual(r.terms, ["파이어베이스"]);
   assert.deepEqual(r.threads.map((t) => t.id), ["t-3"]);
 });
+
+test("answerHtml: 머리말·굵게·목록만 살리고 나머지는 글자로 남긴다", () => {
+  const esc = T.esc;
+  const h = K.answerHtml("핵심은 **rhwp** 예요.\n\n**주의할 점**\n둘이 있어요.\n- 첫째\n- 둘째", esc);
+  assert.equal(h, "<p>핵심은 <strong>rhwp</strong> 예요.</p>" +
+    '<p class="ai-answer__sub">주의할 점</p><p>둘이 있어요.</p><ul><li>첫째</li><li>둘째</li></ul>');
+  // '#' 제목으로 써도 머리말이 된다
+  assert.match(K.answerHtml("## 써 본 반응\n좋았다", esc), /^<p class="ai-answer__sub">써 본 반응<\/p>/);
+});
+
+test("answerHtml: AI 답에 태그가 섞여도 새 태그가 생기지 않는다", () => {
+  const h = K.answerHtml('**<img src=x onerror=alert(1)>** 와 [링크](javascript:x) 와 **짝 없는', T.esc);
+  assert.doesNotMatch(h, /<img|<a /);
+  assert.match(h, /<strong>&lt;img src=x onerror=alert\(1\)&gt;<\/strong>/);
+  assert.match(h, /\[링크\]\(javascript:x\)/);   // 링크는 글자 그대로
+  assert.doesNotMatch(h, /\*\*/);                  // 짝 없는 별표는 지운다
+});

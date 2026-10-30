@@ -313,9 +313,35 @@
    * (scripts/ask_worker.js). 웹은 asks/{내 이메일} 에 질문을 쓰고 그 문서를 듣는다.
    * 누르기 전에는 묻지 않는다 — 검색할 때마다 부르면 글자를 칠 때마다 요금제를 쓴다.
    *
-   * 답은 AI 가 쓴 글이라 글자로만 그린다(esc). 근거는 PC 가 후보 안에서만 고른
+   * 답은 AI 가 쓴 글이라 글자로 그린다(esc 뒤 머리말·굵게·목록만 — answerHtml). 근거는 PC 가 후보 안에서만 고른
    * 주제이고, 눌러서 직접 확인하게 한다. 로그인 세션이 없는 로컬 미리보기에는
    * 칸 자체가 없다. */
+  /** AI 답 → HTML. 먼저 글자를 모두 esc 하고, 그 위에서 정해 둔 세 가지만 살린다:
+   *  혼자 선 '**머리말**' 줄은 문단 머리말, 문장 속 '**말**' 은 굵게, '- ' 줄은 목록.
+   *  나머지 마크다운(#·표·링크)은 글자로 남는다 — 태그가 새로 생길 길은 이 셋뿐이다. */
+  function answerHtml(text, esc) {
+    function inline(s) {
+      return esc(s).replace(/\*\*([^*\n]{1,80}?)\*\*/g, "<strong>$1</strong>").replace(/\*\*/g, "");
+    }
+    return String(text || "").split(/\n\s*\n/).map(function (block) {
+      var out = [], para = [], list = [];
+      function flushPara() { if (para.length) out.push("<p>" + para.join("<br>") + "</p>"); para = []; }
+      function flushList() { if (list.length) out.push("<ul>" + list.join("") + "</ul>"); list = []; }
+      block.split("\n").forEach(function (raw) {
+        var line = raw.trim().replace(/^#{1,4}\s+(.+)$/, "**$1**");   // 제목으로 써도 머리말로
+        if (!line) return;
+        var head = /^\*\*([^*\n]{1,40})\*\*$/.exec(line);
+        var item = /^[-•]\s+(.+)$/.exec(line);
+        if (head) { flushPara(); flushList(); out.push('<p class="ai-answer__sub">' + esc(head[1]) + "</p>"); }
+        else if (item) { flushPara(); list.push("<li>" + inline(item[1]) + "</li>"); }
+        else { flushList(); para.push(inline(line)); }
+      });
+      flushPara(); flushList();
+      return out.join("");
+    }).join("");
+  }
+  api.answerHtml = answerHtml;
+
   var ASK_MAX = 200;           // firestore.rules askWrite 의 상한과 같다
   var STALE_MS = 12 * 60 * 1000;   // 하트비트(5분)를 두 번 놓치면 꺼진 것으로 본다
   var WAIT_HINT_MS = 45 * 1000;
@@ -330,11 +356,6 @@
     function watch() {
       if (unsub || !enabled()) return;
       unsub = reqs().watchAsk(function (d) { doc = d; paint(); });
-    }
-
-    function paragraphs(text) {
-      return String(text || "").split(/\n\s*\n/).map(function (p) {
-        return "<p>" + esc(p.trim()).replace(/\n/g, "<br>") + "</p>"; }).join("");
     }
 
     function askButton(label) {
@@ -363,7 +384,7 @@
       if (st === "done") {
         var cites = doc.cites || [];
         return '<p class="ai-answer__label">🤖 AI 답변</p>' +
-          '<div class="ai-answer__body">' + paragraphs(doc.answer) + "</div>" +
+          '<div class="ai-answer__body">' + answerHtml(doc.answer, esc) + "</div>" +
           (cites.length
             ? '<p class="ai-answer__label">근거 주제</p><div class="ai-answer__cites">' +
               cites.map(function (c) {
