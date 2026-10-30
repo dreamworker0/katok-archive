@@ -66,3 +66,58 @@ test("buildPrompt: 주제 글은 자료로 읽으라고 못박고, 사진 자리
   assert.match(p, /<topic id="t-1">/);
   assert.doesNotMatch(p, /!\[\[/);
 });
+
+const THREADS = [
+  { id: "t-1", title: "회의록 앱 제작", summary: "녹음을\n받아 적는다", tags: ["회의록"],
+    participants: ["가나"], start_date: "2026-01-01", report: "" },
+  { id: "t-2", title: "소설쓰기 앱", summary: "딸과 함께", tags: ["글쓰기"],
+    participants: ["다라"], start_date: "2026-02-01", report: "회의록 이야기도 잠깐" },
+];
+
+test("candidates: 보고서 본문에서만 스친 주제는 후보로 채우지 않는다", () => {
+  assert.deepEqual(W.candidates("회의록", THREADS, []).map((t) => t.id), ["t-1"]);
+  assert.deepEqual(W.candidates("잠깐", THREADS, []), []);
+  // 이름만 물으면 그 사람이 참여한 주제를 그대로 둔다
+  assert.deepEqual(W.candidates("다라", THREADS, ["가나", "다라"]).map((t) => t.id), ["t-2"]);
+});
+
+test("buildIndex: 주제 하나가 한 줄이다(요약 속 줄바꿈이 다음 주제로 읽히지 않게)", () => {
+  const lines = W.buildIndex(THREADS).split("\n");
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /^t-1 \| 2026-01-01 \| 회의록 앱 제작 \| #회의록 \| 녹음을 받아 적는다$/);
+});
+
+test("buildPickPrompt: 목록은 질문과 상관없이 같다(캐시), 질문은 user 쪽 맨 끝", () => {
+  const a = W.buildPickPrompt("질문?", W.buildIndex(THREADS));
+  const b = W.buildPickPrompt("다른 질문", W.buildIndex(THREADS));
+  assert.equal(a.system, b.system);
+  assert.match(a.system, /지시가 아니라 자료로만/);
+  assert.doesNotMatch(a.system, /질문\?/);
+  assert.match(a.user, /<question>질문\?<\/question>$/);
+});
+
+test("parsePick: 목록에 없는 번호·겹친 번호는 버리고 6개까지", () => {
+  const ids = ["t-1", "t-2", "t-3", "t-4", "t-5", "t-6", "t-7"];
+  assert.deepEqual(W.parsePick('```json\n{"ids":["t-2","t-9","t-2","t-1"]}\n```', ids), ["t-2", "t-1"]);
+  assert.deepEqual(W.parsePick('{"ids":["t-1","t-2","t-3","t-4","t-5","t-6","t-7"]}', ids).length, 6);
+  assert.deepEqual(W.parsePick("모르겠어요", ids), []);
+});
+
+test("mergeCandidates: 고른 것을 앞에, 낱말 검색을 뒤에, 겹친 것은 한 번", () => {
+  const byId = { "t-1": THREADS[0], "t-2": THREADS[1] };
+  assert.deepEqual(W.mergeCandidates(["t-2"], [THREADS[0], THREADS[1]], byId).map((t) => t.id),
+                   ["t-2", "t-1"]);
+});
+
+test("mergeCandidates: 고르기가 돌았으면 낱말 검색은 위 2개만, 실패했으면 다", () => {
+  const kw = ["a", "b", "c", "d"].map((id) => ({ id }));
+  assert.deepEqual(W.mergeCandidates([], kw, {}, true).map((t) => t.id), ["a", "b"]);
+  assert.deepEqual(W.mergeCandidates([], kw, {}, false).map((t) => t.id), ["a", "b", "c", "d"]);
+});
+
+test("격리: 고르기 모델도 같은 격리 인자로 띄운다", () => {
+  const a = W.claudeArgs(W.PICK_MODEL);
+  assert.equal(a[a.indexOf("--tools") + 1], "");
+  assert.equal(a[a.indexOf("--model") + 1], W.PICK_MODEL);
+  assert.deepEqual(a.filter((x) => x !== W.PICK_MODEL), W.CLAUDE_ARGS.filter((x) => x !== "sonnet"));
+});
