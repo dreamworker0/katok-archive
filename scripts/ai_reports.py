@@ -178,6 +178,82 @@ def save_skips(skips: dict) -> None:
                              sort_keys=True))
 
 
+# ── 실시간 검증이 '달라짐' 을 찾은 주제 — 밤에 먼저, 처음부터 다시 쓴다 ──
+#
+# 멤버가 물어보기 답에서 '🔎 지금 기준으로 다시 확인' 을 눌러 ⚠️ 달라짐이 나오면
+# scripts/ask_worker.js 가 그 답의 근거 주제를 이 목록에 올린다. 검증 글을 보고서에
+# 바로 붙이지 않고 이 걸음(찾기 → 열기 → 정리)으로 다시 쓰는 까닭은 ask_worker 의
+# REQUEUE_FILE 머리말. 목록에는 주제 번호·날짜·횟수만 있다.
+REQUEUE_FILE = ROOT / "output" / "ai-reports-requeue.json"
+# 하룻밤에 다시 쓸 편수. 새로 쓰는 DEFAULT_LIMIT 과 따로 센다 — 다시 쓰기가 밀려
+# 새 주제가 영영 안 써지면 안 된다. 많이 오른 것(여러 번 달라짐)부터.
+REQUEUE_LIMIT = 3
+# 이 날수 안에 쓴 보고서는 다시 쓰지 않고 목록에서 뺀다 — 그 사이 세상이 또 바뀌었을
+# 가능성보다, 같은 글을 이틀 연달아 돈 들여 다시 쓰는 일이 더 흔하다.
+REQUEUE_FRESH_DAYS = 3
+# 실패해도 목록에 남겨 다음 밤에 또 한다. 이만큼 실패하면 뺀다.
+REQUEUE_MAX_TRIES = 3
+
+
+def load_requeue() -> dict:
+    try:
+        d = json.loads(REQUEUE_FILE.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_requeue(done: dict) -> None:
+    """끝난 것만 빼고 실패 횟수만 고친다. 통째로 덮지 않는다 — 그 사이 물어보기
+    검증이 새 주제를 올렸을 수 있다(save_skips 와 같은 까닭)."""
+    cur = load_requeue()
+    for tid, what in done.items():
+        if what == "drop":
+            cur.pop(tid, None)
+        elif tid in cur:
+            cur[tid]["tries"] = cur[tid].get("tries", 0) + 1
+            if cur[tid]["tries"] >= REQUEUE_MAX_TRIES:
+                cur.pop(tid, None)
+    REQUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write(REQUEUE_FILE, json.dumps(cur, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def report_checked(tid: str) -> str:
+    """이미 쓴 검증 주석의 확인 날짜(프론트매터 checked). 없으면 ''."""
+    p = AI_REPORTS_DIR / ("%s.md" % tid)
+    try:
+        m = re.search(r"^checked:\s*(\S+)", p.read_text(encoding="utf-8"), re.M)
+        return m.group(1) if m else ""
+    except Exception:
+        return ""
+
+
+def pick_requeued(threads: list[dict], today: str, limit: int = REQUEUE_LIMIT
+                  ) -> tuple[list[dict], dict]:
+    """다시 쓸 주제와, 쓰지 않고 목록에서 뺄 것(drop)을 고른다."""
+    from datetime import date
+    queue = load_requeue()
+    by_id = {t["id"]: t for t in threads}
+    drop: dict = {}
+    ranked = sorted(queue.items(), key=lambda kv: (-kv[1].get("count", 0), kv[1].get("since", "")))
+    out = []
+    for tid, _ in ranked:
+        if tid not in by_id:                     # 합쳐지거나 숨겨진 주제
+            drop[tid] = "drop"
+            continue
+        checked = report_checked(tid)
+        try:
+            age = (date.fromisoformat(today) - date.fromisoformat(checked)).days if checked else 999
+        except ValueError:
+            age = 999
+        if age < REQUEUE_FRESH_DAYS:
+            drop[tid] = "drop"
+            continue
+        if len(out) < limit:
+            out.append(by_id[tid])
+    return out, drop
+
+
 def pick_targets(threads: list[dict], limit: int,
                  ids: list[str] | None = None) -> list[dict]:
     """아직 검증 주석이 없는 주제를 고른다.
@@ -806,11 +882,21 @@ def main() -> None:
     reports = load_reports()
     ids = [x.strip() for x in args.ids.split(",") if x.strip()]
     targets = pick_targets(threads, args.limit, ids or None)
+    # 손으로 --ids 를 준 때는 그것만 한다. 밤에는 실시간 검증이 올린 것을 먼저.
+    requeued, requeue_done = ([], {}) if ids else pick_requeued(threads, today)
+    if requeued:
+        print("[AI보고서] 실시간 검증에서 '달라짐'이 나온 %d편을 먼저 다시 씁니다: %s"
+              % (len(requeued), ", ".join(t["id"] for t in requeued)))
+        again = {t["id"] for t in requeued}
+        targets = requeued + [t for t in targets if t["id"] not in again]
     if not targets:
+        if requeue_done and not args.dry_run:
+            save_requeue(requeue_done)
         print("[AI보고서] 새로 쓸 주제가 없습니다.")
         return
 
     print("[AI보고서] %d편을 씁니다." % len(targets))
+    requeued_ids = {t["id"] for t in requeued}
     skips = load_skips()
     counts = {"written": 0, "skipped": 0, "failed": 0}
     for t in targets:
@@ -826,11 +912,17 @@ def main() -> None:
             print("  %s 쓰다 실패: %s" % (t["id"], e))
             res = "failed"
         counts[res] += 1
-        if res == "skipped" and not args.dry_run:
+        if t["id"] in requeued_ids:
+            # 다시 쓴 것·쓸 게 없다고 본 것은 목록에서 뺀다. 실패는 남겨 다음 밤에 또.
+            # '쓸 게 없음' 은 원래 있던 주석을 지우지 않는다(run_one 은 그때 쓰지 않는다).
+            requeue_done[t["id"]] = "drop" if res in ("written", "skipped") else "retry"
+        elif res == "skipped" and not args.dry_run:
             skips[t["id"]] = {"why": "검증할 사실 없음", "when": today}
 
     if not args.dry_run:
         save_skips(skips)
+        if requeue_done:
+            save_requeue(requeue_done)
     print("[AI보고서] 쓴 것 %d · 건너뛴 것 %d · 실패 %d"
           % (counts["written"], counts["skipped"], counts["failed"]))
 

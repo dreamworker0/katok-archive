@@ -213,3 +213,25 @@ test("takeQuota: 한도를 끄면(지금 기본) 질문도 막지 않고 세기�
   const t0 = Date.parse("2026-10-30T13:00:00");
   for (let i = 0; i < 25; i++) assert.equal(W.takeQuota("q@x", t0 + i * 1000), null);
 });
+
+test("hasChanges: '⚠️ 달라짐' 머리말 아래 항목이 있을 때만", () => {
+  assert.equal(W.hasChanges("요약\n\n**✅ 확인됨**\n- 그대로 (출처 1)"), false);
+  assert.equal(W.hasChanges("요약\n\n**⚠️ 달라짐**\n- 1년 지나면 지워져요 (출처 1)\n\n**❓ 확인 못함**\n- x"), true);
+  assert.equal(W.hasChanges("**⚠️ 달라짐**\n\n"), false);
+});
+
+test("requeueTopics: 주제 번호·날짜·횟수만 덧붙인다", () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "rq-")), "rq.json");
+  process.env.KATOK_AI_REQUEUE_FILE = f;
+  delete require.cache[require.resolve("../scripts/ask_worker.js")];
+  const W2 = require("../scripts/ask_worker.js");
+  assert.equal(W2.requeueTopics(["t-1", "t-2"], "2026-10-30"), 2);
+  assert.equal(W2.requeueTopics(["t-2", "t-3"], "2026-10-31"), 1);
+  const q = JSON.parse(fs.readFileSync(f, "utf8"));
+  assert.deepEqual(Object.keys(q).sort(), ["t-1", "t-2", "t-3"]);
+  assert.equal(q["t-2"].count, 2);
+  assert.equal(q["t-2"].since, "2026-10-30");
+  assert.equal(q["t-2"].last, "2026-10-31");
+  assert.deepEqual(Object.keys(q["t-2"]).sort(), ["count", "last", "since", "why"]);
+  delete process.env.KATOK_AI_REQUEUE_FILE;
+});

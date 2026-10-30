@@ -731,6 +731,48 @@ async function handleVerify(db, snap, { say, dry }) {
   });
   say(`확인 ${wrote ? "완료" : "버림(그새 다시 누름)"} — ${email} 출처 ${r.opened || 0}/${r.total || 0}` +
       ` 인용 ${sources.length} ${sec}초 ${r.engine || ""}${r.skipped ? " (확인할 사실 없음)" : ""}`);
+  if (wrote && !r.skipped && hasChanges(r.body)) {
+    const ids = (ask.cites || []).map((c) => String(c.id || "")).filter((id) => /^t-\d+$/.test(id));
+    const n = requeueTopics(ids, today());
+    if (n) say(`AI 보고서 다시 쓸 목록에 ${ids.length}개 올림(새로 ${n}) — 밤 갱신이 먼저 다시 쓴다`);
+  }
+}
+
+/* ---------- 검증 → 밤의 AI 보고서 다시 쓰기 ----------
+ * 실시간 검증이 '⚠️ 달라짐' 을 찾으면, 그 답의 근거 주제들을 다시 쓸 목록에 올린다.
+ * 그날 밤 scripts/ai_reports.py 가 이 목록을 먼저, 원래 규칙 그대로(찾기 → 열기 → Opus
+ * 정리) 처음부터 다시 쓴다. 검증 글을 보고서에 바로 붙이지 않는 까닭: 답은 주제 여럿을
+ * 섞은 글이라 판정이 어느 주제 것인지 갈리지 않고, 판정이 실행마다 흔들리며, 질문한
+ * 사람이 짐작될 수 있다(2026-10-30 사용자와 정함). 목록에는 주제 번호와 날짜·횟수만
+ * 적는다 — 질문·답·이메일은 적지 않는다. */
+const REQUEUE_FILE = process.env.KATOK_AI_REQUEUE_FILE ||
+  path.join(ROOT, "output", "ai-reports-requeue.json");
+
+/** 검증 글에 '⚠️ 달라짐' 머리말과 그 아래 항목이 하나라도 있는가. */
+function hasChanges(body) {
+  const m = /\*\*⚠️ 달라짐\*\*\s*\n((?:\s*-\s.+\n?)+)/.exec(String(body || ""));
+  return !!m;
+}
+
+/** 목록에 덧붙인다(통째로 덮지 않는다 — 밤 갱신이 같은 파일을 비우는 중일 수 있다).
+ *  새로 오른 주제 수를 돌려준다. */
+function requeueTopics(ids, day) {
+  if (!ids.length) return 0;
+  let cur = {};
+  try { cur = JSON.parse(fs.readFileSync(REQUEUE_FILE, "utf8")) || {}; } catch (e) { cur = {}; }
+  let fresh = 0;
+  ids.forEach((id) => {
+    if (!cur[id]) { cur[id] = { since: day, count: 0, why: "실시간 검증에서 달라짐" }; fresh += 1; }
+    cur[id].count += 1;
+    cur[id].last = day;
+  });
+  try {
+    fs.mkdirSync(path.dirname(REQUEUE_FILE), { recursive: true });
+    const tmp = REQUEUE_FILE + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(cur, null, 2), "utf8");
+    fs.renameSync(tmp, REQUEUE_FILE);
+  } catch (e) { return 0; }
+  return fresh;
 }
 
 /* ---------- 듣기 ---------- */
@@ -808,7 +850,8 @@ function start(db, { say, dry = false, once = false, onIdle } = {}) {
 
 module.exports = { start, candidates, mergeCandidates, buildIndex, buildPickPrompt, parsePick,
                    buildPrompt, parseAnswer, labelAnchors, seenMaterials, keepMaterials,
-                   takeQuota, takeVerifyQuota, parseStage, runVerifyForTest: runVerify, childEnv, claudeArgs, callClaude, payload,
+                   takeQuota, takeVerifyQuota, parseStage, runVerifyForTest: runVerify,
+                   hasChanges, requeueTopics, childEnv, claudeArgs, callClaude, payload,
                    CLAUDE_ARGS, PICK_MODEL, ASK_PER_DAY, VERIFY_PER_DAY };
 
 if (require.main === module) {
