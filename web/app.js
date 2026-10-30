@@ -165,7 +165,7 @@
   function renderTimeline() { return TIMELINE.renderTimeline(); }
   function threadMatches(t) { return TIMELINE.threadMatches(t); }
   function pickThreads() { return TIMELINE.pickThreads.apply(null, arguments); }
-  function jumpToTimeline(id) { return TIMELINE.jumpToTimeline(id); }
+  function jumpToTimeline(id, opts) { return TIMELINE.jumpToTimeline(id, opts); }
   /* A.lazy 는 '아직 안 왔다' 는 표시다(boot.js assembleArchive). 도착하면 내린다 —
    * 표시가 사실과 어긋나 있으면 나중에 그것을 읽는 코드가 조용히 틀린다. 지금은
    * init 이 한 번 읽어 state.digestsPending 을 세우는 자리뿐이다. */
@@ -257,6 +257,8 @@
   var ANSWER = window.ArchiveAsk.ArchiveAnswer({
     esc: esc, state: state, jumpToTimeline: jumpToTimeline,
     fillMedia: function (box) { TIMELINE.fillAnswerAnchors(box); },
+    // 근거 주제에 AI 검증 주석이 붙어 있으면 확인한 날(없으면 null)
+    checkedOf: function (id) { var t = THREAD_BY_ID[id]; return t && t.ai_report ? (t.ai_checked || "") : null; },
   });
   /** 도움말 화면의 한 안내로 간다(검색 결과 위 쪽지에서). */
   function openHelp(id) {

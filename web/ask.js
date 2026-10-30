@@ -327,7 +327,7 @@
       return esc(s).replace(/\*\*([^*\n]{1,80}?)\*\*/g, "<strong>$1</strong>").replace(/\*\*/g, "")
         .replace(/`([^`\n]{1,60})`/g, "<code>$1</code>");   // 명령어(`claude -p`)
     }
-    return String(text || "").split(/\n\s*\n/).map(function (block) {
+    var html = String(text || "").split(/\n\s*\n/).map(function (block) {
       var out = [], para = [], list = [];
       function flushPara() { if (para.length) out.push("<p>" + para.join("<br>") + "</p>"); para = []; }
       function flushList() { if (list.length) out.push("<ul>" + list.join("") + "</ul>"); list = []; }
@@ -349,6 +349,28 @@
       flushPara(); flushList();
       return out.join("");
     }).join("");
+    return wrapCheck(html);
+  }
+
+  /* '확인할 점' 문단은 사람들의 대화가 아니라 검증 주석과 맞춰 본 결과다. 본문과
+   * 한 흐름으로 읽히면 누구의 말인지 흐려지므로, 타임라인의 AI 검증 칸(.tc-ai)과 같은
+   * 빛깔의 상자로 떼어 놓는다. 그 머리말부터 다음 머리말(없으면 끝)까지가 상자다. */
+  var CHECK_HEAD = '<p class="ai-answer__sub">확인할 점</p>';
+  /** '2026-08-27' → '8/27'. 근거 단추 안에 들어가니 짧게. */
+  function shortDate(d) {
+    var m = /^\d{4}-(\d{2})-(\d{2})/.exec(String(d || ""));
+    return m ? (+m[1]) + "/" + (+m[2]) : String(d || "");
+  }
+  function wrapCheck(html) {
+    var k = html.indexOf(CHECK_HEAD);
+    if (k === -1) return html;
+    var rest = html.slice(k + CHECK_HEAD.length);
+    var nx = rest.indexOf('<p class="ai-answer__sub">');
+    return html.slice(0, k) +
+      '<div class="ai-answer__check"><p class="ai-answer__check-head">' +
+      '<span class="tc-ai-badge">🔎 확인할 점</span>' +
+      '<span class="ai-answer__check-note">대화를 검증 주석과 맞춰 본 것</span></p>' +
+      (nx === -1 ? rest : rest.slice(0, nx)) + "</div>" + (nx === -1 ? "" : rest.slice(nx));
   }
   api.answerHtml = answerHtml;
 
@@ -393,14 +415,24 @@
       }
       if (st === "done") {
         var cites = doc.cites || [];
+        // 검증 주석이 있는 근거에는 확인한 날을 단다 — 누르면 그 주석이 펼쳐진 채로 간다.
+        var checkedOf = ctx.checkedOf || function () { return null; };
+        var anyChecked = false;
         return '<p class="ai-answer__label">🤖 AI 답변</p>' +
           '<div class="ai-answer__body">' + answerHtml(doc.answer, esc) + "</div>" +
           (cites.length
             ? '<p class="ai-answer__label">근거 주제</p><div class="ai-answer__cites">' +
               cites.map(function (c) {
+                var chk = checkedOf(c.id);
+                if (chk) anyChecked = true;
                 return '<button class="ai-answer__cite" type="button" data-ai-jump="' +
-                  esc(c.id) + '">' + esc(c.title) + ' <span>' + esc(c.date || "") +
-                  "</span></button>"; }).join("") + "</div>"
+                  esc(c.id) + '"' + (chk ? ' data-ai-open="1"' : "") + ">" + esc(c.title) +
+                  ' <span>' + esc(c.date || "") + "</span>" +
+                  (chk ? '<em class="ai-answer__cite-check" title="' + esc(chk) +
+                    ' 에 웹 출처를 열어 확인한 AI 검증 보고서가 있어요">🔎 ' +
+                    esc(shortDate(chk)) + " 검증</em>" : "") +
+                  "</button>"; }).join("") + "</div>" +
+              (anyChecked ? '<p class="ai-answer__note">🔎 표시가 있는 주제는 누르면 AI 검증 보고서가 함께 펼쳐져요.</p>' : "")
             : "") +
           '<p class="ai-answer__note">AI가 기록을 읽고 쓴 답이에요. 틀릴 수 있으니 근거 주제에서 확인해 주세요.</p>';
       }
@@ -447,7 +479,10 @@
         waitTimer = setTimeout(checkPc, WAIT_HINT_MS);
       };
       Array.prototype.forEach.call(box.querySelectorAll("[data-ai-jump]"), function (c) {
-        c.onclick = function () { ctx.jumpToTimeline("t-" + c.getAttribute("data-ai-jump")); };
+        c.onclick = function () {
+          ctx.jumpToTimeline("t-" + c.getAttribute("data-ai-jump"),
+                             { ai: c.hasAttribute("data-ai-open") });
+        };
       });
     }
 

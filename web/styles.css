@@ -1201,6 +1201,19 @@ img.img-error {
   font-size: 13px; font-weight: 700; text-align: left; cursor: pointer; }
 .ai-answer__cite span { margin-left: 4px; font-weight: 400; color: var(--ink-faint); }
 .ai-answer__cite:hover { border-color: var(--accent); }
+/* 근거 단추 속 '🔎 8/27 검증' — 타임라인 AI 검증 칸(.tc-ai)과 같은 세이지 빛 */
+.ai-answer__cite .ai-answer__cite-check { margin-left: 6px; padding: 1px 7px; border-radius: 999px;
+  font-style: normal; font-size: 11.5px; font-weight: 800; white-space: nowrap;
+  color: color-mix(in srgb, var(--sage) 60%, var(--ink));
+  background: color-mix(in srgb, var(--sage) 18%, transparent); }
+/* '확인할 점' 상자 — 사람들의 대화가 아니라 검증 주석과 맞춰 본 결과라 본문과 떼어 둔다 */
+.ai-answer__check { margin: 14px 0 6px; padding: 12px 14px 4px;
+  border: 1px solid var(--line); border-left: 4px solid var(--sage); border-radius: 10px;
+  background: color-mix(in srgb, var(--sage) 7%, var(--surface)); }
+.ai-answer__body .ai-answer__check-head { display: flex; flex-wrap: wrap; align-items: center;
+  gap: 6px 10px; margin: 0 0 8px; font-weight: 400; font-size: 1em; }
+.ai-answer__check-note { font-size: 12px; color: var(--ink-faint); }
+.ai-answer__check ul { margin-bottom: 8px; }
 .ai-answer__wait { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--ink-soft); }
 .ai-answer__dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent);
   animation: ai-pulse 1.2s ease-in-out infinite; flex: none; }

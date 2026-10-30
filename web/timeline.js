@@ -318,13 +318,13 @@
     /* 기계가 쓴 검증 주석. 사람 보고서 아래에 **테두리를 두른 채로** 붙인다.
      *
      * 섞어 쓰지 않는 것이 요점이다. 이 방의 말은 사람이 한 말이고, 여기 적힌 것은
-     * 그 말을 기계 둘이 맞춰 본 결과다. 둘을 한 흐름으로 읽히게 두면 누가 한
+     * 그 말을 기계가 웹 출처를 열어 맞춰 본 결과다. 둘을 한 흐름으로 읽히게 두면 누가 한
      * 말인지 알 수 없어진다.
      */
     function aiToggleButton(aiOpen) {
       return '<button class="tc-ai-toggle" type="button" aria-expanded="' +
         (aiOpen ? "true" : "false") + '" ' +
-        'title="이 대화를 두 AI 가 따로 검증한 결과입니다">' +
+        'title="이 대화의 사실을 웹 출처를 열어 확인한 결과입니다">' +
         aiToggleIcon() + '<span class="tc-ai-toggle-label">' +
         (aiOpen ? "AI 보고서 접기" : "AI 보고서") + "</span></button>";
     }
@@ -383,9 +383,12 @@
         "</div>" +
         '<div class="tc-ai-body md">' +
         hl(renderMarkdown(t.ai_report)) + "</div>" +
-        '<p class="tc-ai-foot">사람이 쓴 위 보고서를 두 AI 가 따로 검토해 ' +
-        '<strong>합의한 것만</strong> 적었습니다. 기계의 말이니 그대로 인용하기 전에 ' +
-        '원 출처를 한 번 확인해 주세요.</p></section>';
+        // 기준은 '두 AI 의 합의' 가 아니라 '원 출처를 실제로 열어 봤는가' 다(2026-08-27
+        // 바꿈, scripts/ai_reports.py 머리말). 두 모델이 나란히 틀린 것이 합의로 통과된 적이 있다.
+        '<p class="tc-ai-foot">Gemini 가 찾은 출처를 이 PC 가 <strong>실제로 열어 보고, ' +
+        '열린 것만</strong> 단정해 적었습니다. 열리지 않은 것은 \'확인하지 못한 것\' 에 따로 ' +
+        '둡니다. 확인한 날 기준인 기계의 글이니, 그대로 인용하기 전에 근거를 한 번 열어 ' +
+        '봐 주세요.</p></section>';
     }
 
     /* AI 보고서도 누를 때 비로소 만든다. 사람 보고서와 같은 이유다 — 목록에
@@ -801,7 +804,8 @@
     }
 
     /** 스레드 카드로 이동. 원문이 없으므로 메시지가 아니라 주제 단위로 간다. */
-    function jumpToTimeline(anchor) {
+    /** opts.ai — 그 카드의 AI 검증 보고서를 펼친 채로 간다(물어보기 답의 🔎 근거에서). */
+    function jumpToTimeline(anchor, opts) {
       // 필터가 남아 있으면 목적지가 걸러져 아무 데도 못 간다. 전부 푼다.
       state.q = ""; state.nick = ""; state.pick = null;
       el.search.value = ""; el.filter.value = "";
@@ -809,6 +813,10 @@
       requestAnimationFrame(function () {
         var t = ensureCard(anchor);
         if (!t) return;
+        if (opts && opts.ai) {
+          var ai = t.querySelector(".tc-ai-toggle");
+          if (ai && ai.getAttribute("aria-expanded") !== "true") ai.click();
+        }
         t.scrollIntoView({ behavior: "smooth", block: "center" });
         /* 화면 밖 카드의 높이는 어림값이다(styles.css 의 content-visibility). 부드럽게
          * 굴러가는 동안 실제 높이가 드러나 목적지가 밀리므로, 멈춘 뒤 한 번 더 맞춘다.

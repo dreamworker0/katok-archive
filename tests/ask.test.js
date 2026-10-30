@@ -139,3 +139,15 @@ test("answerHtml: 혼자 선 자리표 줄은 빈 자리가 되고, 문장 속 �
   assert.match(h, /<div class="md-link-anchor" data-link-anchor="msg-000006"><\/div>/);
   assert.equal((h.match(/md-anchor/g) || []).length, 1);
 });
+
+test("answerHtml: '확인할 점' 머리말부터 끝까지를 검증 상자로 떼어 놓는다", () => {
+  const h = K.answerHtml("바로 답.\n\n**확인할 점**\n\n- 하나\n- 둘", T.esc);
+  assert.match(h, /^<p>바로 답\.<\/p><div class="ai-answer__check">/);
+  assert.match(h, /🔎 확인할 점/);
+  assert.match(h, /<ul><li>하나<\/li><li>둘<\/li><\/ul><\/div>$/);
+  // 뒤에 다른 머리말이 오면 상자는 거기서 닫힌다
+  const h2 = K.answerHtml("**확인할 점**\n- 하나\n\n**덧붙임**\n끝", T.esc);
+  assert.match(h2, /<\/ul><\/div><p class="ai-answer__sub">덧붙임<\/p>/);
+  // 없으면 상자도 없다
+  assert.doesNotMatch(K.answerHtml("**처음 소개**\n본문", T.esc), /ai-answer__check/);
+});
