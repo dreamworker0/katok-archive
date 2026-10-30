@@ -395,6 +395,27 @@ const CASES = [
   testCase("멤버는 질문 목록을 훑지 못한다", "DENY", read("asks", MEMBER, "list"), IN),
   testCase("질문 문서는 지우지 못한다", "DENY", del(`asks/${MEMBER}`, MEMBER), IN),
 
+  // ── 실시간 검증: 멤버는 '확인해 달라' 표시만, 확인할 글은 PC 가 직접 읽는다 ──
+  testCase("멤버가 내 답 확인을 부탁한다", "ALLOW",
+    write(`verifies/${MEMBER}`, { state: "queued", askedAt: NOW }, MEMBER, "create"), IN),
+  testCase("다시 부탁해 지난 확인을 덮는다", "ALLOW",
+    write(`verifies/${MEMBER}`, { state: "queued", askedAt: NOW }, MEMBER), IN),
+  testCase("남의 이름으로 확인을 부탁하지 못한다", "DENY",
+    write(`verifies/${OTHER}`, { state: "queued", askedAt: NOW }, MEMBER, "create"), IN),
+  testCase("명부에 없는 사람은 확인을 부탁하지 못한다", "DENY",
+    write(`verifies/${MEMBER}`, { state: "queued", askedAt: NOW }, MEMBER, "create"), OUT),
+  // 확인할 글을 멤버가 실어 보내면 아무 글이나 웹 검색 모델로 내보낼 수 있다.
+  testCase("확인할 글을 멤버가 실어 보내지 못한다", "DENY",
+    write(`verifies/${MEMBER}`, { state: "queued", askedAt: NOW, answer: "아무 글" }, MEMBER), IN),
+  testCase("멤버가 확인 결과를 써 넣지 못한다", "DENY",
+    write(`verifies/${MEMBER}`, { state: "done", askedAt: NOW }, MEMBER), IN),
+  testCase("확인 부탁 시각을 위조하면 막는다", "DENY",
+    write(`verifies/${MEMBER}`, { state: "queued", askedAt: "2020-01-01T00:00:00Z" }, MEMBER), IN),
+  testCase("본인 확인 결과는 읽는다", "ALLOW", read(`verifies/${MEMBER}`, MEMBER), IN),
+  testCase("남의 확인 결과는 못 읽는다", "DENY", read(`verifies/${OTHER}`, MEMBER), IN),
+  testCase("멤버는 확인 목록을 훑지 못한다", "DENY", read("verifies", MEMBER, "list"), IN),
+  testCase("확인 문서는 지우지 못한다", "DENY", del(`verifies/${MEMBER}`, MEMBER), IN),
+
   // ── 공개 상태(PC 하트비트): 멤버는 읽고, 아무도 쓰지 못한다 ──
   testCase("멤버는 PC 상태를 읽는다", "ALLOW", read("status/ask", MEMBER), IN),
   testCase("명부에 없으면 PC 상태를 못 읽는다", "DENY", read("status/ask", OUTSIDER), OUT),

@@ -175,3 +175,21 @@ test("buildPrompt: 검증 주석을 날짜와 함께 넣되 근거 주소 목록
   assert.match(p, /확인할 점/);
   assert.match(p, /오늘은 \d{4}-\d{2}-\d{2} 입니다/);
 });
+
+test("parseStage: 진행 줄만 골라 읽는다", () => {
+  assert.deepEqual(W.parseStage("@@stage search"), { stage: "search" });
+  assert.deepEqual(W.parseStage("@@stage open 3/5\r"), { stage: "open", opened: 3, total: 5 });
+  assert.deepEqual(W.parseStage("@@stage write"), { stage: "write" });
+  assert.equal(W.parseStage("환산 $0.02"), null);
+  assert.equal(W.parseStage("@@stage rm -rf"), null);
+});
+
+test("takeVerifyQuota: 1분 간격·하루 3번, 질문 한도와 따로 센다", () => {
+  const t0 = Date.parse("2026-10-30T11:00:00");
+  assert.equal(W.takeVerifyQuota("v@x", t0), null);
+  assert.match(W.takeVerifyQuota("v@x", t0 + 10 * 1000), /1분 뒤/);
+  for (let i = 1; i < W.VERIFY_PER_DAY; i++) assert.equal(W.takeVerifyQuota("v@x", t0 + i * 120000), null);
+  assert.match(W.takeVerifyQuota("v@x", t0 + 99 * 120000), /하루 3번/);
+  // 질문 한도는 그대로다
+  assert.equal(W.takeQuota("v@x", t0 + 999 * 120000), null);
+});

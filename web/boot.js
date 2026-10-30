@@ -449,6 +449,7 @@
     var prefs = db.collection("preferences").doc(email);
     var dels = db.collection("deletionRequests").doc(email);
     var asks = db.collection("asks").doc(email);
+    var verifies = db.collection("verifies").doc(email);
     var stamp = function () { return firebase.firestore.FieldValue.serverTimestamp(); };
 
     return {
@@ -506,6 +507,15 @@
         return db.collection("status").doc("ask").get().then(function (d) {
           return d.exists ? (d.data().seenAt || null) : null;
         });
+      },
+      /* '🔎 지금 기준으로 다시 확인'. '확인해 달라' 는 표시만 쓴다 — 확인할 답은 PC 가
+       * asks/{내 이메일} 에서 직접 읽는다(firestore.rules verifies). */
+      verify: function () {
+        return verifies.set({ state: "queued", askedAt: stamp() });
+      },
+      watchVerify: function (cb) {
+        return verifies.onSnapshot(function (d) { cb(d.exists ? d.data() : null); },
+                                   function () { cb(null); });
       },
     };
   }

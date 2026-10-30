@@ -151,3 +151,14 @@ test("answerHtml: '확인할 점' 머리말부터 끝까지를 검증 상자로 
   // 없으면 상자도 없다
   assert.doesNotMatch(K.answerHtml("**처음 소개**\n본문", T.esc), /ai-answer__check/);
 });
+
+test("verifyResultHtml: 출처는 http(s) 주소만 링크로, 글 속 태그는 글자로", () => {
+  const h = K.verifyResultHtml({ body: "대체로 맞아요 <b>x</b>\n\n**✅ 확인됨**\n- 그대로예요 (출처 1)",
+    sources: [{ n: 1, url: "https://a.example/page" }, { n: 2, url: "javascript:alert(1)" }],
+    opened: 1, total: 3, finishedAt: "2026-10-30T12:05:00Z" }, T.esc);
+  assert.match(h, /<a href="https:\/\/a\.example\/page" target="_blank" rel="noopener noreferrer">/);
+  assert.doesNotMatch(h, /javascript:/);
+  assert.match(h, /&lt;b&gt;x&lt;\/b&gt;/);
+  assert.match(h, /찾은 출처 3곳 중 1곳 열림/);
+  assert.match(h, /실제로 열어 본 출처만/);
+});

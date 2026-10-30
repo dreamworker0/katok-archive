@@ -378,16 +378,117 @@
   var STALE_MS = 12 * 60 * 1000;   // 하트비트(5분)를 두 번 놓치면 꺼진 것으로 본다
   var WAIT_HINT_MS = 45 * 1000;
 
+  /* ---------- 🔎 지금 기준으로 다시 확인 ----------
+   * 답 아래 단추. 누르면 이 PC 가 웹에서 출처를 찾아 **직접 열어 보고**, 열린 것만
+   * 근거로 '확인됨 / 달라짐 / 확인 못함' 을 쓴다(scripts/verify_answer.py). 멤버는
+   * verifies/{이메일} 에 '확인해 달라' 는 표시만 쓴다 — 무엇을 확인할지는 PC 가 그 사람의
+   * 답을 직접 읽는다. 출처 링크는 PC 가 연 주소 목록(sources)에서만 단다. */
+  var VERIFY_STUCK_MS = 9 * 60 * 1000;   // PC 쪽 제한(7분)을 넘겨도 running 이면 멈춘 것
+
+  function millisOf(v) {
+    if (!v) return null;
+    if (typeof v.toMillis === "function") return v.toMillis();
+    if (typeof v === "number") return v;
+    var t = Date.parse(String(v));
+    return isNaN(t) ? null : t;
+  }
+
+  /** 출처 목록에 보일 짧은 이름 — 'example.com/글/주소…'. */
+  function sourceLabel(url) {
+    var s = String(url || "").replace(/^https?:\/\/(www\.)?/, "");
+    return s.length > 60 ? s.slice(0, 60) + "…" : s;
+  }
+
+  /** 확인 결과 상자. v 는 verifies 문서(PC 가 쓴 결과). */
+  function verifyResultHtml(v, esc) {
+    var when = v.finishedAt ? new Date(v.finishedAt) : null;
+    var stamp = when && !isNaN(when) ? (when.getMonth() + 1) + "/" + when.getDate() + " " +
+      ("0" + when.getHours()).slice(-2) + ":" + ("0" + when.getMinutes()).slice(-2) : "";
+    var sources = (v.sources || []).filter(function (s) { return /^https?:\/\//.test(String(s.url || "")); });
+    return '<section class="ai-verify" aria-label="지금 기준 확인">' +
+      '<p class="ai-verify__head"><span class="tc-ai-badge">🔎 지금 기준 확인</span>' +
+      '<span class="ai-verify__meta">' + esc(stamp) +
+      (v.total ? " · 찾은 출처 " + esc(String(v.total)) + "곳 중 " + esc(String(v.opened || 0)) + "곳 열림" : "") +
+      "</span></p>" +
+      '<div class="ai-answer__body ai-verify__body">' + answerHtml(v.body, esc) + "</div>" +
+      (sources.length
+        ? '<ul class="ai-verify__sources">' + sources.map(function (s) {
+            return '<li><span>출처 ' + esc(String(s.n)) + '</span> <a href="' + esc(s.url) +
+              '" target="_blank" rel="noopener noreferrer">' + esc(sourceLabel(s.url)) + "</a></li>";
+          }).join("") + "</ul>"
+        : "") +
+      '<p class="ai-verify__foot">이 PC가 <strong>실제로 열어 본 출처만</strong> 근거로 썼어요. ' +
+      "기계의 글이니 중요한 내용은 출처를 열어 직접 확인해 주세요.</p></section>";
+  }
+  api.verifyResultHtml = verifyResultHtml;
+
   function ArchiveAnswer(ctx) {
     var esc = ctx.esc, state = ctx.state;
     var doc = null, unsub = null, pcAsleep = false, waitTimer = null;
+    var vdoc = null, vunsub = null;
 
     function reqs() { return state.session && state.session.requests; }
     function enabled() { var r = reqs(); return !!(r && r.ask && r.watchAsk); }
+    function canVerify() { var r = reqs(); return !!(r && r.verify && r.watchVerify); }
 
     function watch() {
-      if (unsub || !enabled()) return;
-      unsub = reqs().watchAsk(function (d) { doc = d; paint(); });
+      if (!enabled()) return;
+      if (!unsub) unsub = reqs().watchAsk(function (d) { doc = d; paint(); });
+      if (!vunsub && canVerify()) {
+        vunsub = reqs().watchVerify(function (d) {
+          // 누른 직후의 '부탁했어요' 를 빈 스냅샷이 덮지 않게 한다.
+          if (!d && vdoc && vdoc.local) return;
+          vdoc = d; paint();
+        });
+      }
+    }
+
+    function verifyButton(label) {
+      return '<button class="btn ghost" type="button" data-ai-verify>' + esc(label) + "</button>";
+    }
+
+    /** 지금 보이는 답(doc)에 딸린 확인인가. 새 질문을 하면 지난 확인은 감춘다. */
+    function verifyFor(askMs) {
+      var v = vdoc;
+      if (!v) return null;
+      if (v.local) return v;
+      if (v.forAskedAt != null) return v.forAskedAt === askMs ? v : null;
+      // PC 가 아직 받지 않은 부탁 — 이 답이 나온 뒤에 누른 것이면 이 답의 것이다.
+      var at = millisOf(v.askedAt);
+      return (v.state === "queued" && (at === null || askMs === null || at >= askMs)) ? v : null;
+    }
+
+    function verifyHtml() {
+      if (!canVerify()) return "";
+      var v = verifyFor(millisOf(doc.askedAt));
+      var st = v && v.state;
+      if (st === "queued" || st === "running") {
+        var started = millisOf(v.startedAt);
+        if (st === "running" && started && Date.now() - started > VERIFY_STUCK_MS) {
+          return '<div class="ai-verify-ask"><p class="ai-answer__note ai-answer__note--warn">확인이 멈춘 것 같아요.</p>' +
+            verifyButton("🔎 다시 확인하기") + "</div>";
+        }
+        var msg = st === "queued" ? "확인을 부탁했어요. PC가 받으면 시작해요…"
+          : v.stage === "open" ? "찾은 출처 " + (v.total || 0) + "곳을 직접 열어 보는 중이에요… (" + (v.opened || 0) + "곳 열림)"
+          : v.stage === "write" ? "열린 출처로 정리하는 중이에요…"
+          : "웹에서 출처를 찾는 중이에요…";
+        return '<div class="ai-verify-wait"><p class="ai-answer__wait"><span class="ai-answer__dot" aria-hidden="true"></span>' +
+          esc(msg) + '</p><p class="ai-answer__note">보통 2분쯤 걸려요. 화면을 떠났다 와도 결과는 남아요.</p></div>';
+      }
+      if (st === "done") {
+        if (v.skipped || !v.body) {
+          return '<p class="ai-answer__note">🔎 이 답에는 웹에서 확인할 공개 사실(요금·제도·제품 등)이 없었어요.</p>';
+        }
+        return verifyResultHtml(v, esc);
+      }
+      if (st === "failed" || st === "limited" || st === "expired") {
+        return '<div class="ai-verify-ask"><p class="ai-answer__note ai-answer__note--warn">' +
+          esc(v.message || "확인하지 못했어요.") + "</p>" +
+          (st === "limited" ? "" : verifyButton("🔎 다시 확인하기")) + "</div>";
+      }
+      return '<div class="ai-verify-ask">' + verifyButton("🔎 지금 기준으로 다시 확인") +
+        '<p class="ai-answer__note">대화는 몇 달 전 것일 수 있어요. 누르면 웹에서 출처를 찾아 이 PC가 ' +
+        "직접 열어 보고, 요금·행사·제품처럼 바뀌기 쉬운 내용을 지금 기준으로 정리해요. 2분쯤 · 하루 3번.</p></div>";
     }
 
     function askButton(label) {
@@ -434,7 +535,8 @@
                   "</button>"; }).join("") + "</div>" +
               (anyChecked ? '<p class="ai-answer__note">🔎 표시가 있는 주제는 누르면 AI 검증 보고서가 함께 펼쳐져요.</p>' : "")
             : "") +
-          '<p class="ai-answer__note">AI가 기록을 읽고 쓴 답이에요. 틀릴 수 있으니 근거 주제에서 확인해 주세요.</p>';
+          '<p class="ai-answer__note">AI가 기록을 읽고 쓴 답이에요. 틀릴 수 있으니 근거 주제에서 확인해 주세요.</p>' +
+          (cites.length ? verifyHtml() : "");
       }
       // failed · limited · expired — PC 가 적어 준 문장을 그대로 보인다.
       return '<p class="ai-answer__note ai-answer__note--warn">' +
@@ -477,6 +579,17 @@
         });
         clearTimeout(waitTimer);
         waitTimer = setTimeout(checkPc, WAIT_HINT_MS);
+      };
+      var vb = box.querySelector("[data-ai-verify]");
+      if (vb) vb.onclick = function () {
+        vb.disabled = true;
+        vdoc = { state: "queued", local: true };
+        paint();
+        reqs().verify().catch(function (e) {
+          vdoc = { state: "failed", local: true,
+                   message: "확인을 부탁하지 못했어요: " + (e && e.message ? e.message : e) };
+          paint();
+        });
       };
       Array.prototype.forEach.call(box.querySelectorAll("[data-ai-jump]"), function (c) {
         c.onclick = function () {

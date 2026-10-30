@@ -577,6 +577,126 @@ async function handle(db, snap, { say, dry }) {
       (cost ? ` 환산 $${cost.toFixed(4)}` : ""));
 }
 
+/* ---------- 실시간 검증 ('🔎 지금 기준으로 다시 확인') ----------
+ * 멤버가 verifies/{이메일} 에 '확인해 달라' 는 표시만 쓰면, 이 PC 가 그 사람의
+ * asks/{이메일} 에서 질문과 답을 직접 읽어 scripts/verify_answer.py 에 넘긴다(찾기 →
+ * 이 PC 가 열기 → 열린 것만 정리). 확인할 글을 멤버가 보내지 않으므로, 아카이브 답
+ * 아닌 글이 웹 검색 모델로 나갈 길이 없다. 한 번에 2분쯤(검색이 대부분)이라 한도가 좁다. */
+const VERIFY_PER_DAY = 3;
+const VERIFY_TOTAL_PER_DAY = 40;
+const VERIFY_GAP_MS = 60 * 1000;
+const VERIFY_TIMEOUT_MS = 7 * 60 * 1000;
+const PYTHON = process.env.KATOK_PYTHON || "python";
+
+function takeVerifyQuota(email, now) {
+  const u = loadUsage();
+  const v = u.verify || (u.verify = { total: 0, users: {} });
+  const me = v.users[email] || { count: 0, last: 0 };
+  if (now - me.last < VERIFY_GAP_MS) return "조금 전에 확인하셨어요. 1분 뒤에 다시 눌러 주세요.";
+  if (me.count >= VERIFY_PER_DAY) return `확인은 하루 ${VERIFY_PER_DAY}번까지예요. 내일 다시 눌러 주세요.`;
+  if (v.total >= VERIFY_TOTAL_PER_DAY) return "오늘 방 전체의 확인 한도를 다 썼어요. 내일 다시 눌러 주세요.";
+  v.users[email] = { count: me.count + 1, last: now };
+  v.total += 1;
+  saveUsage(u);
+  return null;
+}
+
+/** '@@stage open 3/5' → 화면에 보일 진행 상태. 모르는 줄은 null. */
+function parseStage(line) {
+  const m = /^@@stage (search|write|open (\d+)\/(\d+))\s*$/.exec(String(line).trim());
+  if (!m) return null;
+  if (m[2] !== undefined) return { stage: "open", opened: +m[2], total: +m[3] };
+  return { stage: m[1] };
+}
+
+/** verify_answer.py 를 돌린다. 진행 줄이 오면 onStage 를 부른다. */
+function runVerify(req, onStage) {
+  return new Promise((resolve) => {
+    const child = spawn(PYTHON, ["-m", "scripts.verify_answer"], {
+      cwd: ROOT, env: { ...childEnv(), PYTHONIOENCODING: "utf-8" }, shell: false,
+      windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
+    });
+    let out = "", errBuf = "", tail = "";
+    const timer = setTimeout(() => { child.kill(); resolve({ ok: false, error: "확인이 너무 오래 걸려 멈췄어요." }); },
+      VERIFY_TIMEOUT_MS);
+    child.stdout.on("data", (c) => { out += c.toString("utf8"); });
+    child.stderr.on("data", (c) => {
+      errBuf += c.toString("utf8");
+      const lines = errBuf.split("\n");
+      errBuf = lines.pop();
+      lines.forEach((l) => {
+        const s = parseStage(l);
+        if (s) onStage(s); else if (l.trim()) tail = (tail + "\n" + l).slice(-600);
+      });
+    });
+    child.on("error", (e) => { clearTimeout(timer); resolve({ ok: false, error: "확인을 시작하지 못했어요.", detail: e.message }); });
+    child.on("close", () => {
+      clearTimeout(timer);
+      try { resolve(JSON.parse(out)); }
+      catch (e) { resolve({ ok: false, error: "확인 결과를 읽지 못했어요.", detail: tail.trim() }); }
+    });
+    child.stdin.end(JSON.stringify(req), "utf8");
+  });
+}
+
+async function handleVerify(db, snap, { say, dry }) {
+  const ref = snap.ref;
+  const email = snap.id;
+  const askedAtMs = millisOf((snap.data() || {}).askedAt);
+  const finish = (fields) => writeIfSame(db, ref, askedAtMs,
+    { ...fields, finishedAt: new Date().toISOString() });
+
+  if (askedAtMs === null) return;
+  if (Date.now() - askedAtMs > MAX_AGE_MS) {
+    if (!dry) await finish({ state: "expired", message: "PC 가 꺼져 있던 동안 누른 확인이라 하지 않았어요. 다시 눌러 주세요." });
+    return;
+  }
+  if (dry) { say(`[dry-run] ${email} 의 답 확인 차례입니다.`); return; }
+  if (!(await claim(db, ref, askedAtMs))) return;
+
+  // 확인할 것은 멤버가 보낸 글이 아니라, 이 PC 가 그 사람에게 써 준 마지막 답이다.
+  const ask = (await db.collection("asks").doc(email).get()).data() || {};
+  if (ask.state !== "done" || !ask.answer || !(ask.cites || []).length) {
+    await finish({ state: "failed", message: "확인할 AI 답이 없어요. 먼저 AI에게 물어봐 주세요." });
+    return;
+  }
+  const forAskedAt = millisOf(ask.askedAt);
+  const limited = takeVerifyQuota(email, Date.now());
+  if (limited) {
+    say(`확인 한도 — ${email}`, "WARN");
+    await finish({ state: "limited", message: limited, forAskedAt });
+    return;
+  }
+
+  const t0 = Date.now();
+  let last = 0;
+  const r = await runVerify({ question: ask.question, answer: ask.answer, today: today() }, (s) => {
+    // 진행 표시는 몇 초에 한 번만 쓴다 — 단계가 바뀔 때마다 쓰면 쓰기 횟수만 늘어난다.
+    if (s.stage !== "open" && Date.now() - last < 1500) return;
+    last = Date.now();
+    writeIfSame(db, ref, askedAtMs, { ...s, forAskedAt }).catch(() => { /* 다음 단계에 다시 */ });
+  });
+  const sec = Math.round((Date.now() - t0) / 1000);
+  if (!r.ok) {
+    say(`확인 실패 — ${email}: ${r.error}${r.detail ? " / " + r.detail : ""}`, "ERROR");
+    await finish({ state: "failed", message: (r.error || "확인하지 못했어요.") + " 잠시 뒤 다시 눌러 주세요.", forAskedAt });
+    return;
+  }
+  // 출처는 이 PC 가 실제로 연 주소만 — 화면은 이 목록으로만 링크를 단다.
+  const sources = (r.sources || []).filter((s) => /^https?:\/\//.test(String(s.url || "")))
+    .map((s) => ({ n: +s.n, url: String(s.url).slice(0, 500) }));
+  const wrote = await finish({
+    state: "done",
+    body: r.skipped ? "" : String(r.body || "").slice(0, 3000),
+    skipped: !!r.skipped,
+    sources,
+    opened: r.opened || 0, total: r.total || 0, engine: r.engine || "",
+    forAskedAt,
+  });
+  say(`확인 ${wrote ? "완료" : "버림(그새 다시 누름)"} — ${email} 출처 ${r.opened || 0}/${r.total || 0}` +
+      ` 인용 ${sources.length} ${sec}초 ${r.engine || ""}${r.skipped ? " (확인할 사실 없음)" : ""}`);
+}
+
 /* ---------- 듣기 ---------- */
 
 /**
@@ -586,9 +706,7 @@ async function handle(db, snap, { say, dry }) {
  */
 function start(db, { say, dry = false, once = false, onIdle } = {}) {
   const BACKOFF_MS = [1000, 2000, 5000, 15000, 30000, 60000, 120000, 300000];
-  let attempt = 0, unsub = null, listening = false, stopped = false;
-  let chain = Promise.resolve();
-  const pending = new Set();
+  let listening = false, stopped = false;
   const statusRef = db.collection("status").doc("ask");
 
   // 하트비트 — 멤버 화면이 'PC 가 꺼져 있어요' 를 말할 근거. 듣는 동안에만 쓴다.
@@ -599,45 +717,63 @@ function start(db, { say, dry = false, once = false, onIdle } = {}) {
   };
   const timer = once ? null : setInterval(beat, HEARTBEAT_MS);
 
-  const subscribe = () => {
-    if (stopped) return;
-    unsub = db.collection("asks").where("state", "==", "queued").onSnapshot((qs) => {
-      if (!listening) { listening = true; attempt = 0; beat(); }
-      qs.docs.forEach((snap) => {
-        const key = snap.id + "@" + millisOf((snap.data() || {}).askedAt);
-        if (pending.has(key)) return;
-        pending.add(key);
-        chain = chain
-          .then(() => handle(db, snap, { say, dry }))
-          .catch((e) => say(`질문 처리 오류: ${e.message}`, "ERROR"))
-          .finally(() => {
-            pending.delete(key);
-            if (once && !pending.size && onIdle) onIdle();
-          });
+  /* 대기열 하나를 듣는다. 질문과 검증은 줄을 따로 선다 — 검증 한 건이 2~3분이라 같은
+   * 줄에 세우면 그동안 질문이 멈춘다. 그래도 각 줄 안에서는 하나씩이라 claude 가 한꺼번에
+   * 셋 넘게 뜨지 않는다. */
+  const idle = {};
+  const listen = (name, collection, handler, onFirst) => {
+    let attempt = 0, unsub = null, chain = Promise.resolve();
+    const pending = new Set();
+    idle[name] = false;
+    const settle = () => {
+      if (!once || pending.size) return;
+      idle[name] = true;
+      if (Object.values(idle).every(Boolean) && onIdle) onIdle();
+    };
+    const subscribe = () => {
+      if (stopped) return;
+      unsub = db.collection(collection).where("state", "==", "queued").onSnapshot((qs) => {
+        attempt = 0;
+        if (onFirst) onFirst();
+        qs.docs.forEach((snap) => {
+          const key = snap.id + "@" + millisOf((snap.data() || {}).askedAt);
+          if (pending.has(key)) return;
+          pending.add(key);
+          chain = chain
+            .then(() => handler(db, snap, { say, dry }))
+            .catch((e) => say(`${name} 처리 오류: ${e.message}`, "ERROR"))
+            .finally(() => { pending.delete(key); settle(); });
+        });
+        if (!qs.size) settle();
+      }, (e) => {
+        if (name === "질문") listening = false;
+        if (unsub) { try { unsub(); } catch (_) { /* 이미 끊겼다 */ } unsub = null; }
+        const wait = BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)];
+        attempt += 1;
+        say(`${name} 리스너 오류: ${e.message} — ${Math.round(wait / 1000)}초 뒤 다시 붙습니다.`, "WARN");
+        setTimeout(subscribe, wait);
       });
-      if (once && !qs.size && !pending.size && onIdle) onIdle();
-    }, (e) => {
-      listening = false;
-      if (unsub) { try { unsub(); } catch (_) { /* 이미 끊겼다 */ } unsub = null; }
-      const wait = BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)];
-      attempt += 1;
-      say(`질문 리스너 오류: ${e.message} — ${Math.round(wait / 1000)}초 뒤 다시 붙습니다.`, "WARN");
-      setTimeout(subscribe, wait);
-    });
+    };
+    subscribe();
+    return () => { if (unsub) unsub(); };
   };
-  subscribe();
+
+  const stops = [
+    listen("질문", "asks", handle, () => { if (!listening) { listening = true; beat(); } }),
+    listen("검증", "verifies", handleVerify),
+  ];
 
   return () => {
     stopped = true;
-    if (unsub) unsub();
+    stops.forEach((s) => s());
     if (timer) clearInterval(timer);
   };
 }
 
 module.exports = { start, candidates, mergeCandidates, buildIndex, buildPickPrompt, parsePick,
                    buildPrompt, parseAnswer, labelAnchors, seenMaterials, keepMaterials,
-                   takeQuota, childEnv, claudeArgs, callClaude, payload,
-                   CLAUDE_ARGS, PICK_MODEL, ASK_PER_DAY };
+                   takeQuota, takeVerifyQuota, parseStage, runVerifyForTest: runVerify, childEnv, claudeArgs, callClaude, payload,
+                   CLAUDE_ARGS, PICK_MODEL, ASK_PER_DAY, VERIFY_PER_DAY };
 
 if (require.main === module) {
   const admin = require("firebase-admin");

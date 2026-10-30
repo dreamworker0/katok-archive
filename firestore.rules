@@ -184,6 +184,22 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ── 실시간 검증: '🔎 지금 기준으로 다시 확인' 단추 ──
+    //
+    // 멤버는 '내 답을 확인해 달라' 는 표시만 쓴다 — 무엇을 확인할지(질문·답)는 PC 가
+    // asks/{이메일} 에서 직접 읽는다. 멤버가 확인할 글을 보내게 두면 아무 글이나 웹
+    // 검색 모델에 실어 보낼 수 있다. 결과는 PC(Admin SDK)만 쓴다.
+    match /verifies/{verifyEmail} {
+      allow get:  if signedIn() && (callerEmail() == verifyEmail || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isMember()
+        && callerEmail() == verifyEmail
+        && request.resource.data.keys().hasOnly(['state', 'askedAt'])
+        && request.resource.data.state == 'queued'
+        && request.resource.data.askedAt == request.time;
+      allow delete: if false;
+    }
+
     // ── 공개 상태: 멤버가 읽는 PC 하트비트 ──
     //
     // status/ask  AI 답변을 쓰는 PC 가 듣고 있는가(seenAt). settings 는 관리자만
