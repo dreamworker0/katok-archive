@@ -193,3 +193,11 @@ test("takeVerifyQuota: 1분 간격·하루 3번, 질문 한도와 따로 센다"
   // 질문 한도는 그대로다
   assert.equal(W.takeQuota("v@x", t0 + 999 * 120000), null);
 });
+
+test("parseAnswer: 답 속 따옴표를 안 고친 깨진 JSON 에서도 답과 근거를 건진다", () => {
+  const raw = '{"answer": "그는 "90일 제한"이라고 했어요.\n\n**확인할 점**\n- 바뀔 수 있어요.", "cites": ["t-489", "t-160", "t-999"]}';
+  const r = W.parseAnswer(raw, ["t-489", "t-160"]);
+  assert.deepEqual(r.cites, ["t-489", "t-160"]);
+  assert.match(r.answer, /^그는 "90일 제한"이라고 했어요\.\n\n\*\*확인할 점\*\*/);
+  assert.doesNotMatch(r.answer, /"answer"|"cites"/);
+});

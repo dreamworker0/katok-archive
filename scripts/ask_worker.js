@@ -435,12 +435,24 @@ function parseAnswer(text, allowedIds) {
   const a = s.indexOf("{"), b = s.lastIndexOf("}");
   let obj = null;
   if (a !== -1 && b > a) { try { obj = JSON.parse(s.slice(a, b + 1)); } catch (e) { obj = null; } }
-  // JSON 이 깨졌으면 글을 그대로 답으로 쓴다 — 근거는 없는 것으로.
+  if (!obj) obj = salvage(s);
+  // 그래도 못 읽으면 글을 그대로 답으로 쓴다 — 근거는 없는 것으로.
   const answer = String(obj && obj.answer ? obj.answer : s).trim().slice(0, ANSWER_CHARS);
   const cites = (obj && Array.isArray(obj.cites) ? obj.cites : [])
     .map(String).filter((id, i, arr) => allowedIds.includes(id) && arr.indexOf(id) === i)
     .slice(0, MAX_CITES);
   return { answer, cites };
+}
+
+/** 깨진 JSON 에서 답과 근거를 건진다. 답이 길어지고 인용("…")이 늘자 따옴표를 안 고친
+ *  채 내는 날이 생겼다 — 그러면 근거가 0개가 되고(검증 단추도 사라진다) 화면에
+ *  '{"answer": …' 가 그대로 나갔다(2026-10-30 실제 대기열 시험). 앞뒤 틀은 늘 같으니
+ *  틀을 기준으로 가운데를 잘라 낸다. */
+function salvage(s) {
+  const m = /"answer"\s*:\s*"([\s\S]*)"\s*,\s*"cites"\s*:\s*\[([^\]]*)\]/.exec(s);
+  if (!m) return null;
+  const answer = m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+  return { answer, cites: m[2].match(/t-\d+/g) || [] };
 }
 
 /* ---------- 남용 한도 ---------- */
