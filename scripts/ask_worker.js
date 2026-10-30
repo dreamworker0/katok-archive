@@ -64,6 +64,9 @@ const PICK_MODEL = "sonnet";
 const PICK_TIMEOUT_MS = 60 * 1000;
 const SUMMARY_CHARS = 200;
 const KEYWORD_EXTRA = 2;
+// 질문 한도도 2026-10-30 사용자 결정으로 껐다(검증 한도와 함께 — VERIFY_LIMITS 머리말).
+// 세는 것은 그대로. 켜면 1인 하루 20번·15초 간격·방 전체 300번.
+const ASK_LIMITS = false;
 const ASK_PER_DAY = 20;
 const ASK_TOTAL_PER_DAY = 300;
 const ASK_GAP_MS = 15 * 1000;
@@ -480,9 +483,15 @@ function saveUsage(u) {
 }
 
 /** 한도에 걸리면 그 이유(화면에 보일 문장), 아니면 null. 통과하면 센다. */
-function takeQuota(email, now) {
+function takeQuota(email, now, limits = ASK_LIMITS) {
   const u = loadUsage();
   const me = u.users[email] || { count: 0, last: 0 };
+  if (!limits) {
+    u.users[email] = { count: me.count + 1, last: now };
+    u.total += 1;
+    saveUsage(u);
+    return null;
+  }
   if (now - me.last < ASK_GAP_MS) return "조금 전에 물으셨어요. 몇 초 뒤에 다시 물어봐 주세요.";
   if (me.count >= ASK_PER_DAY) return `오늘은 ${ASK_PER_DAY}번까지 물을 수 있어요. 내일 다시 물어봐 주세요.`;
   if (u.total >= ASK_TOTAL_PER_DAY) return "오늘 방 전체의 질문 한도를 다 썼어요. 내일 다시 물어봐 주세요.";

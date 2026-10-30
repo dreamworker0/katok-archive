@@ -49,14 +49,14 @@ test("parseAnswer: JSON 이 깨지면 글을 답으로 쓰고 근거는 없다",
 
 test("takeQuota: 간격·하루 한도를 센다", () => {
   const t0 = Date.parse("2026-10-30T10:00:00");
-  assert.equal(W.takeQuota("a@x", t0), null);
-  assert.match(W.takeQuota("a@x", t0 + 1000), /몇 초 뒤/);
+  assert.equal(W.takeQuota("a@x", t0, true), null);
+  assert.match(W.takeQuota("a@x", t0 + 1000, true), /몇 초 뒤/);
   // 다른 사람은 따로 센다
-  assert.equal(W.takeQuota("b@x", t0 + 1000), null);
+  assert.equal(W.takeQuota("b@x", t0 + 1000, true), null);
   for (let i = 1; i < W.ASK_PER_DAY; i++) {
-    assert.equal(W.takeQuota("a@x", t0 + i * 60000), null);
+    assert.equal(W.takeQuota("a@x", t0 + i * 60000, true), null);
   }
-  assert.match(W.takeQuota("a@x", t0 + 999 * 60000), /번까지/);
+  assert.match(W.takeQuota("a@x", t0 + 999 * 60000, true), /번까지/);
 });
 
 test("buildPrompt: 주제 글은 자료로 읽으라고 못박고, 사진 자리표는 뺀다", () => {
@@ -190,8 +190,8 @@ test("takeVerifyQuota: 한도를 켜면 1분 간격·하루 3번, 질문 한도�
   assert.match(W.takeVerifyQuota("v@x", t0 + 10 * 1000, true), /1분 뒤/);
   for (let i = 1; i < W.VERIFY_PER_DAY; i++) assert.equal(W.takeVerifyQuota("v@x", t0 + i * 120000, true), null);
   assert.match(W.takeVerifyQuota("v@x", t0 + 99 * 120000, true), /하루 3번/);
-  // 질문 한도는 그대로다
-  assert.equal(W.takeQuota("v@x", t0 + 999 * 120000), null);
+  // 질문 한도와 따로 센다
+  assert.equal(W.takeQuota("v@x", t0 + 999 * 120000, true), null);
 });
 
 test("parseAnswer: 답 속 따옴표를 안 고친 깨진 JSON 에서도 답과 근거를 건진다", () => {
@@ -207,4 +207,9 @@ test("takeVerifyQuota: 한도를 끄면(지금 기본) 막지 않고 세기만 �
   for (let i = 0; i < 10; i++) assert.equal(W.takeVerifyQuota("w@x", t0 + i * 1000), null);
   const u = JSON.parse(require("fs").readFileSync(process.env.KATOK_ASK_USAGE_FILE, "utf8"));
   assert.equal(u.verify.users["w@x"].count, 10);
+});
+
+test("takeQuota: 한도를 끄면(지금 기본) 질문도 막지 않고 세기만 한다", () => {
+  const t0 = Date.parse("2026-10-30T13:00:00");
+  for (let i = 0; i < 25; i++) assert.equal(W.takeQuota("q@x", t0 + i * 1000), null);
 });
