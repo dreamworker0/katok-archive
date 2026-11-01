@@ -109,3 +109,7 @@ Thumbs.db
 # 방 사람들의 이름·사례가 들어갈 수 있고, 이 저장소는 공개다. 맨 위는
 # `test_nothing_is_left_untracked_and_unignored` 가 보지 않는 자리라 여기서 막는다.
 /새소식-*.html
+
+# 백업 위치 — 공유 드라이브 이름에 실명이 들어간다.
+# (예시는 config/backup.example.json)
+/config/backup.json

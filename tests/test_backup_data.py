@@ -125,6 +125,29 @@ class ZipTest(unittest.TestCase):
         self.assertEqual(4, len(bd.zips_in(self.cloud)))
 
 
+class CloudConfigTest(unittest.TestCase):
+    """클라우드 폴더는 설정 파일에서 읽는다 — 공유 드라이브 이름에 실명이 들어가 저장소에 못 적는다."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+
+    def test_reads_cloud_dir(self):
+        cfg = self.dir / "backup.json"
+        cfg.write_text('{"cloud_dir": "G:\\\\백업"}', encoding="utf-8")
+        self.assertEqual(Path("G:\\백업"), bd.cloud_dir(cfg))
+
+    def test_missing_or_broken_config_means_no_cloud(self):
+        self.assertIsNone(bd.cloud_dir(self.dir / "없음.json"))
+        broken = self.dir / "broken.json"
+        broken.write_text("{", encoding="utf-8")
+        self.assertIsNone(bd.cloud_dir(broken))
+
+    def test_no_real_drive_path_in_code(self):
+        src = (Path(__file__).resolve().parent.parent / "scripts" / "backup_data.py").read_text(encoding="utf-8")
+        # 드라이브 경로는 설정 파일에만 — 코드에 'G:' 같은 실제 경로가 박히면 안 된다.
+        self.assertNotRegex(src, r"[\"']G:\\")
+
+
 class RunnerWiringTest(unittest.TestCase):
     PS1 = (Path(__file__).resolve().parent.parent / "scripts" / "run_daily.ps1").read_text(encoding="utf-8-sig")
 

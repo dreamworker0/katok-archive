@@ -12,7 +12,9 @@
     - 매일   C:\\KatokArchiveBackup\\mirror  — 같은 PC 의 다른 SSD. 디스크 고장을 막는다.
              지우지 않고 더하기만 한다(robocopy /MIR 처럼 지움까지 따라가면, 실수로
              지운 것이 그날 밤 사본에서도 사라진다).
-    - 주 1회 구글 드라이브 '카톡아카이브-백업' 에 날짜별 zip, 최근 KEEP_ZIPS 개만.
+    - 주 1회 구글 드라이브 폴더(config/backup.json 의 cloud_dir)에 날짜별 zip, 최근
+             KEEP_ZIPS 개만. 폴더 경로는 저장소에 적지 않는다 — 공유 드라이브 이름에
+             실명이 들어가고, 이 저장소는 공개다(예시는 config/backup.example.json).
              PC 를 잃거나 랜섬웨어가 C:·D: 를 함께 잠가도 남는다. 지난 묶음이 남아
              있어 '망가진 것이 덮어써진' 경우에도 되돌릴 판이 있다.
 
@@ -32,6 +34,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import sys
@@ -43,7 +46,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 MIRROR = Path(r"C:\KatokArchiveBackup\mirror")
-CLOUD = Path(r"G:\내 드라이브\카톡아카이브-백업")
+BACKUP_CONFIG = ROOT / "config" / "backup.json"
 ZIP_PREFIX = "katok-archive-"
 KEEP_ZIPS = 4
 ZIP_EVERY_DAYS = 7
@@ -55,6 +58,15 @@ CLOUD_SKIP = {"config/notify.json"}
 # 이미 압축된 것은 다시 줄지 않는다 — 시간만 든다.
 STORE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".mov", ".zip", ".pdf",
              ".pptx", ".docx", ".xlsx", ".hwpx", ".mp3"}
+
+
+def cloud_dir(config: Path = BACKUP_CONFIG) -> Path | None:
+    """구글 드라이브 묶음을 둘 폴더. 설정이 없으면 None — 클라우드 묶음을 건너뛴다."""
+    try:
+        value = json.loads(config.read_text(encoding="utf-8")).get("cloud_dir")
+    except (OSError, ValueError):
+        return None
+    return Path(value) if value else None
 
 
 def collect(root: Path = ROOT) -> list[tuple[Path, str]]:
@@ -173,20 +185,25 @@ def main(argv: list[str] | None = None) -> int:
         failed = True
         print("WARN [백업] C: 사본 실패: %s" % e)
 
-    if not args.no_cloud:
+    cloud = None if args.no_cloud else cloud_dir()
+    if not args.no_cloud and cloud is None:
+        failed = True
+        print("WARN [백업] 구글 드라이브 폴더 설정이 없습니다 — config/backup.json 의 cloud_dir")
+    if cloud is not None:
         today = date.today()
-        if not CLOUD.parent.is_dir():
+        if not cloud.is_dir():
             failed = True
-            print("WARN [백업] 구글 드라이브(%s)가 없습니다 — 드라이브 앱이 로그인돼 있는지 보세요." % CLOUD.parent)
-        elif args.force_cloud or zip_due(CLOUD, today):
+            print("WARN [백업] 구글 드라이브 폴더(%s)가 없습니다 — 드라이브 앱이 로그인돼 있는지, "
+                  "폴더 이름이 바뀌지 않았는지 보세요." % cloud)
+        elif args.force_cloud or zip_due(cloud, today):
             cloud_items = [(p, rel) for p, rel in items if rel not in CLOUD_SKIP]
             if args.dry_run:
                 print("[백업] 클라우드 묶음을 만들 차례입니다 (%d개) — dry-run" % len(cloud_items))
             else:
                 t1 = time.time()
                 try:
-                    z = write_zip(cloud_items, CLOUD, today)
-                    gone = prune_zips(CLOUD)
+                    z = write_zip(cloud_items, cloud, today)
+                    gone = prune_zips(cloud)
                     print("[백업] 구글 드라이브 묶음 %s (%s, %.0f초)%s"
                           % (z.name, _mb(z.stat().st_size), time.time() - t1,
                              (" · 지난 것 %d개 지움" % len(gone)) if gone else ""))
@@ -194,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
                     failed = True
                     print("WARN [백업] 구글 드라이브 묶음 실패: %s" % e)
         else:
-            last = zips_in(CLOUD)[-1].name
+            last = zips_in(cloud)[-1].name
             print("[백업] 구글 드라이브 묶음은 7일마다 — 최근 것: %s" % last)
 
     print("BACKUP_FAILED=%d" % (1 if failed else 0))

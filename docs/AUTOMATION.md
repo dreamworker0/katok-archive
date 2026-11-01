@@ -639,8 +639,11 @@ OCR 은 무료·오프라인이고 한국어를 읽지만 한계가 있다 — �
 | 어디 | 언제 | 어떻게 | 막는 것 |
 |---|---|---|---|
 | `C:\KatokArchiveBackup\mirror` | 매일 | 바뀐 것만 복사, **지우지 않음** | D: 디스크 고장 |
-| 구글 드라이브 `내 드라이브\카톡아카이브-백업` | 7일마다 | 날짜별 zip, 최근 4개 | PC 분실·랜섬웨어·망가진 것이 덮어써진 경우 |
+| 구글 드라이브 — `config/backup.json` 의 `cloud_dir` | 7일마다 | 날짜별 zip, 최근 4개 | PC 분실·랜섬웨어·망가진 것이 덮어써진 경우 |
 
+- 구글 드라이브 폴더는 사용자가 만든 공유 드라이브 폴더다(2026-11-01). 공유 드라이브 이름에 실명이
+  들어가 경로를 저장소에 적지 않는다 — `config/backup.json`(gitignore, 예시는 `backup.example.json`).
+  설정이 없거나 폴더가 안 보이면 백업 실패로 알린다.
 - 담는 것: `output/` · `assets/` · `inbox/processed/` · `config/` · 루트 `KakaoTalk_*.txt` (약 1GB).
 - 빼는 것: `inbox/drawer/`(날짜별로 반복된 서랍 임시 보관함, 알맹이는 `assets/`),
   서비스 계정 키(콘솔에서 새로 만든다), 클라우드 묶음의 `config/notify.json`(웹훅).
