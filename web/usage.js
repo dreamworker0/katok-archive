@@ -6,7 +6,9 @@
  *   visit   들어올 때마다 한 번(로그인 뒤 화면이 뜬 때). 하루 방문자 수를 세려고
  *           이것에만 본인 이메일이 붙는다.
  *   view    메뉴를 누른 것(data-view). 첫 화면은 누르지 않아도 보이므로 누른 것만 센다.
- *   search  검색창에 친 말 — 손을 멈춘 뒤(SEARCH_IDLE_MS) 또는 Enter 에서 한 번.
+ *   search  검색창에 친 말 — 다 친 말 하나에 한 번. 손을 멈춘 때(SEARCH_IDLE_MS)는
+ *           쥐고만 있다가 Enter·창을 떠날 때·다른 말로 바꿀 때 보낸다. 이어 치는
+ *           도중의 앞부분('다온' → '다온가 최근에…')은 따로 세지 않는다.
  *   ai      AI 단추 — 물어보기·다시 확인·답 속 근거·카드의 AI 보고서 펼치기.
  *
  * 합계만 본다(사용자 결정). 메뉴·검색어·AI 에는 이름을 붙이지 않고, 규칙이 그것을
@@ -49,6 +51,39 @@
   function normTerm(q) {
     var s = String(q == null ? "" : q).replace(/\s+/g, " ").trim().toLowerCase();
     return s.length < 2 ? "" : s.slice(0, 40);
+  }
+
+  /** 두 검색어가 한 검색을 이어 친 것인가 — 짧은 쪽이 긴 쪽의 앞부분이면.
+   *  한글은 치는 도중 끝 글자가 바뀌므로(갗 → 가초) 짧은 쪽 끝 한 글자는 보지 않는다.
+   *  두 글자짜리는 그대로 본다 — '요금' 과 '요리' 는 다른 검색이다. */
+  function sameSearch(a, b) {
+    if (!a || !b) return false;
+    var s = a.length <= b.length ? a : b, l = s === a ? b : a;
+    var head = s.length > 2 ? s.slice(0, -1) : s;
+    return l.indexOf(head) === 0;
+  }
+
+  /** 검색 한 번을 언제 셀지. note 는 손을 멈춘 때(아직 안 보냄), commit 은 다 쳤다고
+   *  볼 때, clear 는 칸을 비운 때. 이어 치는 동안은 쥔 말을 바꿔 끼우기만 한다. */
+  function SearchTracker(send) {
+    var pending = "", last = "";
+    function commit() {
+      var q = pending;
+      pending = "";
+      // 같은 말을 이어서 다시 세지 않는다(Enter 뒤 손을 떼는 경우 등).
+      if (!q || q === last) return;
+      last = q;
+      send(q);
+    }
+    return {
+      note: function (q) {
+        if (!q) return;          // 한 글자로 지워 가는 중 — 쥔 말을 그대로 둔다
+        if (pending && !sameSearch(pending, q)) commit();
+        pending = q;
+      },
+      commit: commit,
+      clear: function () { commit(); last = ""; },
+    };
   }
 
   function bump(map, key, n) { map[key] = (map[key] || 0) + (n || 1); }
@@ -101,6 +136,8 @@
   api.dayOf = dayOf;
   api.addDays = addDays;
   api.normTerm = normTerm;
+  api.sameSearch = sameSearch;
+  api.SearchTracker = SearchTracker;
   api.summarize = summarize;
   api.combine = combine;
 
@@ -146,22 +183,21 @@
 
     var box = document.getElementById("searchInput");
     if (!box) return;
-    var timer = null, last = "";
-    function flush() {
-      clearTimeout(timer); timer = null;
-      var q = normTerm(box.value);
-      // 같은 말을 이어서 다시 세지 않는다(Enter 뒤 손을 떼는 경우 등).
-      if (!q || q === last) return;
-      last = q;
-      send({ type: "search", key: q });
-    }
+    var track = SearchTracker(function (q) { send({ type: "search", key: q }); });
+    var timer = null;
+    function idle() { clearTimeout(timer); timer = null; track.note(normTerm(box.value)); }
+    function finish() { if (timer) idle(); track.commit(); }
     box.addEventListener("input", function () {
-      clearTimeout(timer);
-      if (!box.value.trim()) { last = ""; return; }
-      timer = setTimeout(flush, SEARCH_IDLE_MS);
+      clearTimeout(timer); timer = null;
+      if (!box.value.trim()) { track.clear(); return; }
+      timer = setTimeout(idle, SEARCH_IDLE_MS);
     });
-    box.addEventListener("keydown", function (e) { if (e.key === "Enter") flush(); });
-    box.addEventListener("blur", function () { if (timer) flush(); });
+    box.addEventListener("keydown", function (e) { if (e.key === "Enter") finish(); });
+    box.addEventListener("blur", finish);
+    // 검색창에 손을 둔 채 탭을 닫거나 옮겨도 마지막 검색은 센다.
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "hidden") finish();
+    });
   }
   api.install = install;
 

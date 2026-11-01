@@ -23,6 +23,42 @@ test("검색어는 공백을 접고 두 글자 미만은 버린다", () => {
   assert.strictEqual(U.normTerm("가".repeat(60)).length, 40);
 });
 
+test("검색어: 이어 친 앞부분은 같은 검색으로 본다", () => {
+  assert.ok(U.sameSearch("다온", "다온가 최근에 공유한 사회복지"));
+  assert.ok(U.sameSearch("뭐야", "뭐야?"));
+  assert.ok(U.sameSearch("사회복지 전공", "사회복지"));     // 지워 가는 중
+  assert.ok(U.sameSearch("다온갗", "다온가초"));            // 한글 끝 글자가 바뀌는 중
+  assert.ok(!U.sameSearch("요금", "요리"));
+  assert.ok(!U.sameSearch("한글 자동화", "엑셀"));
+});
+
+test("검색어: 멈출 때마다가 아니라 다 친 말 하나만 센다", () => {
+  const sent = [];
+  const t = U.SearchTracker((q) => sent.push(q));
+  // 2026-11-01 실제로 쌓인 순서 — 생각하며 멈춘 곳마다 따로 세던 것
+  ["다온", "다온가 최근에 공유한 사회복지", "다온가 최근에 공유한 사회복지 전공",
+   "다온가 최근에 공유한 사회복지 전공 관련 내용이 뭐야"].forEach((q) => t.note(q));
+  assert.deepStrictEqual(sent, []);
+  t.note("다온가 최근에 공유한 사회복지 전공 관련 내용이 뭐야?");
+  t.commit();                                               // Enter
+  assert.deepStrictEqual(sent, ["다온가 최근에 공유한 사회복지 전공 관련 내용이 뭐야?"]);
+  t.commit();                                               // 이어서 창을 떠남
+  assert.strictEqual(sent.length, 1);
+});
+
+test("검색어: 다른 말로 바꾸면 앞의 것을 보내고, 비우면 같은 말도 다시 센다", () => {
+  const sent = [];
+  const t = U.SearchTracker((q) => sent.push(q));
+  t.note("요금"); t.note("한글 자동화");
+  assert.deepStrictEqual(sent, ["요금"]);
+  t.clear();
+  assert.deepStrictEqual(sent, ["요금", "한글 자동화"]);
+  t.note("요금"); t.commit();
+  assert.deepStrictEqual(sent, ["요금", "한글 자동화", "요금"]);
+  t.note(""); t.commit();                                   // 한 글자로 지운 때는 보낼 것 없음
+  assert.strictEqual(sent.length, 3);
+});
+
 test("하루 합계: 방문자는 사람 수, 이메일은 남기지 않는다", () => {
   const r = U.summarize([
     { type: "visit", by: "a@x.com" }, { type: "visit", by: "a@x.com" },
