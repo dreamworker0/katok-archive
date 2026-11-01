@@ -256,12 +256,22 @@ class SaveIsNotCutShortTests(unittest.TestCase):
     def test_no_fixed_sleep_between_save_and_close(self):
         self.assertNotIn("Start-Sleep -Seconds 3", self._save_block())
 
-    def test_result_counts_are_read_and_failures_warned(self):
+    def test_result_counts_are_read_and_unknown_endings_warned(self):
         body = DRAWER[DRAWER.index("function Wait-SaveResult"):]
         body = body[:body.index("\nfunction ")]
         self.assertIn(r"저장\s*결과", body)
         self.assertIn("실패", body)
+        # 끝을 못 읽거나 시간이 다 된 저장은 WARN — 최근 것이 취소됐을 수 있다.
         self.assertIn("'WARN'", body)
+
+    def test_save_failures_alone_are_not_warned(self):
+        """팝업의 '실패' 는 대개 만료 카드라 WARN 으로 올리지 않는다(실측 2026-10-31).
+        잃었는지는 audit_attachments 가 결과로 대조한다."""
+        body = DRAWER[DRAWER.index("function Wait-SaveResult"):]
+        body = body[:body.index("\nfunction ")]
+        line = body[body.index('"    저장 결과: 완료'):]
+        self.assertNotIn("'WARN'", line[:line.index("\n")])
+        self.assertIn("audit_attachments", DRAWER)
 
     def test_a_progress_popup_is_never_taken_for_the_end(self):
         body = DRAWER[DRAWER.index("function Wait-SaveResult"):]

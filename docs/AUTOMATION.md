@@ -59,6 +59,8 @@ Firestore 적재 → 테스트까지 자동으로 진행된다.
 | `scripts/kakao_drawer.ps1` | 카톡 '채팅방 서랍' 에서 사진·파일 원본을 내려받기 (2026-08-20) |
 | `scripts/drawer_grid.py` | 서랍 스크린샷에서 카드 사각형 찾기 — 위 스크립트가 누를 좌표 |
 | `scripts/collect_drawer.py` | 받은 원본을 inbox/drawer/ 로 옮겨 메시지에 잇기 |
+| `scripts/audit_attachments.py` | 대화의 첨부가 아카이브에 들어왔는지 대조 — 곧 만료·잃음만 알린다 |
+| `scripts/notify.js` | 갱신이 성공해도 사람이 알아야 할 일을 디스코드로 한 줄 |
 | `scripts/ai_reports.py` | 사람 보고서 옆의 AI 검증 주석을 무인으로 쓰기 (2026-08-27) |
 | `scripts/run_daily.ps1` | 위 단계를 순서대로 실행 |
 | `scripts/classify_unsorted.py` | 미분류 스레드를 주제별로 분류 (유일한 LLM 단계) |
@@ -697,6 +699,14 @@ python -m scripts.count_unsorted
   14일이면 만료**되므로 서랍 창이 닫혀 있는 날이 이어지면 그 기간의 파일은
   영구 소실이다. 못 받은 날은 관리 탭에 경고로 뜬다. 서랍이 받기 전의 사진은
   `pending` 으로 남아 화면에 플레이스홀더로 보인다.
+- **잃었는지는 서랍 팝업이 아니라 결과로 본다 (2026-11-01).** 팝업의 '실패 N' 은
+  거의 다 만료 카드다(실측 10-31: 실패 6 = 화면 속 만료 카드 6). 밤마다 9~20건이
+  WARN 으로 찍혀 진짜 문제를 덮었으므로 INFO 로 내렸다. 대신
+  `scripts/audit_attachments.py`(run_daily 4b-2)가 2026-08-20 이후의 파일 공유·
+  사진·동영상 메시지마다 원본이 아카이브에 있는지 대조한다. **만료 3일 이내인데
+  아직 없는 것**과 **새로 잃은 것**이 있으면 관리 탭 사유 줄과 디스코드
+  (`scripts/notify.js`)로 올린다. 조용한 날(발행 건너뜀)에도 올린다.
+  처음 돌린 날 결과: 자동 수집 이후 놓친 것 0건. 그 전 '원본 없음' 41건은 따지지 않는다.
 - 문서 크기. Firestore 문서는 1MiB 가 한도다. 목록으로 늘어나는 것(threads ·
   aiReports · media)은 업로더가 크기로 나눠 담고, 나눌 수 없는 것(meta · graph ·
   digests · myMessages)은 발행 로그와 검사가 80% 에서 미리 말한다

@@ -7,6 +7,7 @@
   3. 멤버 요청(수집 동의·삭제) 내려받기        sync_member_requests.js
   4. inbox/*.txt 를 증분 반영                  ingest_incremental.py
   4b. 답장 관계 건져오기 (비치명적)             kakao_replies.ps1 + reply_bubbles.py
+      (그 앞에 서랍 첨부 받기와 첨부 대조)       kakao_drawer.ps1 + audit_attachments.py
   5. 주제 분류 (LLM, 비치명적)                 classify_unsorted.py
   5a. 답장 관계를 분류에 반영 (비치명적)        apply_replies.py
   5a-2. 같은 날 갈린 주제 합치기 (LLM, 비치명적) audit_same_day.py + merge_threads.py
@@ -329,6 +330,39 @@ try {
 }
 finally { $ErrorActionPreference = $prevEap }
 
+# 4b-2) 첨부 대조 — 서랍이 뭐라고 했든, 잃은 것이 있나를 결과로 본다
+#
+#     서랍 팝업의 '실패 N' 은 거의 다 만료 카드라 신호가 못 된다(audit_attachments.py
+#     머리말). 대화에 올라온 첨부가 아카이브에 있는지를 원장으로 대조해, 곧 만료인데
+#     아직 없는 것과 새로 잃은 것만 사람에게 올린다. 서랍이 실패한 날에도 돈다 —
+#     그런 날이 바로 '곧 만료' 가 쌓이는 날이다. 대조가 실패해도 갱신은 계속한다.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $attachOut = & python -m scripts.audit_attachments 2>&1
+    $attachUrgent = 0; $attachLost = 0
+    foreach ($l in $attachOut) {
+        if ("$l" -match '^ATTACH_URGENT=(\d+)') { $attachUrgent = [int]$Matches[1]; continue }
+        if ("$l" -match '^ATTACH_LOST=(\d+)') { $attachLost = [int]$Matches[1]; continue }
+        if ("$l" -match '^WARN (.*)') { Say "    $($Matches[1])" 'WARN' } else { Say "    $l" }
+    }
+    if ($attachUrgent -gt 0 -or $attachLost -gt 0) {
+        $attachWarn = @()
+        if ($attachUrgent -gt 0) { $attachWarn += "첨부 $attachUrgent 건 곧 만료(아직 못 받음)" }
+        if ($attachLost -gt 0) { $attachWarn += "첨부 $attachLost 건 만료되어 잃음" }
+        $attachWarn = $attachWarn -join ', '
+        $script:drawerWarn = (@($script:drawerWarn, $attachWarn) | Where-Object { $_ }) -join ' · '
+        # 갱신은 성공으로 끝나므로 실패 알림이 안 간다. 사람을 따로 부른다.
+        if (-not $DryRun) {
+            $detail = @($attachOut | Where-Object { "$_" -match '^WARN ' } | ForEach-Object { "$_" -replace '^WARN \[첨부 대조\] ', '' })
+            $text = "📎 카톡 아카이브 첨부 — $attachWarn`n" + (($detail | Select-Object -First 8) -join "`n")
+            foreach ($l in (& node scripts\notify.js --text $text 2>&1)) { Say "    [알림] $l" }
+        }
+    }
+}
+catch { Say "    첨부 대조 실패(갱신은 계속합니다): $_" 'WARN' }
+finally { $ErrorActionPreference = $prevEap }
+
 # 4b) 답장 관계 건져오기 — 실패해도 갱신을 멈추지 않는다
 #
 #     대화 내보내기(txt)는 답장 구조를 통째로 버린다. '누구에게 답장' 머리글도,
@@ -535,7 +569,10 @@ if ($added -eq 0 -and -not $requestsChanged -and $classified -eq 0 -and $merged 
     Say "새 메시지도 멤버 요청 변경도 분류 변경도 없고 발행본도 최신이라 발행을 건너뜁니다."
     # 건너뛴 것은 실패가 아니다. 그래도 남긴다 — 이 기록이 없으면 화면은 '실패'와
     # '조용한 날'을 구분하지 못하고, 둘 다 '소식 없음'으로 보인다.
-    Report-Run -status 'skipped' -why '발행 사유 없음' -added 0
+    # 서랍·첨부 경고는 조용한 날에도 사람이 봐야 한다 — 발행을 안 해도 첨부는 만료된다.
+    $skipWhy = '발행 사유 없음'
+    if ($script:drawerWarn) { $skipWhy += " · ⚠ $($script:drawerWarn)" }
+    Report-Run -status 'skipped' -why $skipWhy -added 0
     Say "===== 일일 갱신 종료 ====="
     exit 0
 }

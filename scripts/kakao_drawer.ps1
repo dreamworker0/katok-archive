@@ -559,12 +559,13 @@ function Wait-SaveResult { param([int]$TimeoutSec = 180, [int]$QuietSec = 10)
                 $done = if ($text -match '완료\s*[:：]?\s*(\d+)') { [int]$Matches[1] } else { -1 }
                 $fail = if ($text -match '실패\s*[:：]?\s*(\d+)') { [int]$Matches[1] } else { -1 }
                 if ($done -ge 0) { $script:SaveDone += $done }
-                if ($fail -gt 0) {
-                    $script:SaveFailed += $fail
-                    Write-Log ("    저장 결과: 완료 {0} / 실패 {1} ({2:N0}초)" -f $done, $fail, $elapsed) 'WARN'
-                } else {
-                    Write-Log ("    저장 결과: 완료 {0} / 실패 {1} ({2:N0}초)" -f $done, $fail, $elapsed)
-                }
+                if ($fail -gt 0) { $script:SaveFailed += $fail }
+                # '실패' 는 WARN 으로 올리지 않는다. 거의 다 만료 카드다 — 화면을 통째로
+                # 고르므로 유효기간이 지난 카드도 매일 밤 다시 골라지고 다시 실패한다
+                # (실측 2026-10-31: 실패 6 = 화면 속 만료 카드 6). 밤마다 9~20건이 WARN
+                # 으로 찍혀 진짜 문제를 덮었다. 잃은 것이 있는지는 결과로 대조한다 —
+                # scripts/audit_attachments.py (run_daily 4b-2).
+                Write-Log ("    저장 결과: 완료 {0} / 실패 {1} ({2:N0}초)" -f $done, $fail, $elapsed)
                 return $true
             }
         }
@@ -862,11 +863,13 @@ finally {
 $after = Count-Saved
 Write-Log ("받은 파일 {0}개 → {1}개 (새로 {2}개)" -f $before, $after, ($after - $before))
 Write-Log ("선택한 항목 누적 {0}개" -f $totalClicked)
-if ($script:SaveFailed -gt 0 -or $script:SaveUnsure -gt 0) {
+# 실패 수만으로는 WARN 을 올리지 않는다(위 Wait-SaveResult 참고 — 대개 만료 카드).
+# 끝을 못 읽은 저장은 다르다: 진행 중에 닫혀 최근 것이 취소됐을 수 있다.
+if ($script:SaveUnsure -gt 0) {
     Write-Log ("저장 결과 합계: 완료 {0} / 실패 {1} / 결과를 못 읽은 저장 {2}번" -f `
         $script:SaveDone, $script:SaveFailed, $script:SaveUnsure) 'WARN'
 } else {
-    Write-Log ("저장 결과 합계: 완료 {0} / 실패 0" -f $script:SaveDone)
+    Write-Log ("저장 결과 합계: 완료 {0} / 실패 {1}(대개 만료 카드)" -f $script:SaveDone, $script:SaveFailed)
 }
 
 # 두 탭 모두 빈 것은 '오늘 새 첨부가 없다' 가 아니다.
