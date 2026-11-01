@@ -593,6 +593,19 @@
        * 야간 갱신을 여기에 섞으면 버튼을 누르지 않았는데도 "갱신 중" 이 뜨고,
        * 반대로 버튼 한 번이 지난 밤의 실패를 덮어 지운다. 둘은 서로를 지워서는
        * 안 되는 별개의 소식이라 문서를 나눴다. 쓰는 쪽은 scripts/report_run.js. */
+      /* 사용 통계. 지난 날은 PC 가 접어 둔 합계(settings/usage), 아직 안 접힌 날은
+       * 원본(usageEvents)을 그대로 준다 — 합치는 것은 web/usage.js 가 한다. */
+      usage: function (sinceDay) {
+        return Promise.all([
+          db.collection("settings").doc("usage").get(),
+          db.collection("usageEvents").where("day", ">=", sinceDay).get(),
+        ]).then(function (r) {
+          var events = [];
+          r[1].forEach(function (d) { events.push(d.data()); });
+          return { summary: r[0].exists ? r[0].data() : null, events: events };
+        });
+      },
+
       watchLastRun: function (onChange) {
         return db.collection("settings").doc("lastRun").onSnapshot(
           function (d) { onChange(d.exists ? d.data() : null, null); },
@@ -658,6 +671,8 @@
         ? makeAdminApi(firebase.firestore(), user)
         : null,
     });
+    // 관리자 '사용 통계' 의 재료(web/usage.js). 실패해도 화면은 그대로 돈다.
+    if (window.ArchiveUsage) window.ArchiveUsage.install(firebase.firestore(), user);
   }
 
   function onSignedIn(user) {

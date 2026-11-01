@@ -17,9 +17,11 @@
  *
  * 돌려주는 것은 셋 — isAdmin · renderAdmin · unwatchRefresh. app.js 가 이 셋만 부른다.
  *
- * 순서: text.js → admin.js → app.js. app.js 가 로드 시점에 window.ArchiveAdmin 을
+ * 순서: text.js → usage.js → admin.js → app.js. app.js 가 로드 시점에 window.ArchiveAdmin 을
  * 부르므로 반드시 앞에 와야 한다(index.html · index.hosting.html · sw.js 의 목록,
  * build_hosting.FILES · build_site.STATIC_FILES 가 함께 움직인다 — 검사가 지킨다).
+ * 사용 통계 카드는 usage.js 의 Dashboard 가 그린다 — 팩토리에서 읽으므로 usage.js 가
+ * 이 파일보다 앞에 온다(없으면 카드만 빈다).
  */
 (function () {
   "use strict";
@@ -27,6 +29,9 @@
   window.ArchiveAdmin = function (ctx) {
     var state = ctx.state, el = ctx.el, esc = ctx.esc, confirmAction = ctx.confirmAction,
         card = ctx.card, agoText = ctx.agoText, msAgo = ctx.msAgo;
+    var usage = window.ArchiveUsage
+      ? window.ArchiveUsage.Dashboard({ state: state, esc: esc, card: card })
+      : null;
 
     function isAdmin() {
       return !!(state.session && state.session.admin);
@@ -384,6 +389,9 @@
         // 관리 화면 전체와 다시 그리는 주기를 분리한다.
         '<div class="mine-card" id="admRefresh"></div>' +
 
+        // 사용 통계(web/usage.js). 따로 읽어 오므로 자리만 두고 나중에 채운다.
+        '<div class="mine-card use-card" id="admUsage"></div>' +
+
         '<div class="mine-card"><h3>열람 신청 ' + d.claims.length + "건</h3>" +
         (d.claims.length
           ? d.claims.map(function (c) { return adminClaimRow(c, parts); }).join("")
@@ -473,6 +481,7 @@
 
       renderRefreshCard();
       watchRefresh();
+      if (usage) usage.render();
       bindAdminActions();
     }
 

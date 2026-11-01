@@ -830,6 +830,29 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
   padding: 26px 28px; margin-bottom: 22px; box-shadow: var(--shadow-sm); }
 .mine-card h3 { margin: 0 0 14px; font-size: 16px; font-weight: 750; }
 .mine-note { margin: 0 0 12px; font-size: 13px; color: var(--ink-soft); line-height: 1.7; }
+
+/* 관리 탭 '사용 통계' (web/usage.js). 카드 안의 카드라 그림자를 빼 한 겹으로 읽히게 한다. */
+.use-head { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-wrap: wrap; margin-bottom: 14px; }
+.use-head h3 { margin: 0; }
+.use-ranges { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 10px; overflow: hidden; }
+.use-range { min-width: 52px; height: 32px; padding: 0 10px; border: 0; background: var(--surface);
+  color: var(--ink-soft); font: inherit; font-size: 13px; cursor: pointer; }
+.use-range + .use-range { border-left: 1px solid var(--line-strong); }
+.use-range.on { background: var(--accent-soft); color: var(--ink); font-weight: 700; }
+.use-card .panel, .use-card .stat-card { box-shadow: none; }
+.use-card .panel { background: var(--bg); }
+.use-cols { position: relative; display: flex; align-items: flex-end; gap: 2px; height: 120px;
+  padding-top: 16px; border-bottom: 1px solid var(--line-strong); }
+.use-cols__max { position: absolute; top: 0; left: 0; font-size: 11px; color: var(--ink-faint);
+  font-variant-numeric: tabular-nums; }
+.use-col { flex: 1 1 0; min-width: 0; height: 100%; display: flex; align-items: flex-end; cursor: default; }
+.use-col__bar { display: block; width: 100%; background: var(--accent); border-radius: 4px 4px 0 0; }
+.use-col:hover .use-col__bar { background: color-mix(in srgb, var(--accent) 78%, var(--ink)); }
+.use-axis { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11px;
+  color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.use-note { margin: 10px 0 0; font-size: 12px; color: var(--ink-faint); line-height: 1.6; }
+.use-empty { margin: 0; font-size: 13px; color: var(--ink-soft); }
 /* [제외] 안내. '저장' 아래에 붙는 보조 설명이라 위쪽에 선을 그어 구분한다. */
 .mine-keyword { margin: 14px 0 0; padding-top: 12px; border-top: 1px dashed var(--line); }
 .mine-kbd { font-family: inherit; font-size: 12.5px; font-weight: 700; color: var(--ink);

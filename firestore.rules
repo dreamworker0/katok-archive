@@ -200,6 +200,36 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ── 사용 기록: 관리자 '사용 통계' 의 재료 ──
+    //
+    // 화면이 접속·메뉴·검색어·AI 단추를 한 건씩 남긴다(web/usage.js). 멤버는 새로
+    // 쓰기만 하고, 고치거나 지우거나 읽지 못한다. 읽는 것은 관리자 화면과 밤마다
+    // 합계를 내는 PC(scripts/usage_rollup.js, Admin SDK — 규칙 우회)뿐이다.
+    //
+    // 합계만 본다(2026-11-01 사용자 결정). 그래서 누가 썼는지는 접속(visit)에만
+    // 붙는다 — 하루 방문자 수를 세려면 필요하고, 본인 이메일로만 쓸 수 있다.
+    // 메뉴·검색어·AI 단추에는 이름 칸 자체를 못 넣게 막는다: 검색어가 사람에게
+    // 이어지지 않아야 한다. 원본은 합계를 낸 뒤 PC 가 지운다.
+    function usageEventOk() {
+      let d = request.resource.data;
+      return d.type is string
+        && d.day is string
+        && d.day.matches('^20[0-9]{2}-[01][0-9]-[0-3][0-9]$')
+        && ((d.type == 'visit'
+              && d.keys().hasOnly(['type', 'day', 'by'])
+              && d.by == callerEmail())
+            || (d.type in ['view', 'search', 'ai']
+              && d.keys().hasOnly(['type', 'day', 'key'])
+              && d.key is string
+              && d.key.size() >= 1
+              && d.key.size() <= 40));
+    }
+    match /usageEvents/{eventId} {
+      allow create: if isMember() && usageEventOk();
+      allow read: if isAdmin();
+      allow update, delete: if false;
+    }
+
     // ── 공개 상태: 멤버가 읽는 PC 하트비트 ──
     //
     // status/ask  AI 답변을 쓰는 PC 가 듣고 있는가(seenAt). settings 는 관리자만

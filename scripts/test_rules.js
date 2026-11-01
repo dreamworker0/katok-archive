@@ -26,7 +26,8 @@
  *
  * 검사 범위: preferences 말고도 발행본 다섯 갈래(meta·threads·media·digests·graph),
  * chunks, myMessages, settings, messagesSource, members, claims, deletionRequests,
- * asks·status(AI 에게 묻기), 그리고 마지막 catch-all. 예전에는 preferences 9건만 봤다.
+ * asks·status(AI 에게 묻기), usageEvents(사용 통계), 그리고 마지막 catch-all. 예전에는
+ * preferences 9건만 봤다.
  */
 const fs = require("fs");
 const path = require("path");
@@ -415,6 +416,34 @@ const CASES = [
   testCase("남의 확인 결과는 못 읽는다", "DENY", read(`verifies/${OTHER}`, MEMBER), IN),
   testCase("멤버는 확인 목록을 훑지 못한다", "DENY", read("verifies", MEMBER, "list"), IN),
   testCase("확인 문서는 지우지 못한다", "DENY", del(`verifies/${MEMBER}`, MEMBER), IN),
+
+  // ── 사용 기록: 멤버는 새로 쓰기만, 검색어·메뉴에는 이름을 못 붙인다 ──
+  testCase("멤버의 접속을 남긴다", "ALLOW",
+    write("usageEvents/e1", { type: "visit", day: "2026-11-01", by: MEMBER }, MEMBER, "create"), IN),
+  testCase("남의 이름으로 접속을 남기지 못한다", "DENY",
+    write("usageEvents/e1", { type: "visit", day: "2026-11-01", by: OTHER }, MEMBER, "create"), IN),
+  testCase("명부에 없는 사람은 기록을 남기지 못한다", "DENY",
+    write("usageEvents/e1", { type: "visit", day: "2026-11-01", by: OUTSIDER }, OUTSIDER, "create"), OUT),
+  testCase("메뉴 누름을 남긴다", "ALLOW",
+    write("usageEvents/e2", { type: "view", day: "2026-11-01", key: "timeline" }, MEMBER, "create"), IN),
+  testCase("검색어를 남긴다", "ALLOW",
+    write("usageEvents/e3", { type: "search", day: "2026-11-01", key: "한글 자동화" }, MEMBER, "create"), IN),
+  testCase("AI 단추 누름을 남긴다", "ALLOW",
+    write("usageEvents/e4", { type: "ai", day: "2026-11-01", key: "ask" }, MEMBER, "create"), IN),
+  // 합계만 보기로 했다 — 검색어가 사람에게 이어지면 안 된다.
+  testCase("검색어에 이름을 붙이지 못한다", "DENY",
+    write("usageEvents/e3", { type: "search", day: "2026-11-01", key: "요금", by: MEMBER }, MEMBER, "create"), IN),
+  testCase("검색어는 40자까지", "DENY",
+    write("usageEvents/e3", { type: "search", day: "2026-11-01", key: "가".repeat(41) }, MEMBER, "create"), IN),
+  testCase("모르는 종류는 막는다", "DENY",
+    write("usageEvents/e5", { type: "anything", day: "2026-11-01", key: "x" }, MEMBER, "create"), IN),
+  testCase("날짜 모양이 틀리면 막는다", "DENY",
+    write("usageEvents/e2", { type: "view", day: "어제", key: "timeline" }, MEMBER, "create"), IN),
+  testCase("남긴 기록은 고치지 못한다", "DENY",
+    write("usageEvents/e2", { type: "view", day: "2026-11-01", key: "stats" }, MEMBER), IN),
+  testCase("남긴 기록은 지우지 못한다", "DENY", del("usageEvents/e2", MEMBER), IN),
+  testCase("멤버는 사용 기록을 못 읽는다", "DENY", read("usageEvents", MEMBER, "list"), IN),
+  testCase("관리자는 사용 기록을 훑는다", "ALLOW", read("usageEvents", MEMBER, "list"), ADMIN),
 
   // ── 공개 상태(PC 하트비트): 멤버는 읽고, 아무도 쓰지 못한다 ──
   testCase("멤버는 PC 상태를 읽는다", "ALLOW", read("status/ask", MEMBER), IN),

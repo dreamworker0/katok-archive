@@ -46,6 +46,7 @@
     "gallery.js",
     "stats.js",
     "mine.js",
+    "usage.js",
     "admin.js",
     "ask.js",
     "app.js",

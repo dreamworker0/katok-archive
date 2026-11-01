@@ -203,6 +203,18 @@ function Invoke-Step {
 
 Say "===== 일일 갱신 시작 (SkipExport=$SkipExport DryRun=$DryRun) ====="
 
+# 0) 사용 기록 접기 — 관리 탭 '사용 통계' 의 지난 날 몫(scripts/usage_rollup.js)
+#    맨 앞에 둔다: 아래 내보내기가 실패하면 그 자리에서 끝나는데, 그날도 접혀야 한다.
+#    실패해도 갱신은 계속한다 — 통계 때문에 발행이 멈춰서는 안 된다.
+if (-not $DryRun) {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $usageOut = & node scripts\usage_rollup.js 2>&1 } finally { $ErrorActionPreference = $prevEap }
+    $usageCode = $LASTEXITCODE
+    foreach ($l in $usageOut) { Say "    [사용 통계] $l" }
+    if ($usageCode -ne 0) { Say "사용 기록 접기 실패 (exit $usageCode) — 갱신은 계속합니다." 'WARN' }
+}
+
 # 1) 내보내기
 if (-not $SkipExport) {
     Invoke-Step '카카오톡 대화 내보내기' {
