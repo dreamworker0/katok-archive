@@ -30,12 +30,28 @@ class ClickTargetIsVerifiedTests(unittest.TestCase):
         self.assertIn("static extern IntPtr WindowFromPoint(POINT p)", EXPORT)
         self.assertIn("public static uint PidAt(int x, int y)", EXPORT)
 
-    def test_click_is_guarded_by_pid_check(self):
-        self.assertIn("$pidAt = [Win32]::PidAt($ix, $iy)", EXPORT)
-        self.assertIn("if ($pidAt -ne $kakaoPid) {", EXPORT)
+    def test_window_level_helper_exists(self):
+        """프로세스가 아니라 **창**을 묻는 수단이 있어야 한다 (실측 2026-09-11).
+
+        PidAt 만으로는 채팅방 서랍처럼 같은 카톡의 다른 창이 덮고 있을 때 그냥
+        통과한다. WindowFromPoint 는 가장 깊은 자식을 주므로 GA_ROOT(2) 로 최상위
+        까지 올려야 '그 자리가 그 창인가' 를 창 단위로 물을 수 있다.
+        """
+        self.assertIn("static extern IntPtr GetAncestor(IntPtr h, uint flags)", EXPORT)
+        self.assertIn("public static IntPtr RootAt(int x, int y)", EXPORT)
+        self.assertIn("GetAncestor(h, 2)", EXPORT)
+
+    def test_click_is_guarded_by_window_check(self):
+        # 프로세스가 아니라 방 창 핸들과 견준다 — 같은 카톡의 다른 창도 막는다.
+        self.assertIn("$rootAt = [Win32]::RootAt($ix, $iy)", EXPORT)
+        self.assertIn("if ($rootAt -ne $h) {", EXPORT)
+
+    def test_guard_does_not_settle_for_the_process_alone(self):
+        """PID 만 견주는 옛 가드로 되돌아가면 서랍이 다시 통과한다."""
+        self.assertNotIn("if ($pidAt -ne $kakaoPid) {", EXPORT)
 
     def test_guard_runs_before_the_click_and_before_ctrl_s(self):
-        guard = EXPORT.index("$pidAt = [Win32]::PidAt($ix, $iy)")
+        guard = EXPORT.index("$rootAt = [Win32]::RootAt($ix, $iy)")
         # 이 가드가 지키는 것은 입력칸 클릭과 그 뒤의 Ctrl+S 다. 파일 앞쪽에 다른
         # 클릭(탭 전환)이 생겼으므로 '파일의 첫 MouseClick' 이 아니라 '이 가드 다음
         # 클릭' 을 본다 — 앞쪽 클릭은 EveryClickIsGuardedTests 가 따로 지킨다.
@@ -43,13 +59,13 @@ class ClickTargetIsVerifiedTests(unittest.TestCase):
         self.assertLess(guard, EXPORT.index("[Win32]::CtrlS()"))
 
     def test_mismatch_aborts_instead_of_clicking_anyway(self):
-        block = EXPORT[EXPORT.index("if ($pidAt -ne $kakaoPid) {"):][:700]
+        block = EXPORT[EXPORT.index("if ($rootAt -ne $h) {"):][:1200]
         self.assertIn("Stop-Safely", block)
         # 어느 창이 덮었는지 알려줘야 사람이 치울 수 있다
         self.assertIn("Get-Process -Id $pidAt", block)
 
     def test_guard_names_the_fix_in_the_message(self):
-        block = EXPORT[EXPORT.index("if ($pidAt -ne $kakaoPid) {"):][:700]
+        block = EXPORT[EXPORT.index("if ($rootAt -ne $h) {"):][:1200]
         self.assertIn("항상 위", block)
 
 
@@ -63,18 +79,18 @@ class KeyGoesOnlyToARoomThatStillHasFocusTests(unittest.TestCase):
     """
 
     def _between_click_and_key(self):
-        guard = EXPORT.index("$pidAt = [Win32]::PidAt($ix, $iy)")
+        guard = EXPORT.index("$rootAt = [Win32]::RootAt($ix, $iy)")
         click = EXPORT.index("[Win32]::MouseClick()", guard)
         return EXPORT[click:EXPORT.index("[Win32]::CtrlS()")]
 
     def test_focus_is_rechecked_just_before_the_key(self):
         between = self._between_click_and_key()
         self.assertIn("[Win32]::GetForegroundWindow()", between)
-        self.assertIn("[Win32]::PidAt($ix, $iy)", between)
+        self.assertIn("[Win32]::RootAt($ix, $iy)", between)
 
     def test_interference_means_the_key_is_not_sent(self):
         between = self._between_click_and_key()
-        self.assertIn("-ne $kakaoPid", between)
+        self.assertIn("$rootNow -ne $h", between)
         # 물러나는 길이 있어야 한다 — 확인이 어긋난 채로 Ctrl+S 까지 흐르면 안 된다
         self.assertTrue(
             "continue" in between and "Stop-Safely" in between,
@@ -120,7 +136,11 @@ class EveryClickIsGuardedTests(unittest.TestCase):
         self.assertGreaterEqual(len(clicks), 3, "클릭 경로를 못 찾았다 — 정규식을 확인할 것")
         for m in clicks:
             with self.subTest(at=EXPORT[:m.start()].count("\n") + 1):
-                self.assertIn("[Win32]::PidAt(", EXPORT[max(0, m.start() - 900):m.start()])
+                above = EXPORT[max(0, m.start() - 1400):m.start()]
+                self.assertRegex(
+                    above, r"\[Win32\]::(RootAt|PidAt)\(",
+                    "클릭 바로 위에 '그 자리에 보이는 창' 확인이 없다",
+                )
 
 
 class TabIsIdentifiedNotAssumedTests(unittest.TestCase):

@@ -144,6 +144,25 @@ public class Win32 {
     if (h == IntPtr.Zero) return 0;
     uint pid = 0; GetWindowThreadProcessId(h, out pid); return pid;
   }
+  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
+
+  // 그 화면 좌표에 보이는 창의 **최상위 창** 핸들. 창이 없으면 IntPtr.Zero.
+  //
+  // PidAt 만으로는 부족하다. 프로세스만 비교하면 **같은 카톡의 다른 창**이 덮고
+  // 있어도 통과한다 — 채팅방 서랍이 그렇다(실측 2026-09-11: 서랍 창이 열린 채
+  // 남아 화면 전체를 덮고 있었고, 같은 PID 라 자리 확인을 그냥 통과했다).
+  // 그러면 Ctrl+S 가 방 창이 아니라 서랍으로 간다.
+  //
+  // 핸들을 그대로 비교할 수도 없다. WindowFromPoint 는 가장 깊은 자식(입력칸
+  // 컨트롤 등)을 돌려주므로 방 창 핸들과 절대 같지 않다. GA_ROOT(2) 로 최상위까지
+  // 올린 뒤에 비교해야 '그 자리가 방 창인가' 를 창 단위로 묻는 것이 된다.
+  public static IntPtr RootAt(int x, int y){
+    POINT p; p.X = x; p.Y = y;
+    IntPtr h = WindowFromPoint(p);
+    if (h == IntPtr.Zero) return IntPtr.Zero;
+    IntPtr root = GetAncestor(h, 2);
+    return root == IntPtr.Zero ? h : root;
+  }
   public static bool ForceForeground(IntPtr h){
     uint target = GetWindowThreadProcessId(h, IntPtr.Zero);
     uint me = GetCurrentThreadId();
@@ -378,10 +397,14 @@ function Select-ChatTab {
     }
     $tx = [int]($mr.X + $barWidth / 2)
 
+    # 여기서 누르는 것은 **메인 창**의 탭 띠다. 프로세스가 아니라 그 창인지 묻는다 —
+    # PidAt 으로 보면 채팅방 서랍처럼 같은 카톡의 다른 창이 덮고 있어도 통과한다.
+    $mainH = [IntPtr]$Main.Current.NativeWindowHandle
+
     for ($dy = 20; $dy -le 320; $dy += 24) {
         $ty = [int]($contentTop + $dy)
-        $pidAtTab = [Win32]::PidAt($tx, $ty)
-        if ($pidAtTab -ne $KakaoPid) { continue }    # 남의 창이 덮은 자리는 누르지 않는다
+        $rootAtTab = [Win32]::RootAt($tx, $ty)
+        if ($rootAtTab -ne $mainH) { continue }      # 남의 창이 덮은 자리는 누르지 않는다
         [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($tx, $ty)
         Start-Sleep -Milliseconds 120
         [Win32]::MouseClick()
@@ -507,16 +530,21 @@ function Open-RoomWindow {
     }
     Write-Log ("  후보 줄: '{0}' (일치율 {1:P0}, y={2})" -f $best.text, $bestScore, $best.y)
 
-    # 클릭할 자리가 실제로 카톡인지 확인 — '항상 위' 창이 덮고 있으면 클릭하지 않는다.
-    # 변수 이름이 아래 Ctrl+S 쪽 가드($pidAt)와 겹치지 않게 둔다 — 안전장치 계약
-    # 테스트가 '첫 번째 $pidAt 가드' 를 Ctrl+S 가드로 보고 검사한다.
+    # 클릭할 자리가 실제로 메인 창인지 확인 — 덮고 있으면 클릭하지 않는다.
+    # 프로세스가 아니라 창으로 묻는다: PidAt 으로 보면 채팅방 서랍처럼 같은 카톡의
+    # 다른 창이 목록을 덮고 있어도 통과해, 더블클릭이 서랍으로 간다.
+    # 변수 이름이 아래 Ctrl+S 쪽 가드($rootAt)와 겹치지 않게 둔다 — 안전장치 계약
+    # 테스트가 '첫 번째 $rootAt 가드' 를 Ctrl+S 가드로 보고 검사한다.
     $cy = [int]$best.y
-    $pidAtRow = [Win32]::PidAt($cx, $cy)
-    if ($pidAtRow -ne $kakaoPid) {
+    $rootAtRow = [Win32]::RootAt($cx, $cy)
+    if ($rootAtRow -ne $mh) {
+        $pidAtRow = [Win32]::PidAt($cx, $cy)
         $who = '알 수 없음'
         if ($pidAtRow -ne 0) { try { $who = (Get-Process -Id $pidAtRow -ErrorAction Stop).ProcessName } catch {} }
-        Write-Log ("  클릭 자리($cx, $cy)가 다른 창에 덮여 있습니다 — '$who'(PID $pidAtRow). " +
-            "'항상 위'로 떠 있는 창(작업 관리자 등)일 수 있습니다. 클릭하지 않습니다") 'WARN'
+        $rt = New-Object System.Text.StringBuilder 256
+        [void][Win32]::GetWindowText($rootAtRow, $rt, 256)
+        Write-Log ("  클릭 자리($cx, $cy)가 다른 창에 덮여 있습니다 — '$who'(PID $pidAtRow) 창='$($rt.ToString())'. " +
+            "'항상 위'로 떠 있는 창(작업 관리자 등)이나 카톡의 다른 창(채팅방 서랍 등)일 수 있습니다. 클릭하지 않습니다") 'WARN'
         return $null
     }
 
@@ -666,7 +694,13 @@ function Get-ScreenState {
     [void][Win32]::GetWindowText($fg, $t, 256)
     $isRoom = if ($fg -eq $RoomHandle) { '방 창' } else { "방 창 아님 — '$($t.ToString())'" }
     $ptPid = [Win32]::PidAt($X, $Y)
-    "앞에 있는 창: $isRoom / 입력칸 자리($X, $Y): $(& $name $ptPid)(PID $ptPid)"
+    # 프로세스 이름만 적으면 서랍이 덮고 있어도 'KakaoTalk' 이라고 적혀 안심하게
+    # 된다. 그 자리가 방 창인지까지 적는다.
+    $ptRoot = [Win32]::RootAt($X, $Y)
+    $pt = New-Object System.Text.StringBuilder 256
+    [void][Win32]::GetWindowText($ptRoot, $pt, 256)
+    $ptIs = if ($ptRoot -eq $RoomHandle) { '방 창' } else { "방 창 아님 — '$($pt.ToString())'" }
+    "앞에 있는 창: $isRoom / 입력칸 자리($X, $Y): $(& $name $ptPid)(PID $ptPid), $ptIs"
 }
 
 function Close-OwnedPopups {
@@ -741,15 +775,42 @@ if (-not (Test-UsableRect $r)) {
 # 3) 최상단 확보 — 다른 앱에 Ctrl+S 를 보내면 안 된다.
 #    SetForegroundWindow 는 호출자가 포그라운드가 아니면 윈도우가 거부하므로(실측)
 #    Alt 를 눌러 전환을 허용시키고 여러 번 시도한다.
+#
+#    기다리는 시간이 넉넉해야 한다. 예전에는 5회·0.4초로 **1.5초** 만에 포기했는데,
+#    2026-09-10 윈도우 업데이트 재부팅 뒤 첫 실행이 정확히 그 1.5초를 못 버티고
+#    그날 수집을 통째로 버렸다(실측). 로그온 직후에는 시작 프로그램들이 서로
+#    포그라운드를 가져가느라 몇 초에서 몇십 초까지 어수선하다.
+#
+#    기다리는 것은 공짜지만 하루치를 버리는 것은 되돌릴 수 없다. 점점 늦추며
+#    28.2초까지 버틴다 — 밤 갱신 전체가 20~30분 걸리는 일이라 이 정도는 값이 없다.
+$waits = @(0.4, 0.8, 1.5, 2.5, 4, 5, 5, 5, 4)
 $ok = $false
-for ($try = 1; $try -le 5; $try++) {
+for ($try = 1; $try -le $waits.Count; $try++) {
     if ([Win32]::ForceForeground($h)) { $ok = $true; break }
-    Start-Sleep -Milliseconds 400
+    Start-Sleep -Milliseconds ([int]($waits[$try - 1] * 1000))
     if ([Win32]::GetForegroundWindow() -eq $h) { $ok = $true; break }
-    Write-Log "최상단 전환 재시도 $try/5" 'WARN'
+
+    # 방 창이 소유한 팝업이 살아 있으면 방 창은 포커스를 받지 못한다. 카톡 기동
+    # 직후 공지 팝업이 뜨는 것이 그 꼴이라(실측 2026-09-10 06:03: 시작 시 5개),
+    # 시작할 때 한 번 치우는 것으로는 부족하다 — 재시도할 때마다 다시 치운다.
+    # 팝업이 없으면 아무것도 적지 않고 조용히 돌아온다.
+    [void](Close-OwnedPopups -RoomHandle $h -When "재시도 $try 에")
+
+    # 누가 앞을 차지하고 있는지 적는다. 예전 로그는 "재시도 n/5" 만 남겨서
+    # 무엇에 밀렸는지 알 수 없었고, 남긴 화면(png)을 열어야만 보였다.
+    $fgNow = [Win32]::GetForegroundWindow()
+    $fgT = New-Object System.Text.StringBuilder 256
+    [void][Win32]::GetWindowText($fgNow, $fgT, 256)
+    Write-Log ("최상단 전환 재시도 {0}/{1} — 지금 앞에 있는 창: '{2}'" -f `
+        $try, $waits.Count, $fgT.ToString()) 'WARN'
 }
 if (-not $ok) {
-    Stop-Safely "방 창을 최상단으로 올리지 못했습니다. 다른 앱에 단축키가 갈 위험이 있어 중단합니다."
+    $fgT = New-Object System.Text.StringBuilder 256
+    [void][Win32]::GetWindowText([Win32]::GetForegroundWindow(), $fgT, 256)
+    $why = ("방 창을 최상단으로 올리지 못했습니다({0:N1}초 기다림) — 앞에 있는 창: '{1}'. " -f `
+        ($waits | Measure-Object -Sum).Sum, $fgT.ToString()) +
+        "다른 앱에 단축키가 갈 위험이 있어 중단합니다."
+    Stop-Safely $why
 }
 $kakaoPid = $win.Current.ProcessId
 Write-Log "최상단 확보 확인 (카톡 PID=$kakaoPid)"
@@ -793,14 +854,21 @@ for ($att = 1; $att -le $maxTry; $att++) {
     # 그리고 이건 실패로 끝나는 것보다 나쁠 수 있다. 덮은 창이 편집기라면 Ctrl+S 가
     # 남의 파일을 저장한다. 이 스크립트의 원칙은 '엉뚱한 창에 키를 보내지 않는다' 이므로,
     # 포그라운드만 보지 말고 클릭할 자리가 실제로 카톡인지 확인한다.
-    $pidAt = [Win32]::PidAt($ix, $iy)
-    if ($pidAt -ne $kakaoPid) {
+    # 프로세스가 아니라 **창**으로 묻는다. PidAt 으로 보면 채팅방 서랍처럼 같은
+    # 카톡 프로세스인 다른 창이 덮고 있을 때 그냥 통과한다(실측 2026-09-11).
+    $rootAt = [Win32]::RootAt($ix, $iy)
+    if ($rootAt -ne $h) {
+        $pidAt = [Win32]::PidAt($ix, $iy)
         $who = '알 수 없음'
         if ($pidAt -ne 0) {
             try { $who = (Get-Process -Id $pidAt -ErrorAction Stop).ProcessName } catch {}
         }
-        $covered = "입력칸 자리($ix, $iy)가 다른 창에 덮여 있습니다 — '$who'(PID $pidAt). " +
-            "'항상 위'로 떠 있는 창(작업 관리자·알림 풍선 등)을 닫고 다시 시도하세요."
+        $wt = New-Object System.Text.StringBuilder 256
+        [void][Win32]::GetWindowText($rootAt, $wt, 256)
+        $title = $wt.ToString()
+        $same = if ($pidAt -eq $kakaoPid) { ' — 카톡의 **다른 창**입니다' } else { '' }
+        $covered = "입력칸 자리($ix, $iy)가 다른 창에 덮여 있습니다 — '$who'(PID $pidAt) 창='$title'$same. " +
+            "'항상 위'로 떠 있는 창(작업 관리자·알림 풍선 등)이나 카톡의 다른 창(채팅방 서랍 등)을 닫고 다시 시도하세요."
         if ($att -lt $maxTry) {
             Write-Log "$covered 잠시 기다린 뒤 다시 시도합니다 ($att/$maxTry)" 'WARN'
             Start-Sleep -Seconds 5
@@ -823,8 +891,8 @@ for ($att = 1; $att -le $maxTry; $att++) {
     # 카톡에 닿지 않았다. 확인은 한 번으로 끝나는 검사가 아니라 '키를 보내기
     # 직전의 상태' 여야 한다.
     $fgNow = [Win32]::GetForegroundWindow()
-    $pidNow = [Win32]::PidAt($ix, $iy)
-    if ($fgNow -ne $h -or $pidNow -ne $kakaoPid) {
+    $rootNow = [Win32]::RootAt($ix, $iy)
+    if ($fgNow -ne $h -or $rootNow -ne $h) {
         $stolen = "클릭 직후에 다른 창이 끼어들었습니다 — Ctrl+S 를 보내지 않습니다. " +
             (Get-ScreenState -RoomHandle $h -X $ix -Y $iy)
         if ($att -lt $maxTry) {
