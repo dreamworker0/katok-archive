@@ -19,6 +19,7 @@
   7. 발행본 재생성                             build_firestore_payload.py
   8. 테스트로 정합성 확인 (적재 전에)          unittest
   9. Firestore·Storage 적재                    upload_firestore.js
+  9b. 원본 데이터 백업 (비치명적)               backup_data.py (C: 매일 · 구글 드라이브 7일마다)
  10. 결과를 화면에 남기기                      report_run.js
  11. 작업 폴더 마름질(로그·스크린샷)          prune_workspace.py
 
@@ -114,6 +115,37 @@ function Report-Run {
     try { $out = & node @a 2>&1 } catch { $out = "기록 실패: $_" }
     finally { $ErrorActionPreference = $prevEap }
     foreach ($l in $out) { Say "    $l" }
+}
+
+# 원본 데이터 백업 — C: 다른 SSD(매일) + 구글 드라이브 zip(7일마다). scripts/backup_data.py.
+#
+# 발행한 날과 건너뛴 날 **둘 다** 부른다. 조용한 날에도 서랍은 첨부를 받아 assets/ 가
+# 바뀐다. 실패해도 갱신은 성공이다 — 대신 관리 탭 사유 줄과 디스코드로 알린다.
+# 백업이 조용히 멈추면 그것을 알게 되는 날은 백업이 필요한 날이다.
+function Invoke-Backup {
+    if ($DryRun) { return }
+    Say '원본 데이터 백업'
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = & python -m scripts.backup_data 2>&1
+        $code = $LASTEXITCODE
+        foreach ($l in $out) {
+            if ("$l" -match '^BACKUP_FAILED=') { continue }
+            if ("$l" -match '^WARN (.*)') { Say "    $($Matches[1])" 'WARN' } else { Say "    $l" }
+        }
+        if ($code -ne 0) {
+            $script:backupWarn = '백업 실패'
+            $detail = @($out | Where-Object { "$_" -match '^WARN ' } | ForEach-Object { "$_" -replace '^WARN ', '' })
+            $text = "💾 카톡 아카이브 백업 실패 (exit $code)`n" + ($detail -join "`n")
+            foreach ($l in (& node scripts\notify.js --text $text 2>&1)) { Say "    [알림] $l" }
+        }
+    }
+    catch {
+        $script:backupWarn = '백업 실패'
+        Say "    백업 실패(갱신은 계속합니다): $_" 'WARN'
+    }
+    finally { $ErrorActionPreference = $prevEap }
 }
 
 # 한 번에 하나만 돈다 — 겹쳐 돌면 발행이 반쪽 상태로 섞인다.
@@ -570,8 +602,10 @@ if ($added -eq 0 -and -not $requestsChanged -and $classified -eq 0 -and $merged 
     # 건너뛴 것은 실패가 아니다. 그래도 남긴다 — 이 기록이 없으면 화면은 '실패'와
     # '조용한 날'을 구분하지 못하고, 둘 다 '소식 없음'으로 보인다.
     # 서랍·첨부 경고는 조용한 날에도 사람이 봐야 한다 — 발행을 안 해도 첨부는 만료된다.
+    Invoke-Backup
     $skipWhy = '발행 사유 없음'
     if ($script:drawerWarn) { $skipWhy += " · ⚠ $($script:drawerWarn)" }
+    if ($script:backupWarn) { $skipWhy += " · ⚠ $($script:backupWarn)" }
     Report-Run -status 'skipped' -why $skipWhy -added 0
     Say "===== 일일 갱신 종료 ====="
     exit 0
@@ -704,8 +738,10 @@ if ($requestsChanged) { $why += "멤버 요청 변경" }
 if ($classified -gt 0) { $why += "분류 $classified 건" }
 if ($merged -gt 0) { $why += "주제 합치기 $merged 묶음" }
 if ($stale) { $why += "뒤처진 발행본 따라잡기" }
+Invoke-Backup
 # 발행 사유는 아니지만 같은 줄에 얹는다 — 여기가 사람이 실제로 보는 유일한 자리다.
 if ($script:drawerWarn) { $why += "⚠ $($script:drawerWarn)" }
+if ($script:backupWarn) { $why += "⚠ $($script:backupWarn)" }
 Say ("===== 일일 갱신 완료: {0} 발행 =====" -f ($why -join ', '))
 Report-Run -status 'ok' -why ($why -join ', ') -added $added
 

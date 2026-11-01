@@ -61,6 +61,7 @@ Firestore 적재 → 테스트까지 자동으로 진행된다.
 | `scripts/collect_drawer.py` | 받은 원본을 inbox/drawer/ 로 옮겨 메시지에 잇기 |
 | `scripts/audit_attachments.py` | 대화의 첨부가 아카이브에 들어왔는지 대조 — 곧 만료·잃음만 알린다 |
 | `scripts/notify.js` | 갱신이 성공해도 사람이 알아야 할 일을 디스코드로 한 줄 |
+| `scripts/backup_data.py` | 원본 데이터를 C:(매일)·구글 드라이브(7일마다)에 백업 |
 | `scripts/ai_reports.py` | 사람 보고서 옆의 AI 검증 주석을 무인으로 쓰기 (2026-08-27) |
 | `scripts/run_daily.ps1` | 위 단계를 순서대로 실행 |
 | `scripts/classify_unsorted.py` | 미분류 스레드를 주제별로 분류 (유일한 LLM 단계) |
@@ -629,6 +630,25 @@ OCR 은 무료·오프라인이고 한국어를 읽지만 한계가 있다 — �
 저장소는 코드만 백업한다(2026-07-26 결정). `output/`·`assets/images/`·
 `KakaoTalk_*.txt` 는 `.gitignore` 로 빠져 있고 이력에도 없다. 실명 대화와 사진은
 36명의 개인정보이고, 협업자를 한 명 초대하면 그 사람에게 방 전체가 열리기 때문이다.
+
+### 원본 데이터 백업 (2026-11-01)
+
+저장소 밖의 원본은 `scripts/backup_data.py` 가 밤 갱신 끝(9b)에 두 곳으로 옮긴다.
+발행한 날과 건너뛴 날 모두 돈다. 실패하면 관리 탭 사유 줄과 디스코드로 알린다.
+
+| 어디 | 언제 | 어떻게 | 막는 것 |
+|---|---|---|---|
+| `C:\KatokArchiveBackup\mirror` | 매일 | 바뀐 것만 복사, **지우지 않음** | D: 디스크 고장 |
+| 구글 드라이브 `내 드라이브\카톡아카이브-백업` | 7일마다 | 날짜별 zip, 최근 4개 | PC 분실·랜섬웨어·망가진 것이 덮어써진 경우 |
+
+- 담는 것: `output/` · `assets/` · `inbox/processed/` · `config/` · 루트 `KakaoTalk_*.txt` (약 1GB).
+- 빼는 것: `inbox/drawer/`(날짜별로 반복된 서랍 임시 보관함, 알맹이는 `assets/`),
+  서비스 계정 키(콘솔에서 새로 만든다), 클라우드 묶음의 `config/notify.json`(웹훅).
+- 첫 실행: C: 2,868개 13초, 구글 드라이브 zip 938MB 52초. 이후 C: 는 1초 안팎.
+- 되살리기: C: 사본을 그대로 프로젝트 폴더에 복사하거나, zip 을 프로젝트 폴더에 푼다
+  (zip 안의 경로가 프로젝트 기준 상대 경로다). 그 뒤 서비스 계정 키만 새로 둔다.
+- 손으로: `python -m scripts.backup_data --dry-run`, 클라우드 묶음을 당장 새로
+  만들려면 `--force-cloud`.
 
 그래서 손으로 쓴 보고서(`output/reports/*.md`)의 원본이 로컬 디스크 한 곳에만
 남는다. 발행하면 본문이 `threads/all` 문서에 통째로 실리므로 Firestore 가 사실상
