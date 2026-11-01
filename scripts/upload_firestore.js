@@ -71,16 +71,73 @@ function credentialHelp() {
   );
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 토큰을 못 받았을 때 얼마나 더 기다려 볼 것인가 (합계 67초).
+//
+// 실측 2026-09-12 00:00:59: 이 PC 의 DNS 가 30초쯤 먹통이 되어
+// oauth2.googleapis.com 을 풀지 못했고, 적재는 하필 그 한가운데에 걸려 죽었다.
+// 그 직전(23:40)과 직후(00:01:27)에는 **같은 키로** Firestore 읽기·쓰기가
+// 멀쩡히 됐다. 21분을 돌고 온 갱신을 30초짜리 끊김 때문에 통째로 버리는 것은
+// 손해가 너무 크다. 기다리는 것은 공짜다.
+const CRED_RETRY_WAITS_MS = [2000, 5000, 10000, 20000, 30000];
+
+/** 자격증명 탓인가, 네트워크 탓인가.
+ *
+ *  이 구분이 없으면 로그가 거짓말을 한다. 위 실측에서 남은 말은 "인증 정보를
+ *  찾지 못했습니다 — 새 비공개 키를 생성하세요" 였는데, 키는 멀쩡했다.
+ *  그 안내를 따랐다면 멀쩡한 키를 갈아 끼우며 엉뚱한 곳을 뒤졌을 것이다. */
+function looksLikeNetwork(e) {
+  const code = String((e && (e.code || (e.cause && e.cause.code))) || "");
+  const msg = String((e && e.message) || "");
+  const both = code + " " + msg;
+  return (
+    /EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|EPIPE|ECONNABORTED|ENETDOWN/.test(both) ||
+    /getaddrinfo|socket hang up|network error|network timeout|timed out|Client network/i.test(msg)
+  );
+}
+
 /** 자격증명이 실제로 쓸 수 있는지 미리 확인한다.
  *  ADC 는 initializeApp 시점에 실패하지 않고 첫 사용에서 터지므로,
- *  토큰을 한 번 받아보고 적재를 시작한다. */
+ *  토큰을 한 번 받아보고 적재를 시작한다.
+ *
+ *  여기서 멈춰도 반쪽 적재는 생기지 않는다 — 쓰기 전의 사전 확인이다. */
 async function verifyCredential() {
-  try {
-    await admin.app().options.credential.getAccessToken();
-  } catch (e) {
-    console.error("\n" + credentialHelp());
-    process.exit(1);
+  let last = null;
+  for (let i = 0; i <= CRED_RETRY_WAITS_MS.length; i++) {
+    try {
+      await admin.app().options.credential.getAccessToken();
+      if (i > 0) console.log(`인증 확인: ${i}번째 재시도에서 성공했습니다.`);
+      return;
+    } catch (e) {
+      last = e;
+      // 네트워크가 아니라면(키가 잘못됐다면) 기다려도 달라지지 않는다 — 바로 멈춘다.
+      if (!looksLikeNetwork(e) || i === CRED_RETRY_WAITS_MS.length) break;
+      console.error(
+        `토큰을 받지 못했습니다 (${e.message}) — 일시적인 네트워크 문제로 보입니다. ` +
+          `${CRED_RETRY_WAITS_MS[i] / 1000}초 뒤 다시 시도합니다 ` +
+          `(${i + 1}/${CRED_RETRY_WAITS_MS.length}).`
+      );
+      await sleep(CRED_RETRY_WAITS_MS[i]);
+    }
   }
+
+  // 포기한다. **진짜 이유를 반드시 남긴다** — 예전에는 이것을 삼켜서
+  // 로그만 보고는 원인을 알 수 없었다.
+  const code = last && (last.code || (last.cause && last.cause.code));
+  console.error("\n토큰을 받지 못해 적재를 멈춥니다.");
+  console.error(`  실제 오류: ${(last && last.name) || "?"}: ${(last && last.message) || "?"}`);
+  if (code) console.error(`  코드: ${code}`);
+  if (looksLikeNetwork(last)) {
+    const waited = CRED_RETRY_WAITS_MS.reduce((a, b) => a + b, 0) / 1000;
+    console.error(
+      `\n구글에 닿지 못했습니다(${waited}초 동안 재시도) — **자격증명 문제가 아닙니다.**\n` +
+        "  인터넷 연결과 DNS 를 확인한 뒤 다시 돌리세요. 키를 새로 만들 필요가 없습니다.\n"
+    );
+  } else {
+    console.error("\n" + credentialHelp());
+  }
+  process.exit(1);
 }
 
 function init() {
@@ -648,6 +705,7 @@ async function main() {
 
 module.exports = { stableStringify, docHash, planWrites, planUploads, loadState, staleState,
                    syncCollection, cacheHashWarning, publishPlan, splitPlan,
+                   looksLikeNetwork, CRED_RETRY_WAITS_MS,
                    STATE_VERSION, STATE_PATH };
 
 if (require.main === module) {
