@@ -23,7 +23,7 @@
  *   관리자 명단(members, role == admin)도 듣는다. 바뀌면 디스코드로 알린다 —
  *   이 PC 에 늘 붙어 있는 리스너가 여기뿐이라 얹었다. 자세한 것은 admin_alert.js.
  *   검색창의 'AI에게 물어보기' 질문(asks)도 같은 이유로 여기서 듣는다 — ask_worker.js.
- *   밤 갱신 기록(settings/lastRun)이 26시간 넘게 비면 디스코드로 알린다 — missed_run.js.
+ *   밤 갱신 기록(settings/lastRun)이 27시간 넘게 비면 디스코드로 알린다 — missed_run.js.
  *
  * 이 스크립트가 하지 않는 일
  *   - 요청을 만들지 않는다. 만드는 것은 requestRefresh Function 뿐이다.

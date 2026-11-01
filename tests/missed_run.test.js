@@ -32,14 +32,14 @@ function opts(file, sent, extra) {
   };
 }
 
-test("정상인 날의 간격(25시간)은 알리지 않는다", () => {
-  const v = mr.judge({ lastRun: lastRunAgo(25), now: NOW, running: false, alertedFor: null });
+test("정상인 날의 가장 긴 간격(26시간 — 다음 밤이 시간 제한 끝까지 돈 날)은 알리지 않는다", () => {
+  const v = mr.judge({ lastRun: lastRunAgo(26), now: NOW, running: false, alertedFor: null });
   assert.equal(v.missed, false);
   assert.equal(v.why, "fresh");
 });
 
-test("26시간을 넘으면 알린다", () => {
-  const v = mr.judge({ lastRun: lastRunAgo(27), now: NOW, running: false, alertedFor: null });
+test("27시간을 넘으면 알린다", () => {
+  const v = mr.judge({ lastRun: lastRunAgo(27.5), now: NOW, running: false, alertedFor: null });
   assert.equal(v.missed, true);
   assert.equal(v.notify, true);
 });

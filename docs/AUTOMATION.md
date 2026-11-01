@@ -65,7 +65,7 @@ Firestore 적재 → 테스트까지 자동으로 진행된다.
 | `scripts/publish_state.py` | 발행본이 로컬보다 뒤처졌는지 판정 (네 번째 발행 사유) |
 | `scripts/refresh_watcher.js` | 관리 탭의 '지금 갱신' 을 받아 위를 실행 (상주) |
 | `scripts/report_run.js` | 갱신 결과를 `settings/lastRun` 에 남겨 관리 탭에 보이게 하고, 실패는 디스코드로 알린다 |
-| `scripts/missed_run.js` | 밤 갱신 기록이 26시간 넘게 비면 디스코드로 알린다 (갱신감시 안에서) |
+| `scripts/missed_run.js` | 밤 갱신 기록이 27시간 넘게 비면 디스코드로 알린다 (갱신감시 안에서) |
 | `scripts/prune_workspace.py` | 로그·스크린샷·백업 마름질 (자산 중복은 손으로만) |
 | `scripts/llm.py` | `claude -p` 호출과 응답 읽기 — 일곱 모듈 공용 |
 | `scripts/tag_surgery.py` | 태그 수술 넷이 함께 쓰는 골격 (백업하고 적용) |
@@ -183,7 +183,7 @@ powershell -File scripts\kakao_export.ps1 -Discover
 | 권한 | Limited (관리자 아님) | 카톡과 같은 권한이어야 메시지를 보낼 수 있다 |
 | 놓친 실행 | `-StartWhenAvailable` | PC 가 꺼져 있었으면 켠 뒤에 한 번 만회한다 |
 | 동시 실행 | `IgnoreNew` | 겹쳐 돌아 발행이 꼬이지 않게 |
-| 시간 제한 | 1시간 | 멈춘 실행을 방치하지 않는다 |
+| 시간 제한 | 2시간 (2026-11-01, 1시간에서) | 멈춘 실행을 방치하지 않는다. 가장 긴 밤이 37분이라 1시간은 여유가 모자랐다 — 넘기면 적재 도중에 죽고 실패 알림도 못 간다 |
 
 확인·해제:
 ```powershell
@@ -416,12 +416,13 @@ stderr 를 오류로 승격시키지 않는다 — 알림을 남기려는 코드
 ### 안 돈 날도 알린다 (2026-11-01)
 
 위 알림은 run_daily 가 **끝까지 와서 말할 수 있을 때**만 간다. 예약 작업이 아예
-안 떴거나, 1시간 실행 제한에 걸려 윈도우가 죽였거나, powershell 이 죽은 날은
+안 떴거나, 실행 시간 제한(2시간)에 걸려 윈도우가 죽였거나, powershell 이 죽은 날은
 `Report-Run` 에 닿지 못해 조용했다.
 
 `scripts/missed_run.js` 가 갱신감시(`refresh_watcher.js`) 안에서 30분마다
-`settings/lastRun.finishedAt` 을 보고, **26시간 넘게 그대로면** 디스코드로 한 줄
-보낸다. 정상인 날의 간격은 길어야 25시간이다.
+`settings/lastRun.finishedAt` 을 보고, **27시간 넘게 그대로면** 디스코드로 한 줄
+보낸다. 정상인 날의 간격은 길어야 26시간이다(23:45 끝 → 다음 밤 제한 끝 01:40).
+실행 제한을 늘리면 `MISSED_AFTER_MS` 도 같이 늘린다.
 
 - 지금 돌고 있으면(`logs/run_daily.lock` 이 잡혀 있으면) 말하지 않는다.
 - 감시가 막 떴을 때는 15분 기다린 뒤 처음 본다 — 켜진 직후 따라잡기 실행과 겹치지 않게.
