@@ -300,7 +300,11 @@
       cache = null;
       paint();
       var today = dayOf(Date.now());
-      admin.usage(addDays(today, -13)).then(function (r) {
+      // 접히지 않은 원본은 가장 긴 보기(90일)만큼 거슬러 읽는다. 예전엔 14일뿐이라
+      // PC 가 2주 넘게 꺼져 있던 동안의 날이 30·90일 보기에서 0 으로 나왔다(2026-11-11
+      // 외부 평가 지적). 읽는 양은 늘지 않는다 — 접힌 날의 원본은 이미 지워져 있어,
+      // 걸리는 것은 아직 안 접힌 날뿐이다.
+      admin.usage(addDays(today, -(RANGES[RANGES.length - 1] - 1))).then(function (r) {
         var days = Object.assign({}, (r.summary && r.summary.days) || {});
         // 아직 접히지 않은 날(오늘, PC 가 꺼져 있던 날)은 원본에서 바로 합친다.
         var raw = {};

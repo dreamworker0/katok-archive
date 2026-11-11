@@ -233,12 +233,29 @@
      * 닫으면 누른 사진으로 돌려보낸다 — 그러지 않으면 키보드 사용자는 닫은 뒤
      * 페이지 맨 위에서 다시 시작한다. 탭 가두기와 Esc 는 app.js 의 keydown 이 한다. */
     var lightboxReturn = null;
+    /* 라이트박스의 원본·동영상 주소는 캐시하지 않고 닫을 때 놓아준다(urlForOnce).
+     * lbSeq 는 '지금 열린 것' 의 번호다 — 받기 전에 닫거나 다른 것을 열었으면,
+     * 늦게 도착한 주소는 화면에 걸지 않고 바로 놓아준다. 안 그러면 닫힌 창에 걸린
+     * 15MB 짜리가 아무도 모르게 남는다. */
+    var lbUrl = null, lbSeq = 0;
+    function releaseLightboxUrl() {
+      lbSeq++;
+      if (lbUrl) { window.ArchiveImages.release(lbUrl); lbUrl = null; }
+    }
+    function fetchFull(path, apply) {
+      var seq = lbSeq;
+      window.ArchiveImages.urlForOnce(path).then(function (u) {
+        if (seq !== lbSeq) { window.ArchiveImages.release(u); return; }
+        lbUrl = u; apply(u);
+      });
+    }
     function focusLightbox(img) {
       lightboxReturn = img || document.activeElement;
       var c = document.getElementById("lightboxClose");
       if (c) c.focus();
     }
     function openLightbox(img) {
+      if (window.ArchiveImages) releaseLightboxUrl();
       // 크게 볼 때는 원본이어야 한다. 화면의 칸에 걸린 것은 갤러리용 작은 사진이라
       // 그 blob 을 그대로 띄우면 흐리게 보인다. data-full 이 원본 경로다.
       var full = img.getAttribute("data-full");
@@ -258,7 +275,7 @@
         v.poster = img.src || "";
         el.lightbox.classList.add("on");
         focusLightbox(img);
-        window.ArchiveImages.urlFor(full).then(function (u) {
+        fetchFull(full, function (u) {
           v.src = u;
           v.play().catch(function () { /* 자동재생을 막는 브라우저는 눌러서 본다 */ });
         });
@@ -271,7 +288,7 @@
       if (full && window.ArchiveImages) {
         // 원본이 뜨기 전까지는 작은 사진을 보여 준다 — 빈 화면보다 낫다
         if (img.src) el.lightboxImg.src = img.src;
-        window.ArchiveImages.urlFor(full).then(function (u) { el.lightboxImg.src = u; });
+        fetchFull(full, function (u) { el.lightboxImg.src = u; });
       } else if (img.src) {
         el.lightboxImg.src = img.src;
       } else if (path && window.ArchiveImages) {
@@ -301,6 +318,8 @@
       // 닫을 때 src 를 비우지 않으면 동영상이 뒤에서 계속 내려온다
       var v = document.getElementById("lightboxVideo");
       if (v) { v.pause(); v.removeAttribute("src"); v.load(); }
+      // 걸려 있던 것을 다 뗀 뒤에 놓아준다 — 먼저 놓으면 화면이 깨진 그림을 한 번 그린다
+      if (window.ArchiveImages) releaseLightboxUrl();
     }
 
     return { renderGallery: renderGallery, renderFiles: renderFiles, fileIcon: fileIcon, bindFiles: bindFiles, bindImages: bindImages, openLightbox: openLightbox, closeLightbox: closeLightbox };

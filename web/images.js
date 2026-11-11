@@ -149,11 +149,27 @@
     });
   }
 
+  /** 크게 볼 원본·동영상용 — 캐시하지 않은 새 주소. 다 쓰면 release 로 놓아준다.
+   *
+   *  urlFor 는 받은 blob 을 탭이 닫힐 때까지 들고 있다. 작은 사진(수십 KB)이면
+   *  괜찮지만 라이트박스의 원본 사진(수 MB~22MB)과 동영상(15MB 안팎)까지 그렇게
+   *  쌓이면 휴대폰 브라우저가 메모리 부족으로 탭을 죽인다(2026-11-11 외부 평가 지적).
+   */
+  function urlForOnce(assetPath) {
+    if (mode === "local") return Promise.resolve(assetPath);
+    return fetchProtected(assetPath);
+  }
+  function release(url) {
+    if (url && String(url).indexOf("blob:") === 0) URL.revokeObjectURL(url);
+  }
+
   window.ArchiveImages = {
     useStorage: useStorage,
     download: download,
     observe: observe,
     urlFor: resolve,
+    urlForOnce: urlForOnce,
+    release: release,
     diagnose: diagnose,
     get mode() { return mode; },
   };

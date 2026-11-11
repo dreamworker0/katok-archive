@@ -1,3 +1,9 @@
+> **⚠️ 지금 구조를 설명하는 문서가 아니다.** 이 저장소의 초기 기획안(2026-07-21)이다.
+> 여기 적힌 스택(Cloudflare Workers·D1·R2·Hono·React·Azure OpenAI, welfareai.net)은
+> 쓰지 않았고, 실제 아카이브는 Firebase(Hosting·Firestore·Storage·Functions)와 이 PC 의
+> 밤 갱신으로 돈다 — [README.md](../README.md)·[DEPLOY.md](DEPLOY.md)·[AUTOMATION.md](AUTOMATION.md)
+> 를 볼 것. 기획의 생각(무엇을 왜 만드나)을 남기려고 지우지 않았다. (2026-11-11)
+
 # PRD — welfareai.net
 ## AI 네이티브 사회복지 실천 커뮤니티
 
