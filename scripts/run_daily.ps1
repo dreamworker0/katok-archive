@@ -11,6 +11,7 @@
   5. 주제 분류 (LLM, 비치명적)                 classify_unsorted.py
   5a. 답장 관계를 분류에 반영 (비치명적)        apply_replies.py
   5a-2. 같은 날 갈린 주제 합치기 (LLM, 비치명적) audit_same_day.py + merge_threads.py
+  5a-3. 삭제가 든 주제 보고서 다시 쓰기 (LLM, 비치명적) report_cleanup.py
   5c. 발행본이 로컬보다 뒤처졌나 확인           publish_state.py
   5d. 요지 산문 갱신 (LLM, 비치명적)            digest_prose.py
   5e. 관계망 근거 붙이기 (LLM 없음, 비치명적)  graph_evidence.py
@@ -577,6 +578,44 @@ try {
     }
 }
 catch { Say "같은 날 주제 합치기가 실패했습니다 — 없이 계속합니다: $_" 'WARN' }
+finally { $ErrorActionPreference = $prevEap }
+
+# 5a-3) 삭제·제외된 글이 든 주제의 보고서를 남은 글로 다시 쓴다 (2026-11-11)
+#
+#     여럿이 나눈 대화에서 한 사람이 글을 지워 달라고 하면 그 글은 발행에서 빠지지만,
+#     주제 보고서와 AI 주석은 그 글이 있을 때 쓴 것이라 인용·요약이 남는다. 사용자
+#     결정은 '보류 + 다시 쓰기' 다 — 발행본(7)은 아직 다시 쓰지 않은 주제의 보고서를
+#     안내 문구로 바꿔 내보내고(build_firestore_payload → report_cleanup.withhold),
+#     여기서 남은 글만으로 다시 쓴다. 다 쓴 주제는 옛 AI 주석을 백업으로 옮기고 바로
+#     새로 쓴다. 하룻밤 다섯 편까지(편당 약 $0.05~0.4), 남은 것은 다음 밤에.
+#
+#     AI 주석(5b-2) **앞**에 둔다 — 새 보고서를 재료로 그날 새 주석을 쓰게.
+#     실패해도 갱신을 멈추지 않는다. 다시 못 쓴 주제는 보류된 채로 발행된다(새는 쪽이
+#     아니라 덜 보이는 쪽으로 틀린다).
+Say '--- 삭제가 든 주제 보고서 다시 쓰기 ---'
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $cleanOut = & { python -m scripts.report_cleanup } 2>&1
+    $cleanCode = $LASTEXITCODE
+    $cleanedIds = ''
+    $withheldLeft = 0
+    foreach ($l in $cleanOut) {
+        if ($l -match '^CLEANED_IDS=(.*)$') { $cleanedIds = $Matches[1].Trim(); continue }
+        if ($l -match '^REPORTS_WITHHELD=(\d+)$') { $withheldLeft = [int]$Matches[1]; continue }
+        Say "    $l"
+    }
+    Test-StepExit '삭제 반영 보고서 다시 쓰기' $cleanCode
+    if ($cleanedIds) {
+        Say "    다시 쓴 주제의 AI 주석을 새로 씁니다: $cleanedIds"
+        foreach ($l in (& { python -m scripts.ai_reports --ids $cleanedIds } 2>&1)) { Say "    $l" }
+        Test-StepExit '삭제 반영 AI 주석' $LASTEXITCODE
+    }
+    if ($withheldLeft -gt 0) {
+        Add-StepWarn "삭제 반영 대기로 보류 중인 보고서 $withheldLeft 편"
+    }
+}
+catch { Say "삭제 반영 보고서 다시 쓰기가 실패했습니다 — 보류한 채 계속합니다: $_" 'WARN' }
 finally { $ErrorActionPreference = $prevEap }
 
 # 5b-2) AI 검증 주석 (agy 검색 전용 에이전트 + 주소 열기 + LLM 작성)

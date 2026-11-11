@@ -27,7 +27,8 @@ import shutil
 from collections import Counter
 from pathlib import Path
 
-from scripts import build_site, jsonio, member_requests, ontology, pii, scan_image_pii, warnlog
+from scripts import (build_site, jsonio, member_requests, ontology, pii, report_cleanup,
+                     scan_image_pii, warnlog)
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
@@ -513,6 +514,14 @@ def build_payload() -> dict:
     #   - 본인 글 관리       myMessages, 본인 표시명 것만
     threads_pub = build_site.enrich_threads(data["threads"], data["messages"])
 
+    # 일부 글이 삭제·제외된 주제는, 그 제외를 반영해 다시 쓰기 전까지 보고서·AI 주석을
+    # 보류한다(2026-11-11 사용자 결정 '보류 + 다시 쓰기'). 보고서는 빠진 글이 있을 때
+    # 쓴 것이라 인용·요약에 남아 있을 수 있다. 다시 쓰기는 밤에 report_cleanup 이 한다.
+    pending = report_cleanup.pending_exclusions(topics, kept_ids)
+    withheld = report_cleanup.withheld_ids(pending)
+    report_cleanup.withhold(threads_pub, withheld)
+    report["withheld_reports"] = sorted(withheld)
+
     # 개인정보가 찍힌 사진은 발행하지 않는다. 판정은 OCR 로 미리 해 둔 것을 읽는다
     # (scripts/ocr_images.ps1 → scripts/scan_image_pii.py). 판정 파일이 없으면
     # 아무것도 감추지 않는다 — 검사를 아직 안 돌렸다고 발행이 멈추면 안 된다.
@@ -766,6 +775,9 @@ def main() -> None:
     if r["hidden_threads"]:
         print("발행 제외 주제 %d개: %s"
               % (len(r["hidden_threads"]), ", ".join(r["hidden_threads"][:5])))
+    if r.get("withheld_reports"):
+        print("보고서 보류 %d개(삭제 반영해 다시 쓰기 대기): %s"
+              % (len(r["withheld_reports"]), ", ".join(r["withheld_reports"][:5])))
     mr = r["member_requests"]
     if mr["applied_people"] or mr["applied_message_ids"]:
         print("멤버 요청 반영: 발행 제외 %d명, 개별 메시지 %d건"
