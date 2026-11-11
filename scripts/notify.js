@@ -30,6 +30,9 @@ async function main() {
   await sendNotice(cfg, text + "\n" + os.hostname());
 }
 
+// process.exit() 로 끊지 않는다. 디스코드로 보낸(fetch) 직후 끊으면 Windows 의 Node 가
+// 'UV_HANDLE_CLOSING' 단언으로 죽는다(admin_alert.js 실측 2026-10-08). 종료 코드만
+// 0 으로 정해 두고 저절로 끝나게 둔다 — 실패해도 갱신을 실패로 만들지 않는다.
 main().catch((e) => {
   console.error("디스코드 알림 실패(무시하고 계속):", e.message);
-}).finally(() => process.exit(0));
+}).finally(() => { process.exitCode = 0; });

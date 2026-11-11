@@ -1241,5 +1241,41 @@ class PhotoAltContractTests(unittest.TestCase):
         self.assertIn("el.lightboxImg.alt = img.alt", self.read("gallery.js"))
 
 
+class RefactorLeftoverTests(unittest.TestCase):
+    """화면 파일을 떼어낼 때의 일괄 바꾸기가 남긴 자국.
+
+    `A` → `ctx.data().A` 를 통째로 바꾸다 정규식 안 `[A-Za-z0-9_-]` 까지
+    `[ctx.data().A-Za-z0-9_-]` 로 바뀌어 있었다(timeline.js 보고서 내려받기,
+    2026-11-11 외부 평가에서 발견). 같은 꼴이 다시 생기지 않게 본다.
+    """
+
+    def test_no_ctx_data_inside_regex_character_class(self):
+        for path in sorted((ROOT / "web").glob("*.js")):
+            src = path.read_text(encoding="utf-8")
+            self.assertNotIn("[ctx.data()", src, path.name)
+
+    def test_report_download_names_videos_as_videos(self):
+        src = (ROOT / "web" / "timeline.js").read_text(encoding="utf-8")
+        body = src[src.index("function downloadReport"):][:2500]
+        self.assertIn('m.kind === "video"', body)
+        self.assertIn("🎬 동영상", body)
+
+    def test_every_css_variable_used_is_defined(self):
+        """정의 안 된 변수를 쓰면 조용히 비어 버린다 — `var(--card)` 가 그랬다.
+        태그 상단 고정 막대의 배경이 투명해져 아래 글자와 겹쳤다."""
+        css = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
+        defined = set(re.findall(r"(--[A-Za-z0-9-]+)\s*:", css))
+        for name in ("index.hosting.html", "index.html"):
+            p = ROOT / "web" / name
+            if p.exists():
+                defined |= set(re.findall(r"(--[A-Za-z0-9-]+)\s*:", p.read_text(encoding="utf-8")))
+        # JS 가 넣는 것(style.setProperty, 인라인 style="--c:...")도 정의로 친다
+        js = front_end_js()
+        defined |= set(re.findall(r"setProperty\(\s*[\"'](--[A-Za-z0-9-]+)", js))
+        defined |= set(re.findall(r"[\"';](--[A-Za-z0-9-]+):", js))
+        used = set(re.findall(r"var\(\s*(--[A-Za-z0-9-]+)\s*\)", css))
+        self.assertEqual(sorted(used - defined), [])
+
+
 if __name__ == "__main__":
     unittest.main()

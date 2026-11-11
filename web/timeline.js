@@ -626,7 +626,7 @@
       /* 자리표는 화면에서만 사진으로 부풀 뿐, 파일에 그대로 두면 뜻 모를 기호가
          된다. 무엇이 그 자리에 있었는지 한 줄로 적어 남긴다. */
       var body = String(t.report || "").replace(
-        /^!\[\[link:([ctx.data().A-Za-z0-9_-]+)\]\]$/gm,
+        /^!\[\[link:([A-Za-z0-9_-]+)\]\]$/gm,
         function (all, id) {
           var links = (t.links || []).filter(function (x) { return x.id === id; });
           return links.map(function (l) {
@@ -634,12 +634,14 @@
               l.nickname + " · " + l.date + " " + (l.time || "");
           }).join("\n");
         }
-      ).replace(/^!\[\[\s*([ctx.data().A-Za-z0-9_-]+)\s*\]\]$/gm,
+      ).replace(/^!\[\[\s*([A-Za-z0-9_-]+)\s*\]\]$/gm,
         function (all, id) {
           var m = ctx.data().MEDIA.filter(function (x) { return x.id === id; })[0];
           if (!m) return "";
           var what = m.kind === "file"
             ? "📎 " + (m.name || (m.file && m.file.name) || "첨부")
+            : m.kind === "video"
+            ? "🎬 동영상" + (m.videos && m.videos.length > 1 ? " " + m.videos.length + "편" : "")
             : "🖼 사진" + (m.images && m.images.length > 1 ? " " + m.images.length + "장" : "");
           return "> " + what + " — " + m.nickname + " · " + m.date + " " + (m.time || "");
         });

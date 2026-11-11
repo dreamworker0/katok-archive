@@ -38,21 +38,29 @@ class KeyGoesOnlyToTheRoomTests(unittest.TestCase):
     포그라운드여도 그 위에 그려지고, 그 자리를 누르면 포커스가 그리로 넘어간다.
     """
 
-    def test_pid_at_helper_exists(self):
+    def test_root_at_helper_exists(self):
         self.assertIn("static extern IntPtr WindowFromPoint(POINT p)", DRAWER)
         self.assertIn("public static uint PidAt(int x, int y)", DRAWER)
+        self.assertIn("public static IntPtr RootAt(int x, int y)", DRAWER)
 
-    def test_click_is_guarded_by_pid_check(self):
-        self.assertIn("$pidAt = [DW]::PidAt($ix, $iy)", DRAWER)
-        self.assertIn("if ($pidAt -ne $kpid) {", DRAWER)
+    def test_click_is_guarded_by_window_check_not_process(self):
+        """프로세스(PidAt)가 아니라 창(RootAt)으로 묻는다.
+
+        같은 카톡의 다른 창 — 전에 열어 둔 서랍이 남아 있는 것 등 — 이 덮으면 PID 는
+        같아서 PidAt 검사는 통과한다(kakao_export.ps1 실측 2026-09-11). 그 자리가
+        방 창 자신인지를 봐야 한다.
+        """
+        self.assertIn("$rootAt = [DW]::RootAt($ix, $iy)", DRAWER)
+        self.assertIn("if ($rootAt -ne $room) {", DRAWER)
+        self.assertNotIn("if ($pidAt -ne $kpid) {", DRAWER)
 
     def test_guard_runs_before_the_click_and_before_the_key(self):
-        guard = DRAWER.index("$pidAt = [DW]::PidAt($ix, $iy)")
+        guard = DRAWER.index("$rootAt = [DW]::RootAt($ix, $iy)")
         self.assertLess(guard, DRAWER.index("[DW]::mouse_event([DW]::LEFTDOWN", guard))
         self.assertLess(guard, DRAWER.index("[DW]::SendCtrlJ()"))
 
     def test_mismatch_gives_up_instead_of_clicking_anyway(self):
-        block = DRAWER[DRAWER.index("if ($pidAt -ne $kpid) {"):][:700]
+        block = DRAWER[DRAWER.index("if ($rootAt -ne $room) {"):][:900]
         self.assertIn("return [IntPtr]::Zero", block)
         # 어느 창이 덮었는지 알려줘야 사람이 치울 수 있다
         self.assertIn("Get-Process -Id $pidAt", block)

@@ -207,6 +207,16 @@ public class DW {
         if (h == IntPtr.Zero) return 0;
         uint pid; GetWindowThreadProcessId(h, out pid); return pid;
     }
+    // 그 화면 좌표에 보이는 창의 **최상위 창** 핸들. 창이 없으면 IntPtr.Zero.
+    // PidAt 만 보면 같은 카톡의 다른 창(남아 있는 서랍 등)이 덮어도 통과한다 —
+    // kakao_export.ps1 의 RootAt 과 같은 까닭이다(실측 2026-09-11).
+    public static IntPtr RootAt(int x, int y) {
+        var p = new POINT(); p.X = x; p.Y = y;
+        IntPtr h = WindowFromPoint(p);
+        if (h == IntPtr.Zero) return IntPtr.Zero;
+        IntPtr root = GetAncestor(h, GA_ROOT);
+        return root == IntPtr.Zero ? h : root;
+    }
     public static bool ForceForeground(IntPtr h) {
         uint pid; uint target = GetWindowThreadProcessId(h, out pid);
         uint me = GetCurrentThreadId();
@@ -311,11 +321,15 @@ function Open-DrawerWindow {
 
     # 최상단인데도 '항상 위' 창이 그 위에 그려질 수 있다(kakao_export.ps1 실측:
     # 작업 관리자). 그 상태로 누르면 포커스가 그리로 넘어가고 Ctrl+J 도 따라간다.
-    $pidAt = [DW]::PidAt($ix, $iy)
-    if ($pidAt -ne $kpid) {
+    # 프로세스가 아니라 **창**으로 묻는다 — 같은 카톡의 다른 창(전에 연 서랍이 남은
+    # 것 등)이 덮고 있으면 PidAt 은 통과시킨다.
+    $rootAt = [DW]::RootAt($ix, $iy)
+    if ($rootAt -ne $room) {
+        $pidAt = [DW]::PidAt($ix, $iy)
         $who = '알 수 없음'
         if ($pidAt -ne 0) { try { $who = (Get-Process -Id $pidAt -ErrorAction Stop).ProcessName } catch {} }
-        Write-Log ("  입력칸 자리($ix,$iy)가 다른 창에 덮여 있습니다 — '$who'(PID $pidAt). " +
+        $same = if ($pidAt -eq $kpid) { ' — 카톡의 다른 창' } else { '' }
+        Write-Log ("  입력칸 자리($ix,$iy)가 다른 창에 덮여 있습니다 — '$who'(PID $pidAt)$same. " +
             "누르지 않습니다") 'WARN'
         return [IntPtr]::Zero
     }

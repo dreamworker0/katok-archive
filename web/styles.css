@@ -298,13 +298,13 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .tag-search { display: flex; align-items: center; gap: 10px; margin: 6px 0 12px; }
 .tag-hits { font-size: 12px; color: var(--ink-soft); }
 .tag-search input { width: 100%; max-width: 320px; padding: 7px 11px; font: inherit;
-  font-size: 13px; color: var(--ink); background: var(--card); border: 1px solid var(--line);
+  font-size: 13px; color: var(--ink); background: var(--surface); border: 1px solid var(--line);
   border-radius: 10px; }
 .tag-cloud { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
 .tag-cloud.small .tag-chip { font-size: 1em !important; }
 .tag-chip { display: inline-flex; align-items: baseline; gap: 5px; cursor: pointer;
   padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px;
-  background: var(--card); color: var(--ink); font-family: inherit; line-height: 1.3; }
+  background: var(--surface); color: var(--ink); font-family: inherit; line-height: 1.3; }
 /* `display: inline-flex` 는 브라우저 기본 `[hidden] { display: none }` 보다 세다.
  * 그래서 좁히기 검색이 hidden 을 걸어도 칩이 그대로 보였다(2026-07-28 실측). */
 .tag-cloud .tag-chip[hidden] { display: none; }
@@ -315,11 +315,11 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .tag-chip.on .tag-n { color: rgba(255, 255, 255, .75); }
 .tag-chip[disabled] { opacity: .35; cursor: default; }
 .tag-chip[disabled]:hover { color: var(--ink); border-color: var(--line);
-  background: var(--card); }
+  background: var(--surface); }
 /* 고른 태그와 결과 수 — 목록 위에 붙어 따라온다 */
 .tag-bar { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap;
   align-items: center; gap: 8px; margin: 0 0 10px; padding: 10px 12px;
-  border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .tag-bar-n { font-size: 13px; font-weight: 600; color: var(--ink-soft);
   margin-left: auto; }
 

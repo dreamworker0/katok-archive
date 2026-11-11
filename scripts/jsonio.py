@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 
 
@@ -38,9 +40,47 @@ def _text(data, indent: int | None) -> str:
     return json.dumps(data, ensure_ascii=False, indent=indent) + "\n"
 
 
+def _atomic_write(path: str | Path, chunks) -> None:
+    """옆에 임시 파일로 다 쓴 뒤 한 번에 바꿔 끼운다.
+
+    대상 파일을 바로 열어 쓰면(open "w") 여는 순간 비워진다. 그 사이에 밤 갱신이
+    끊기면(예약작업 2시간 제한, 정전) messages.jsonl·topics.json 이 반쯤 잘린 채
+    남는다. 임시 파일에 끝까지 쓰고 디스크에 내린 뒤 os.replace 로 바꾸면, 남는 것은
+    옛 파일 아니면 새 파일 둘 중 하나다.
+
+    줄바꿈은 예전과 같게 둔다(텍스트 모드 — Windows 에선 CRLF). 바이트가 달라지면
+    git diff 가 파일 전체를 바뀐 것으로 본다.
+
+    Windows 는 다른 프로그램(백신·백업·편집기)이 대상 파일을 잠깐 쥐고 있으면
+    os.replace 가 PermissionError 로 실패한다. 잠깐씩 기다리며 몇 번 더 해 본다.
+    """
+    p = Path(path)
+    tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as fh:
+            for chunk in chunks:
+                fh.write(chunk)
+            fh.flush()
+            os.fsync(fh.fileno())
+        for attempt in range(6):
+            try:
+                os.replace(tmp, p)
+                return
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                time.sleep(0.25 * (attempt + 1))
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
 def write_json(path: str | Path, data, indent: int | None = 2) -> None:
     """사람이 읽고 git diff 로 볼 파일이라 들여쓰기를 준다."""
-    Path(path).write_text(_text(data, indent), encoding="utf-8")
+    _atomic_write(path, [_text(data, indent)])
 
 
 def write_json_if_changed(path: str | Path, data, indent: int | None = 2) -> bool:
@@ -63,11 +103,9 @@ def write_json_if_changed(path: str | Path, data, indent: int | None = 2) -> boo
                 return False
         except (OSError, UnicodeDecodeError):
             pass          # 못 읽으면 쓴다 — 읽기 실패가 안 쓸 이유는 못 된다
-    p.write_text(text, encoding="utf-8")
+    _atomic_write(p, [text])
     return True
 
 
 def write_jsonl(path: str | Path, rows: list[dict]) -> None:
-    with Path(path).open("w", encoding="utf-8") as fh:
-        for row in rows:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    _atomic_write(path, (json.dumps(row, ensure_ascii=False) + "\n" for row in rows))
