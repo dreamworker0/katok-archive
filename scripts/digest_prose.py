@@ -79,7 +79,8 @@ NIGHTLY_LIMIT = 3
 # ------------------------------------------------------------------ 낡음 판정
 
 def select_stale(categories: list[dict], threads: list[dict], prose: dict,
-                 today: date | None = None) -> list[str]:
+                 today: date | None = None,
+                 exclusion_fp: dict[str, str] | None = None) -> list[str]:
     """다시 쓸 분류 id. 주제가 많이 쌓인 분류를 먼저 돌려준다.
 
     두 기준을 **또는** 으로 본다.
@@ -115,6 +116,12 @@ def select_stale(categories: list[dict], threads: list[dict], prose: dict,
         as_of = p.get("as_of") or {}
         if not p.get("overview") or not as_of.get("date"):
             rows.append((now, cid))
+            continue
+        # 쓴 뒤로 삭제·숨김·보류가 생겼다 — 발행본은 이 요지를 보류하고 있으니
+        # 가장 먼저 다시 쓴다(2026-11-11). 새 주제가 늘어난 것은 여기 걸리지 않는다.
+        if exclusion_fp is not None and \
+                (as_of.get("exclusion_fp") or "") != (exclusion_fp.get(cid) or ""):
+            rows.append((10 ** 6, cid))
             continue
         if digest_needs_sections(p, now):
             rows.append((now, cid))
@@ -295,8 +302,25 @@ def load_state() -> dict:
     `retag_reports.load_state` 와 같은 이유다.
     """
     topics = jsonio.read_json(TOPICS)
-    threads = topics["threads"]
-    reports = load_reports()
+    # 발행되는 것만 재료로 쓴다(2026-11-11 외부 평가 6차 지적). 예전에는 원장 전체를
+    # 읽어, 숨긴 주제·통째로 지운 주제·보류 중인 보고서의 내용까지 요지에 들어갈 수
+    # 있었다. 발행과 같은 제외 계산(report_cleanup._current)을 쓰고, 일부만 빠진 주제는
+    # 남은 글만 센다. 계산을 못 하면 여기서 멈춘다 — 다 넣고 쓰는 쪽으로 넘어가지 않는다.
+    from scripts import report_cleanup
+    _raw, pending, kept_ids = report_cleanup._current()
+    withheld = report_cleanup.withheld_ids(pending)
+    exclusion_fp = report_cleanup.category_exclusion_fp(_raw, kept_ids, withheld)
+    threads = []
+    for th in topics["threads"]:
+        if th["id"] in withheld:
+            continue
+        ids = [m for m in th.get("message_ids") or [] if m in kept_ids]
+        if not ids:
+            continue
+        th["message_ids"] = ids
+        threads.append(th)
+    alive = {th["id"] for th in threads}
+    reports = {k: v for k, v in load_reports().items() if k in alive}
     participants = jsonio.read_json(PARTICIPANTS) if PARTICIPANTS.is_file() else {}
     places, _ = taglib.load_places()
 
@@ -332,6 +356,7 @@ def load_state() -> dict:
         "secondary": secondary,
         "prose": prose,
         "vocabulary": [n for n, _ in taglib.vocabulary(threads, participants, places)],
+        "exclusion_fp": exclusion_fp,
     }
 
 
@@ -394,6 +419,8 @@ def rewrite(cid: str, state: dict, model: str, timeout: int,
         "date": date.today().isoformat(),
         "thread_count": len(mine),
         "last_thread_id": mine[-1]["id"] if mine else "",
+        # 이 글이 반영한 제외(삭제·숨김·보류)의 지문 — 달라지면 발행본이 보류한다
+        "exclusion_fp": state.get("exclusion_fp", {}).get(cid, ""),
     }
     print("    headline: %s" % obj["headline"])
     if obj["sections"]:
@@ -430,7 +457,8 @@ def main() -> int:
         todo = valid
         print("열두 편 전부 다시 씁니다 (%d개)." % len(todo))
     else:
-        todo = select_stale(state["categories"], state["threads"], state["prose"])
+        todo = select_stale(state["categories"], state["threads"], state["prose"],
+                            exclusion_fp=state["exclusion_fp"])
         print("낡은 분류 %d/%d개: %s"
               % (len(todo), len(valid), ", ".join(todo) or "(없음)"))
 

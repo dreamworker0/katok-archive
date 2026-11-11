@@ -87,6 +87,57 @@ def withhold(threads: list[dict], ids: set[str]) -> int:
     return n
 
 
+# ── 분류 요지(digest) ── (2026-11-11 외부 평가 6차 지적)
+#
+# 요지 산문도 보고서와 같은 처지다 — 분류의 보고서들을 읽고 쓴 글이라, 그 뒤 삭제·
+# 숨김·보류가 생기면 지워진 대화의 내용이 첫 화면 요지에 남는다. 분류마다 '지금의
+# 제외 지문' 을 셈해, 요지가 쓰일 때의 지문(as_of.exclusion_fp)과 다르면
+#   · 발행본은 그 요지의 산문을 보류하고(withhold_digests)
+#   · digest_prose 는 그 분류를 낡은 것으로 보아 다시 쓴다.
+# 새 주제가 늘어도 지문은 그대로다 — 빠진 것만 센다. 그래야 새 주제마다 요지를
+# 다시 쓰는 값을 치르지 않는다.
+
+WITHHELD_DIGEST = ("이 분류의 소개글은 멤버의 삭제 요청을 반영해 다시 정리하는 중이에요. "
+                   "아래 주제 목록은 지금 기준입니다.")
+
+
+def category_exclusion_fp(topics: dict, kept_ids: set[str],
+                          withheld: set[str]) -> dict[str, str]:
+    """분류 id → 빠진 것의 지문. 빠진 것이 없으면 '' (옛 요지와 견줄 때 그대로 같다)."""
+    import hashlib
+    import json
+    gone: dict[str, list[str]] = {}
+    for t in topics.get("threads", []):
+        cid = t.get("category") or ""
+        lost = [m for m in t.get("message_ids") or [] if m not in kept_ids]
+        if t["id"] in withheld:
+            lost.append("withheld:" + t["id"])
+        if lost:
+            gone.setdefault(cid, []).extend(lost)
+    return {cid: hashlib.sha1(json.dumps(sorted(v)).encode("utf-8")).hexdigest()[:16]
+            for cid, v in gone.items()}
+
+
+def digest_needs_refresh(digest: dict, fp: str) -> bool:
+    """요지가 쓰일 때의 제외 지문과 지금이 다른가."""
+    return ((digest.get("as_of") or {}).get("exclusion_fp") or "") != (fp or "")
+
+
+def withhold_digests(digests: dict, fps: dict[str, str]) -> list[str]:
+    """발행본 요지에서, 지금의 제외를 반영하지 못한 분류의 산문을 안내로 바꾼다."""
+    out = []
+    for cid, d in digests.items():
+        if not digest_needs_refresh(d, fps.get(cid, "")):
+            continue
+        d["headline"] = ""
+        d["overview"] = WITHHELD_DIGEST
+        d["sections"] = []
+        d["keywords"] = []
+        d["prose_withheld"] = True
+        out.append(cid)
+    return sorted(out)
+
+
 def _current() -> tuple[dict, dict[str, list[str]], set[str]]:
     """(topics, 일부 빠진 주제, 남은 글 ID) — 발행과 같은 계산으로."""
     from scripts import build_firestore_payload as bp

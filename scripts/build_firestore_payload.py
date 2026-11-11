@@ -521,6 +521,10 @@ def build_payload() -> dict:
     withheld = report_cleanup.withheld_ids(pending)
     report_cleanup.withhold(threads_pub, withheld)
     report["withheld_reports"] = sorted(withheld)
+    # 분류 요지도 같다 — 요지를 쓸 때보다 빠진 것이 늘었으면 산문을 보류한다.
+    # 다시 쓰기는 밤에 digest_prose 가 한다(그 분류를 낡은 것으로 본다).
+    report["withheld_digests"] = report_cleanup.withhold_digests(
+        data["digests"], report_cleanup.category_exclusion_fp(topics, kept_ids, withheld))
 
     # 개인정보가 찍힌 사진은 발행하지 않는다. 판정은 OCR 로 미리 해 둔 것을 읽는다
     # (scripts/ocr_images.ps1 → scripts/scan_image_pii.py). 판정 파일이 없으면
@@ -741,8 +745,13 @@ def main() -> None:
         summary.append("내 글 %d명분(최대 %dKB)"
                        % (len(mine), max(d["bytes"] for d in mine) // 1024))
     print("문서 %d개: %s" % (len(docs), " · ".join(summary)))
-    for w in size_warnings(docs):
+    size_warns = size_warnings(docs)
+    for w in size_warns:
         print("[주의] " + w)
+    # run_daily.ps1 이 읽는 표식 — 문서가 한도의 80% 를 넘으면 관리 탭 사유 줄로
+    # 올린다(2026-11-11). 로그에만 있던 경고라, 사람이 보기 전에 한도에 닿아 그 밤
+    # 발행이 검사에서 멈출 수 있었다(가장 큰 '내 글' 문서가 이미 한도의 절반쯤이다).
+    print("SIZE_WARN=%d" % len(size_warns))
     hidden_shots = sum(m.get("pii_hidden") or 0 for m in payload["media"])
     if hidden_shots:
         print("개인정보가 찍힌 사진 %d장 발행 제외 (업로드 목록에서도 뺐습니다)"
@@ -778,6 +787,9 @@ def main() -> None:
     if r.get("withheld_reports"):
         print("보고서 보류 %d개(삭제 반영해 다시 쓰기 대기): %s"
               % (len(r["withheld_reports"]), ", ".join(r["withheld_reports"][:5])))
+    if r.get("withheld_digests"):
+        print("분류 요지 보류 %d개(삭제 반영해 다시 쓰기 대기): %s"
+              % (len(r["withheld_digests"]), ", ".join(r["withheld_digests"])))
     mr = r["member_requests"]
     if mr["applied_people"] or mr["applied_message_ids"]:
         print("멤버 요청 반영: 발행 제외 %d명, 개별 메시지 %d건"
