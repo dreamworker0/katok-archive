@@ -428,7 +428,7 @@
   function ArchiveAnswer(ctx) {
     var esc = ctx.esc, state = ctx.state;
     var doc = null, unsub = null, pcAsleep = false, waitTimer = null;
-    var vdoc = null, vunsub = null;
+    var vdoc = null, vunsub = null, vAsleep = false, vWaitTimer = null;
 
     function reqs() { return state.session && state.session.requests; }
     function enabled() { var r = reqs(); return !!(r && r.ask && r.watchAsk); }
@@ -472,6 +472,12 @@
         var started = millisOf(v.startedAt);
         if (st === "running" && started && Date.now() - started > VERIFY_STUCK_MS) {
           return '<div class="ai-verify-ask"><p class="ai-answer__note ai-answer__note--warn">확인이 멈춘 것 같아요.</p>' +
+            verifyButton("🔎 다시 확인하기") + "</div>";
+        }
+        // 확인 줄만 끊겼을 수 있다 — 질문은 되는데 확인은 아무도 안 받는 상태(2026-11-11)
+        if (st === "queued" && vAsleep) {
+          return '<div class="ai-verify-ask"><p class="ai-answer__note ai-answer__note--warn">' +
+            "확인을 맡는 PC 쪽이 지금 응답하지 않아요. 잠시 뒤 다시 눌러 주세요.</p>" +
             verifyButton("🔎 다시 확인하기") + "</div>";
         }
         var msg = st === "queued" ? "확인을 부탁했어요. PC가 받으면 시작해요…"
@@ -615,7 +621,10 @@
       if (vb) vb.onclick = function () {
         vb.disabled = true;
         vdoc = { state: "queued", local: true };
+        vAsleep = false;
         paint();
+        clearTimeout(vWaitTimer);
+        vWaitTimer = setTimeout(checkVerifyPc, WAIT_HINT_MS);
         reqs().verify().catch(function (e) {
           vdoc = { state: "failed", local: true,
                    message: "확인을 부탁하지 못했어요: " + (e && e.message ? e.message : e) };
@@ -628,6 +637,16 @@
                              { ai: c.hasAttribute("data-ai-open") });
         };
       });
+    }
+
+    /** 확인 부탁도 같다 — 확인 줄의 하트비트(verifySeenAt)를 따로 본다. */
+    function checkVerifyPc() {
+      if (!vdoc || vdoc.state !== "queued" || !reqs().verifySeenAt) return;
+      reqs().verifySeenAt().then(function (seen) {
+        var t = seen ? Date.parse(seen) : NaN;
+        vAsleep = !(t > Date.now() - STALE_MS);
+        paint();
+      }, function () { /* 못 읽으면 말하지 않는다 */ });
     }
 
     /** 한참 지나도 PC 가 안 받으면 하트비트를 본다. 꺼져 있으면 그렇다고 말한다. */

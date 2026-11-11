@@ -264,3 +264,53 @@ test("마감 쓰기마저 실패해도 던지지 않는다 — 듣기 고리가 
   await W.settleOnError(async () => { throw new Error("a"); },
     async () => { throw new Error("네트워크"); }, () => {}, "질문", "x");
 });
+
+/* ── 하트비트는 줄마다 따로 (2026-11-11) ──
+ * 확인 줄(verifies)만 끊겨도 seenAt 은 정상으로 찍혀 아무도 몰랐다. */
+// 앞선 검사들이 남긴 일(띄운 자식 프로세스 등)로 이벤트 고리가 붐빌 수 있어, 시간을
+// 정해 두지 않고 조건이 찰 때까지 기다린다(최대 2초).
+async function waitFor(cond) {
+  for (let i = 0; i < 200 && !cond(); i++) await new Promise((r) => setTimeout(r, 10));
+}
+
+function fakeDbFor(failing) {
+  const writes = [];
+  return {
+    writes,
+    collection(name) {
+      return {
+        doc() { return { set(f) { writes.push(f); return Promise.resolve(); } }; },
+        where() {
+          return {
+            onSnapshot(ok, err) {
+              if (failing.includes(name)) setImmediate(() => err(new Error("끊김")));
+              else setImmediate(() => ok({ docs: [], size: 0 }));
+              return () => {};
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+test("확인 줄만 끊기면 verifySeenAt 은 쓰지 않고 seenAt 만 쓴다", async () => {
+  const db = fakeDbFor(["verifies"]);
+  const said = [];
+  const stop = W.start(db, { say: (m) => said.push(m), once: true });
+  await waitFor(() => db.writes.length && said.length);
+  stop();
+  const keys = new Set(db.writes.flatMap((w) => Object.keys(w)));
+  assert.ok(keys.has("seenAt"), "질문 줄은 듣고 있다");
+  assert.ok(!keys.has("verifySeenAt"), "끊긴 확인 줄의 시각은 쓰지 않는다");
+  assert.ok(said.some((m) => /검증 리스너 오류/.test(m)));
+});
+
+test("둘 다 들으면 두 시각을 다 쓴다", async () => {
+  const db = fakeDbFor([]);
+  const stop = W.start(db, { say: () => {}, once: true });
+  await waitFor(() => db.writes.length >= 2);
+  stop();
+  const keys = new Set(db.writes.flatMap((w) => Object.keys(w)));
+  assert.ok(keys.has("seenAt") && keys.has("verifySeenAt"));
+});

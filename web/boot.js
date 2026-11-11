@@ -528,6 +528,12 @@
           return d.exists ? (d.data().seenAt || null) : null;
         });
       },
+      /** 확인(🔎)을 맡는 줄이 마지막으로 들은 때 — 질문 줄과 따로 끊길 수 있다(2026-11-11). */
+      verifySeenAt: function () {
+        return db.collection("status").doc("ask").get().then(function (d) {
+          return d.exists ? (d.data().verifySeenAt || null) : null;
+        });
+      },
       /* '🔎 지금 기준으로 다시 확인'. '확인해 달라' 는 표시만 쓴다 — 확인할 답은 PC 가
        * asks/{내 이메일} 에서 직접 읽는다(firestore.rules verifies). */
       verify: function () {

@@ -819,13 +819,24 @@ function requeueTopics(ids, day) {
  */
 function start(db, { say, dry = false, once = false, onIdle } = {}) {
   const BACKOFF_MS = [1000, 2000, 5000, 15000, 30000, 60000, 120000, 300000];
-  let listening = false, stopped = false;
+  let stopped = false;
   const statusRef = db.collection("status").doc("ask");
 
-  // 하트비트 — 멤버 화면이 'PC 가 꺼져 있어요' 를 말할 근거. 듣는 동안에만 쓴다.
+  /* 하트비트 — 멤버 화면이 'PC 가 꺼져 있어요' 를 말할 근거. 줄마다 따로 적는다.
+   *   seenAt        질문 줄(asks)이 듣는 중
+   *   verifySeenAt  확인 줄(verifies)이 듣는 중
+   * 예전에는 질문 줄만 보고 seenAt 을 썼다. 확인 줄만 끊기면 하트비트는 정상이라
+   * 아무도 몰랐고, 확인을 누른 사람만 하염없이 기다렸다(2026-11-11 외부 평가 지적).
+   * 끊긴 줄의 시각은 더 쓰지 않으므로 오래되어 보인다 — 그것이 신호다. */
+  const up = { "질문": false, "검증": false };
   const beat = () => {
-    if (dry || !listening) return;
-    statusRef.set({ seenAt: new Date().toISOString() }, { merge: true })
+    if (dry) return;
+    const now = new Date().toISOString();
+    const fields = {};
+    if (up["질문"]) fields.seenAt = now;
+    if (up["검증"]) fields.verifySeenAt = now;
+    if (!Object.keys(fields).length) return;
+    statusRef.set(fields, { merge: true })
       .catch((e) => say(`질문 하트비트 실패: ${e.message}`, "WARN"));
   };
   const timer = once ? null : setInterval(beat, HEARTBEAT_MS);
@@ -847,6 +858,7 @@ function start(db, { say, dry = false, once = false, onIdle } = {}) {
       if (stopped) return;
       unsub = db.collection(collection).where("state", "==", "queued").onSnapshot((qs) => {
         attempt = 0;
+        if (!up[name]) { up[name] = true; beat(); }
         if (onFirst) onFirst();
         qs.docs.forEach((snap) => {
           const key = snap.id + "@" + millisOf((snap.data() || {}).askedAt);
@@ -859,7 +871,7 @@ function start(db, { say, dry = false, once = false, onIdle } = {}) {
         });
         if (!qs.size) settle();
       }, (e) => {
-        if (name === "질문") listening = false;
+        up[name] = false;
         if (unsub) { try { unsub(); } catch (_) { /* 이미 끊겼다 */ } unsub = null; }
         const wait = BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)];
         attempt += 1;
@@ -872,7 +884,7 @@ function start(db, { say, dry = false, once = false, onIdle } = {}) {
   };
 
   const stops = [
-    listen("질문", "asks", handle, () => { if (!listening) { listening = true; beat(); } }),
+    listen("질문", "asks", handle),
     listen("검증", "verifies", handleVerify),
   ];
 
