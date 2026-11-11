@@ -153,11 +153,16 @@ async function main() {
     return;
   }
 
-  fs.writeFileSync(
-    MEMBERS,
-    JSON.stringify({ _comment: COMMENT, members }, null, 2) + "\n",
-    "utf8"
-  );
+  // 내용이 같으면 쓰지 않는다(2026-11-11) — 파일 시각이 publish_state 의 신호다.
+  // 명부가 바뀐 밤에 발행이 멈추면 다음 밤이 그 시각을 보고 다시 발행한다.
+  const text = JSON.stringify({ _comment: COMMENT, members }, null, 2) + "\n";
+  let prevText = null;
+  try { prevText = fs.readFileSync(MEMBERS, "utf8").replace(/\r\n/g, "\n"); } catch (e) { /* 없으면 쓴다 */ }
+  if (prevText === text) {
+    console.log(`\nconfig/members.json 그대로 (${members.length}명, 바뀐 것 없음)`);
+    return;
+  }
+  fs.writeFileSync(MEMBERS, text, "utf8");
   console.log(`\nconfig/members.json 갱신 (${members.length}명)`);
 }
 

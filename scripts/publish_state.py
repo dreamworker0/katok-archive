@@ -61,7 +61,17 @@ WATCHED = (
 # 밤마다 몇 편씩 쓰기 때문이다. 여기서 빠뜨리면 그날 발행이 건너뛰어지고, 쓴 글이
 # 사이트에 영영 안 올라간다(파이프라인의 다른 자리와 같은 종류의 사고다).
 REPORT_DIRS = ("reports", "ai-reports")
-REPORTS = "reports"          # 예전 이름 — 검사가 이 이름을 쓴다
+
+# 발행본을 바꾸는 **설정·요청** 파일. (2026-11-11 외부 평가 지적)
+#
+# 멤버의 삭제·숨김 요청(member-requests.json)을 내려받은 밤에 테스트나 적재에서
+# 멈추면, 다음 밤은 요청이 그대로라 REQUESTS_CHANGED=0 이고 위 원장들도 안 바뀌어
+# 발행을 건너뛰었다 — 지운다고 한 글이 화면에 남는다. 손으로 쓴 제외 규칙
+# (exclusions.json), 명부(표시명 연결), 개인정보 허용표도 같은 처지다.
+# 이 파일들은 바뀐 때만 쓴다(sync_* 가 내용을 견준다) — 시각이 곧 신호다.
+WATCHED_OUTPUT_EXTRA = ("member-requests.json", "exclusions.json")
+CONFIG = ROOT / "config"
+WATCHED_CONFIG = ("members.json", "pii_allow.json", "image_pii_allow.json")
 
 
 def last_upload_at() -> datetime | None:
@@ -85,10 +95,14 @@ def _mtime(path: Path) -> datetime:
 def newer_inputs(since: datetime) -> list[tuple[str, datetime]]:
     """`since` 보다 나중에 바뀐 발행 입력. (이름, 바뀐 시각) 로 돌려준다."""
     out: list[tuple[str, datetime]] = []
-    for name in WATCHED:
+    for name in WATCHED + WATCHED_OUTPUT_EXTRA:
         p = OUTPUT / name
         if p.exists() and _mtime(p) > since:
             out.append((name, _mtime(p)))
+    for name in WATCHED_CONFIG:
+        p = CONFIG / name
+        if p.exists() and _mtime(p) > since:
+            out.append(("config/" + name, _mtime(p)))
 
     for name in REPORT_DIRS:
         d = OUTPUT / name

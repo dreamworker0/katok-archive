@@ -34,6 +34,8 @@ class CheckTests(unittest.TestCase):
             mock.patch.object(publish_state, "OUTPUT", self.out),
             mock.patch.object(publish_state, "UPLOAD_STATE",
                               self.out / "upload-state.json"),
+            # 실제 config/ 를 읽지 않게 — 사람이 명부를 고친 날 이 검사가 흔들린다
+            mock.patch.object(publish_state, "CONFIG", self.out / "config"),
         ]
         for p in patches:
             p.start()
@@ -112,6 +114,42 @@ class CheckTests(unittest.TestCase):
         self.touch("image_ocr.json", now)
         stale, _ = publish_state.check()
         self.assertFalse(stale)
+
+    # ── 요청·설정 (2026-11-11) ──
+    #
+    # 삭제 요청을 받은 밤에 발행이 멈추면, 다음 밤은 REQUESTS_CHANGED=0 이라 앞의
+    # 사유가 다 꺼진다. 요청 파일의 시각이 남은 빚을 말해 줘야 한다.
+
+    def test_member_requests_newer_than_the_upload_is_stale(self):
+        now = datetime.now(timezone.utc)
+        self.uploaded_at(now - timedelta(hours=2))
+        self.touch("member-requests.json", now)
+        stale, line = publish_state.check()
+        self.assertTrue(stale)
+        self.assertIn("member-requests.json", line)
+
+    def test_hand_written_exclusions_are_watched(self):
+        now = datetime.now(timezone.utc)
+        self.uploaded_at(now - timedelta(hours=2))
+        self.touch("exclusions.json", now)
+        self.assertTrue(publish_state.check()[0])
+
+    def test_config_files_that_change_the_edition_are_watched(self):
+        now = datetime.now(timezone.utc)
+        for name in ("members.json", "pii_allow.json", "image_pii_allow.json"):
+            with self.subTest(name=name):
+                self.uploaded_at(now - timedelta(hours=2))
+                self.touch("config/" + name, now)
+                stale, line = publish_state.check()
+                self.assertTrue(stale)
+                self.assertIn("config/" + name, line)
+                (self.out / "config" / name).unlink()
+
+    def test_old_config_does_not_make_it_stale(self):
+        now = datetime.now(timezone.utc)
+        self.uploaded_at(now - timedelta(hours=2))
+        self.touch("config/members.json", now - timedelta(days=3))
+        self.assertFalse(publish_state.check()[0])
 
     # ── 모를 때 ──
 

@@ -179,6 +179,14 @@ async function main() {
     console.log("\n--dry-run: 파일을 쓰지 않았습니다.");
     return;
   }
+  // 바뀌었을 때만 쓴다(2026-11-11). 파일 **시각**이 publish_state 의 신호다 —
+  // 요청을 받은 밤에 쓰고 그 밤 발행이 테스트·적재에서 멈추면, 다음 밤은
+  // REQUESTS_CHANGED=0 이지만 이 파일이 마지막 적재보다 새로우므로 발행한다.
+  // 밤마다 generated_at 만 바꿔 다시 쓰면 그 신호가 매일 켜져 조용한 날이 없어진다.
+  if (!changed) {
+    console.log("output/member-requests.json 그대로 (바뀐 요청 없음)");
+    return;
+  }
   fs.writeFileSync(OUT, JSON.stringify(payload, null, 2) + "\n", "utf8");
   console.log(`output/member-requests.json 갱신 (${requests.length}명)`);
 }

@@ -408,5 +408,34 @@ class GraphEvidenceRunsEveryNightTests(unittest.TestCase):
         self.assertIn("graph_evidence.py", head)
 
 
+class QuietNightStillCatchesUpTests(unittest.TestCase):
+    """조용한 밤에도 밀린 일을 따라잡는다. (2026-11-11 외부 평가 지적)
+
+    5b(보조 분류)·5d(요지)·5e(근거)가 발행 판단 뒤에 있어서, 발행할 사유가 없는
+    밤에는 'exit 0' 으로 먼저 끝나 돌지 않았다 — '다음 밤에 이어서 한다' 가 거짓이
+    됐다. 작업 폴더 마름질도 발행하는 밤에만 돌아 서랍 스크린샷이 쌓였다.
+    """
+
+    def test_catch_up_steps_run_before_the_publish_decision(self):
+        decision = DAILY.index("python -m scripts.publish_state")
+        for step in ("python -m scripts.assign_secondary",
+                     "python -m scripts.digest_prose",
+                     "python -m scripts.graph_evidence --apply"):
+            with self.subTest(step=step):
+                self.assertLess(DAILY.index(step), decision)
+
+    def test_pruning_runs_on_quiet_nights_too(self):
+        skip = DAILY.index("$skipWhy = '발행 사유 없음'")
+        quiet = DAILY[DAILY.rindex("if ($added -eq 0 -and -not $requestsChanged", 0, skip):skip]
+        self.assertIn("Invoke-Prune", quiet)
+        self.assertLess(DAILY.index("function Invoke-Prune"), skip)
+
+    def test_mirrors_are_rewritten_only_when_they_change(self):
+        """파일 시각이 publish_state 의 신호다 — 밤마다 다시 쓰면 매일 발행한다."""
+        self.assertIn("if (!changed) {", SYNC)
+        members = (ROOT / "scripts" / "sync_members.js").read_text(encoding="utf-8")
+        self.assertIn("if (prevText === text) {", members)
+
+
 if __name__ == "__main__":
     unittest.main()

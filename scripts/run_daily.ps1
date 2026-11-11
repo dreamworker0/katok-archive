@@ -434,8 +434,9 @@ finally { $ErrorActionPreference = $prevEap }
 
 # 5) 주제 분류 (LLM) — 실패해도 갱신을 멈추지 않는다
 #
-#    파이프라인에서 유일하게 LLM 을 쓰는 칸이다. "이 대화가 어느 주제인가"는 코드가
-#    답할 수 없어서 맡긴다. 원래 사람이 주 1회 하던 일을 자동으로 돌리기로 했다.
+#    처음으로 LLM 을 쓴 칸이다(뒤에 5b-2·5b·5d 가 더해졌다 — docs/AUTOMATION.md 표).
+#    "이 대화가 어느 주제인가"는 코드가 답할 수 없어서 맡긴다. 원래 사람이 주 1회
+#    하던 일을 자동으로 돌리기로 했다.
 #
 #    Invoke-Step 을 쓰지 않는다 — 그것은 실패하면 갱신을 중단시킨다. 분류는 있으면
 #    좋은 것이고, 없으면 미분류 스레드가 남을 뿐이다. LLM 장애 때문에 그날 타임라인·
@@ -568,55 +569,29 @@ if ($null -ne $aiCode -and $aiCode -ne 0) {
     Say "AI 검증 주석이 실패했습니다 (exit $aiCode) — 없이 계속합니다." 'WARN'
 }
 
-# 5c) 네 번째 발행 사유 — 발행본이 로컬보다 뒤처졌나(지난 실행이 남긴 빚)
-#
-#     앞의 사유 셋은 모두 '이번 실행에서 새로 생긴 것' 을 본다. 그래서 지난 실행이
-#     원장에는 반영하고 적재 전에 죽은 경우를 아무도 보지 않았다. 실측 2026-07-30:
-#     23:40 갱신이 새 글 34건을 원장에 넣고 테스트 단계에서 멈췄고, 다음 날 '지금
-#     갱신' 을 눌러도 증분이 0건이라 "마쳤습니다" 만 뜨고 타임라인은 그대로였다.
-#     버튼을 몇 번 눌러도 같다 — 사람이 손으로 발행할 때까지 영영 안 올라간다.
-#
-#     Invoke-Step 을 쓰지 않는다. 이 확인이 실패해도 갱신은 굴러가야 한다.
-#     못 읽었으면 발행하는 쪽으로 기운다 — 적재는 달라진 문서만 쓰므로(해시 비교)
-#     헛발행은 거의 무료지만, 올릴 것을 안 올리면 화면이 거짓말을 한다.
-$prevEap = $ErrorActionPreference
-$ErrorActionPreference = 'Continue'
-try { $staleOut = & { python -m scripts.publish_state } 2>&1 }
-finally { $ErrorActionPreference = $prevEap }
-$staleCode = $LASTEXITCODE
-foreach ($l in $staleOut) { Say "    $l" }
-$stale = $null
-if ($null -eq $staleCode -or $staleCode -eq 0) {
-    foreach ($l in $staleOut) {
-        if ($l -match 'PUBLISH_STALE=([01])') { $stale = ($Matches[1] -eq '1') }
+# 작업 폴더 마름질(11단계)을 함수로 둔다 — 조용한 밤에도 불러야 한다. (2026-11-11)
+# 예전에는 발행하는 밤에만 돌아, 새 대화가 없는 날이 이어지면 서랍 스크린샷
+# (logs/drawer/*.png — 매일 찍힌다)이 보관 기한을 넘겨도 쌓였다. 설명은 11단계 주석.
+function Invoke-Prune {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $pruneArgs = @('-m', 'scripts.prune_workspace')
+        if (-not $DryRun) { $pruneArgs += '--apply' }
+        foreach ($l in (& python @pruneArgs 2>&1)) {
+            if ($l -match '지움|합계|마름질할 것이 없습니다') { Say "    $l" }
+        }
     }
-}
-if ($null -eq $stale) {
-    Say "발행본이 최신인지 확인하지 못했습니다 — 발행하는 쪽으로 진행합니다." 'WARN'
-    $stale = $true
+    finally { $ErrorActionPreference = $prevEap }
 }
 
-# 발행할지 판단 — 분류 뒤에 둔다(위 주석 참고)
-if ($added -eq 0 -and -not $requestsChanged -and $classified -eq 0 -and $merged -eq 0 -and -not $stale) {
-    Say "새 메시지도 멤버 요청 변경도 분류 변경도 없고 발행본도 최신이라 발행을 건너뜁니다."
-    # 건너뛴 것은 실패가 아니다. 그래도 남긴다 — 이 기록이 없으면 화면은 '실패'와
-    # '조용한 날'을 구분하지 못하고, 둘 다 '소식 없음'으로 보인다.
-    # 서랍·첨부 경고는 조용한 날에도 사람이 봐야 한다 — 발행을 안 해도 첨부는 만료된다.
-    Invoke-Backup
-    $skipWhy = '발행 사유 없음'
-    if ($script:drawerWarn) { $skipWhy += " · ⚠ $($script:drawerWarn)" }
-    if ($script:backupWarn) { $skipWhy += " · ⚠ $($script:backupWarn)" }
-    Report-Run -status 'skipped' -why $skipWhy -added 0
-    Say "===== 일일 갱신 종료 ====="
-    exit 0
-}
-if ($added -eq 0) {
-    if (-not $requestsChanged -and $classified -eq 0 -and $merged -eq 0) {
-        Say "새 메시지는 없지만 발행본이 로컬보다 뒤처져 있어 발행합니다."
-    } else {
-        Say "새 메시지는 없지만 멤버 요청 변경 또는 주제 분류가 있어 발행합니다."
-    }
-}
+# 5b·5d·5e 는 발행 판단(5c) **앞**에서 돈다. (2026-11-11 외부 평가 지적)
+#
+#     예전에는 판단 뒤에 있어서, 새 대화도 요청도 없는 밤에는 '발행 사유 없음' 으로
+#     먼저 끝나 이 셋이 돌지 않았다. 그러면 '다음 밤에 이어서 한다' 는 약속이 거짓이
+#     된다 — 밀린 요지(하룻밤 세 편까지)·전날 실패한 보조 분류·근거가 조용한 밤마다
+#     건너뛰어졌다. 할 일이 없으면 셋 다 몇 초 안에 원장을 건드리지 않고 끝나고,
+#     무언가 바꿨으면 5c 의 publish_state 가 파일 시각으로 알아채 그날 발행한다.
 
 # 5b) 보조 분류 — 새로 생긴 주제만 판정한다(이미 물어본 주제는 다시 묻지 않는다).
 #
@@ -678,6 +653,57 @@ $evidenceCode = $LASTEXITCODE
 foreach ($l in $evidenceOut) { Say "    $l" }
 if ($null -ne $evidenceCode -and $evidenceCode -ne 0) {
     Say "관계망 근거 붙이기가 실패했습니다 (exit $evidenceCode) — 옛 근거로 계속합니다." 'WARN'
+}
+
+# 5c) 네 번째 발행 사유 — 발행본이 로컬보다 뒤처졌나(지난 실행이 남긴 빚)
+#
+#     앞의 사유 셋은 모두 '이번 실행에서 새로 생긴 것' 을 본다. 그래서 지난 실행이
+#     원장에는 반영하고 적재 전에 죽은 경우를 아무도 보지 않았다. 실측 2026-07-30:
+#     23:40 갱신이 새 글 34건을 원장에 넣고 테스트 단계에서 멈췄고, 다음 날 '지금
+#     갱신' 을 눌러도 증분이 0건이라 "마쳤습니다" 만 뜨고 타임라인은 그대로였다.
+#     버튼을 몇 번 눌러도 같다 — 사람이 손으로 발행할 때까지 영영 안 올라간다.
+#
+#     Invoke-Step 을 쓰지 않는다. 이 확인이 실패해도 갱신은 굴러가야 한다.
+#     못 읽었으면 발행하는 쪽으로 기운다 — 적재는 달라진 문서만 쓰므로(해시 비교)
+#     헛발행은 거의 무료지만, 올릴 것을 안 올리면 화면이 거짓말을 한다.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try { $staleOut = & { python -m scripts.publish_state } 2>&1 }
+finally { $ErrorActionPreference = $prevEap }
+$staleCode = $LASTEXITCODE
+foreach ($l in $staleOut) { Say "    $l" }
+$stale = $null
+if ($null -eq $staleCode -or $staleCode -eq 0) {
+    foreach ($l in $staleOut) {
+        if ($l -match 'PUBLISH_STALE=([01])') { $stale = ($Matches[1] -eq '1') }
+    }
+}
+if ($null -eq $stale) {
+    Say "발행본이 최신인지 확인하지 못했습니다 — 발행하는 쪽으로 진행합니다." 'WARN'
+    $stale = $true
+}
+
+# 발행할지 판단 — 분류 뒤에 둔다(위 주석 참고)
+if ($added -eq 0 -and -not $requestsChanged -and $classified -eq 0 -and $merged -eq 0 -and -not $stale) {
+    Say "새 메시지도 멤버 요청 변경도 분류 변경도 없고 발행본도 최신이라 발행을 건너뜁니다."
+    # 건너뛴 것은 실패가 아니다. 그래도 남긴다 — 이 기록이 없으면 화면은 '실패'와
+    # '조용한 날'을 구분하지 못하고, 둘 다 '소식 없음'으로 보인다.
+    # 서랍·첨부 경고는 조용한 날에도 사람이 봐야 한다 — 발행을 안 해도 첨부는 만료된다.
+    Invoke-Backup
+    Invoke-Prune
+    $skipWhy = '발행 사유 없음'
+    if ($script:drawerWarn) { $skipWhy += " · ⚠ $($script:drawerWarn)" }
+    if ($script:backupWarn) { $skipWhy += " · ⚠ $($script:backupWarn)" }
+    Report-Run -status 'skipped' -why $skipWhy -added 0
+    Say "===== 일일 갱신 종료 ====="
+    exit 0
+}
+if ($added -eq 0) {
+    if (-not $requestsChanged -and $classified -eq 0 -and $merged -eq 0) {
+        Say "새 메시지는 없지만 발행본이 로컬보다 뒤처져 있어 발행합니다."
+    } else {
+        Say "새 메시지는 없지만 멤버 요청 변경 또는 주제 분류가 있어 발행합니다."
+    }
 }
 
 # 6) 갤러리용 작은 사진 — 발행본을 만들기 전에 있어야 한다
@@ -761,16 +787,7 @@ Report-Run -status 'ok' -why ($why -join ', ') -added $added
 #     판단할 일이라 손으로만 돌린다: python -m scripts.prune_workspace --assets
 #
 #     실패해도 갱신을 멈추지 않는다 — 마름질은 없으면 쌓일 뿐이다.
-$prevEap = $ErrorActionPreference
-$ErrorActionPreference = 'Continue'
-try {
-    $pruneArgs = @('-m', 'scripts.prune_workspace')
-    if (-not $DryRun) { $pruneArgs += '--apply' }
-    foreach ($l in (& python @pruneArgs 2>&1)) {
-        if ($l -match '지움|합계|마름질할 것이 없습니다') { Say "    $l" }
-    }
-}
-finally { $ErrorActionPreference = $prevEap }
+Invoke-Prune
 # 미분류가 남았는지는 세어 보고 말한다.
 #
 # 예전에는 '새 메시지가 있으면' 무조건 이 줄을 찍었다. 사람이 주 1회 재분류하던
