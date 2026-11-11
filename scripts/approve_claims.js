@@ -26,6 +26,9 @@ const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
 const admin = require("firebase-admin");
+// 웹 관리 탭과 같은 판정(마지막 관리자 보호·myMessages 삭제)을 쓴다 — Firebase SDK 에
+// 기대지 않는 순수 모듈이라 여기서도 그대로 부른다.
+const guards = require("../functions/guards.js");
 
 const ROOT = path.resolve(__dirname, "..");
 const KEY = require("./sa_key");   // 프로젝트 밖으로 옮겼다 — sa_key.js 참고
@@ -337,14 +340,24 @@ async function removeMembers(db, args) {
       }
     }
 
-    await db.collection("members").doc(email).delete();
+    // 웹 관리 탭(functions removeMember)과 **같은 길**로 지운다(2026-11-11 외부 평가 지적).
+    // 예전에는 명부 문서만 지워, 마지막 관리자도 내보낼 수 있었고 '내 글'(myMessages)이
+    // 다음 밤 적재까지 남았으며 로그인 토큰도 그대로였다. guards.removeMember 가 마지막
+    // 관리자 보호와 myMessages 삭제를 한 트랜잭션에서 한다.
+    try {
+      await guards.removeMember(db, email, { expectNicknames: nicknames });
+    } catch (e) {
+      console.error(`! ${email}: 탈퇴 처리 거절 — ${e.message}`);
+      continue;
+    }
     try {
       const user = await admin.auth().getUserByEmail(email);
       await admin.auth().setCustomUserClaims(user.uid, { member: false, admin: false });
-      console.log(`× ${email}: 멤버 문서 삭제 + 클레임 해제`);
+      await admin.auth().revokeRefreshTokens(user.uid);
+      console.log(`× ${email}: 멤버 문서·내 글 삭제 + 클레임 해제 + 토큰 폐기`);
     } catch (e) {
       if (e.code !== "auth/user-not-found") throw e;
-      console.log(`× ${email}: 멤버 문서 삭제 (Auth 계정 없음)`);
+      console.log(`× ${email}: 멤버 문서·내 글 삭제 (Auth 계정 없음)`);
     }
   }
 }

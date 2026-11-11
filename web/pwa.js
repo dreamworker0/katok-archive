@@ -105,10 +105,20 @@
 
   /* ── 로그아웃 정리 ── */
 
+  /* 페이지가 직접 지우고 **끝날 때까지 기다린다.** (2026-11-11 외부 평가 지적)
+   * 예전에는 서비스 워커에 '지워 달라' 고만 보내고 바로 돌아와, 로그아웃이 곧장
+   * 새로고침하면 지우기 전에 페이지가 떠날 수 있었다. Cache 저장소는 페이지에서도
+   * 열리므로(window.caches) 여기서 지우고 그 약속을 돌려준다. 워커에도 그대로 알린다. */
   function clearCaches() {
-    if (!navigator.serviceWorker.controller) return Promise.resolve();
-    navigator.serviceWorker.controller.postMessage({ type: "CLEAR_CACHES" });
-    return Promise.resolve();
+    if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({ type: "CLEAR_CACHES" });
+    }
+    if (!window.caches || !caches.keys) return Promise.resolve();
+    return caches.keys().then(function (names) {
+      return Promise.all(names.map(function (name) {
+        return name.indexOf("archive-") === 0 ? caches.delete(name) : null;
+      }));
+    }).catch(function () { /* 못 지우면 워커 쪽에 맡긴다 */ });
   }
 
   /* ── 연결 상태 ── */

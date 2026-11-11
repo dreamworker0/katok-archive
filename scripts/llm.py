@@ -32,7 +32,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 # 자식 claude 에 넘기지 않을 환경 변수 — verify_answer._SECRET_ENV 와 같다.
-_SECRET_ENV = re.compile(r"TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|KATOK_SA", re.I)
+_SECRET_ENV = re.compile(r"TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|WEBHOOK|KATOK_SA", re.I)
 
 
 def child_env() -> dict:

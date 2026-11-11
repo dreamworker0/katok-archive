@@ -379,7 +379,7 @@ function buildPrompt(question, list, catLabel, refs = null, seen = new Set()) {
 function childEnv() {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (/TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|KATOK_SA/i.test(k)) continue;
+    if (/TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|WEBHOOK|KATOK_SA/i.test(k)) continue;   // WEBHOOK: 디스코드 알림 주소(2026-11-11)
     env[k] = v;
   }
   env.ENABLE_CLAUDEAI_MCP_SERVERS = "false";

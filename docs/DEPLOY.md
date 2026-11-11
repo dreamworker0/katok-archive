@@ -110,8 +110,10 @@ npm run deploy
 
 규칙 검증은 CI 에서 돌지 않는다 — 서비스 계정 키가 필요하고 그 키를 깃허브에
 두지 않는다. 규칙이 바뀌는 순간은 배포하는 순간뿐이므로 거기가 맞는 자리다.
-따로 돌리려면 `npm run test:rules` (59개 경우: 발행본 다섯 갈래·chunks·myMessages·
-settings·messagesSource(닫힘)·members·claims·deletionRequests·preferences·catch-all).
+따로 돌리려면 `npm run test:rules` (2026-11-11 기준 109개 경우: 발행본 여섯 갈래(aiReports
+포함)·chunks·myMessages·settings·messagesSource(닫힘)·members·claims·deletionRequests·
+preferences·asks·verifies·usageEvents·status·catch-all). 개수는 늘 바뀌니 실행 결과의
+'규칙 검증: N/N' 을 볼 것.
 
 ### 적재는 어떤 차례로 도는가 (2026-09-05)
 

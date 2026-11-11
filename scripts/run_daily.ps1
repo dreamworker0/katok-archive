@@ -132,6 +132,10 @@ function Add-StepWarn([string]$msg) {
     Say "    $msg" 'WARN'
     $script:stepWarn = (@($script:stepWarn, $msg) | Where-Object { $_ }) -join ' · '
 }
+function Add-StepWarnQuiet([string]$msg) {
+    # 로그에는 이미 자세한 줄을 남긴 단계용 — 사유 줄에만 짧게 올린다(2026-11-11).
+    $script:stepWarn = (@($script:stepWarn, $msg) | Where-Object { $_ }) -join ' · '
+}
 function Test-StepExit([string]$what, $code) {
     if ($null -ne $code -and $code -ne 0) { Add-StepWarn "$what 실패(exit $code)" }
 }
@@ -259,7 +263,7 @@ if (-not $DryRun) {
     try { $usageOut = & node scripts\usage_rollup.js 2>&1 } finally { $ErrorActionPreference = $prevEap }
     $usageCode = $LASTEXITCODE
     foreach ($l in $usageOut) { Say "    [사용 통계] $l" }
-    if ($usageCode -ne 0) { Say "사용 기록 접기 실패 (exit $usageCode) — 갱신은 계속합니다." 'WARN' }
+    if ($usageCode -ne 0) { Say "사용 기록 접기 실패 (exit $usageCode) — 갱신은 계속합니다." 'WARN'; Add-StepWarnQuiet "사용 기록 접기 실패(exit $usageCode)" }
 }
 
 # 1) 내보내기
@@ -444,6 +448,7 @@ try {
     }
     elseif ($replyExit -ne 0) {
         Say "    답장 관계 수집 실패 (exit $replyExit) — 갱신은 계속합니다." 'WARN'
+        Add-StepWarnQuiet "답장 관계 수집 실패(exit $replyExit)"
     }
 }
 finally { $ErrorActionPreference = $prevEap }
@@ -482,6 +487,7 @@ foreach ($l in $classifyOut) { Say "    $l" }
 $classified = 0
 if ($null -ne $classifyCode -and $classifyCode -ne 0) {
     Say "주제 분류가 실패했습니다 (exit $classifyCode) — 미분류로 남기고 계속합니다." 'WARN'
+    Add-StepWarnQuiet "주제 분류 실패(exit $classifyCode)"
 } else {
     $marker = $null
     foreach ($l in $classifyOut) {
@@ -638,6 +644,7 @@ $aiCode = $LASTEXITCODE
 foreach ($l in $aiOut) { Say "    $l" }
 if ($null -ne $aiCode -and $aiCode -ne 0) {
     Say "AI 검증 주석이 실패했습니다 (exit $aiCode) — 없이 계속합니다." 'WARN'
+    Add-StepWarnQuiet "AI 검증 주석 실패(exit $aiCode)"
 }
 
 # 작업 폴더 마름질(11단계)을 함수로 둔다 — 조용한 밤에도 불러야 한다. (2026-11-11)
@@ -676,6 +683,7 @@ $secCode = $LASTEXITCODE
 foreach ($l in $secOut) { Say "    $l" }
 if ($null -ne $secCode -and $secCode -ne 0) {
     Say "보조 분류가 실패했습니다 (exit $secCode) — 곁길 없이 계속합니다." 'WARN'
+    Add-StepWarnQuiet "보조 분류 실패(exit $secCode)"
 }
 
 # 5d) 요지 산문 갱신 — 낡은 분류만, 하룻밤 세 편까지.
@@ -697,6 +705,7 @@ $digestCode = $LASTEXITCODE
 foreach ($l in $digestOut) { Say "    $l" }
 if ($null -ne $digestCode -and $digestCode -ne 0) {
     Say "요지 산문 갱신이 실패했습니다 (exit $digestCode) — 옛 요지로 계속합니다." 'WARN'
+    Add-StepWarnQuiet "요지 산문 실패(exit $digestCode)"
 }
 
 # 5e) 관계망 근거 — 새로 생긴 엣지에 원문 자리를 붙인다.
@@ -724,6 +733,7 @@ $evidenceCode = $LASTEXITCODE
 foreach ($l in $evidenceOut) { Say "    $l" }
 if ($null -ne $evidenceCode -and $evidenceCode -ne 0) {
     Say "관계망 근거 붙이기가 실패했습니다 (exit $evidenceCode) — 옛 근거로 계속합니다." 'WARN'
+    Add-StepWarnQuiet "관계망 근거 실패(exit $evidenceCode)"
 }
 
 # 5c) 네 번째 발행 사유 — 발행본이 로컬보다 뒤처졌나(지난 실행이 남긴 빚)
