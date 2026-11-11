@@ -36,7 +36,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from scripts import build_site, collection_policy
+from scripts import build_site, collection_policy, jsonio
 from scripts.kakao_parser import parse_chat
 
 KST = timezone(timedelta(hours=9))
@@ -59,9 +59,7 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
-    STATE_PATH.write_text(
-        json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    jsonio.write_text_atomic(STATE_PATH, json.dumps(state, ensure_ascii=False, indent=2))
 
 
 def sha256_of(path: Path) -> str:
@@ -263,9 +261,8 @@ def rebuild_participants(messages: list[dict]) -> dict:
 
 
 def write_jsonl(path: Path, rows: list[dict]) -> None:
-    with path.open("w", encoding="utf-8") as fh:
-        for r in rows:
-            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    # 원장(messages.jsonl)을 쓴다 — 쓰다 끊겨도 옛 원장이 남도록 원자적으로(jsonio).
+    jsonio.write_jsonl(path, rows)
 
 
 def pick_input_files(explicit: str | None) -> list[Path]:
@@ -390,10 +387,10 @@ def ingest(paths: list[Path], dry_run: bool, force_room: bool = False) -> dict:
     participants = rebuild_participants(messages)
     write_jsonl(OUTPUT / "messages.jsonl", messages)
     write_jsonl(OUTPUT / "images.jsonl", images)
-    (OUTPUT / "participants.json").write_text(
-        json.dumps(participants, ensure_ascii=False, indent=2), encoding="utf-8")
-    (OUTPUT / "topics.json").write_text(
-        json.dumps(topics, ensure_ascii=False, indent=2), encoding="utf-8")
+    jsonio.write_text_atomic(OUTPUT / "participants.json",
+                             json.dumps(participants, ensure_ascii=False, indent=2))
+    jsonio.write_text_atomic(OUTPUT / "topics.json",
+                             json.dumps(topics, ensure_ascii=False, indent=2))
 
     state["processed"].extend(handled)
     state["last_message_id"] = messages[-1]["id"]

@@ -292,10 +292,6 @@ class SameRoomGuardTest(unittest.TestCase):
         self.assertFalse(ok, report)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class VideoMessagesGetALedgerRowTest(unittest.TestCase):
     """증분 반영도 동영상에 자리를 준다.
 
@@ -328,3 +324,6 @@ class VideoMessagesGetALedgerRowTest(unittest.TestCase):
         self.assertEqual(stub["media_kind"], "video")
         self.assertEqual(stub["status"], "pending")
 
+
+if __name__ == "__main__":
+    unittest.main()

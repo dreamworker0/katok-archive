@@ -24,6 +24,7 @@ import json
 import sys
 from pathlib import Path
 
+from scripts import jsonio
 from scripts.llm import DEFAULT_MODEL, call_claude
 from scripts.topic_reports import load_reports
 
@@ -183,10 +184,10 @@ def main() -> int:
     result = {k: v for k, v in result.items() if k in alive}
     done &= alive
 
-    SECONDARY.write_text(json.dumps({
+    jsonio.write_text_atomic(SECONDARY, json.dumps({
         "secondary": dict(sorted(result.items())),
         "asked": sorted(done),
-    }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    }, ensure_ascii=False, indent=2) + "\n")
     print(f"저장: {SECONDARY.name} — 보조 분류 {len(result)}개 주제 / 판정 완료 {len(done)}개")
     return 0
 

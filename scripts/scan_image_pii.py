@@ -127,8 +127,7 @@ def main() -> None:
 
     ocr = jsonio.read_json(OCR_PATH)
     result = judge(ocr)
-    VERDICT_PATH.write_text(
-        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    jsonio.write_text_atomic(VERDICT_PATH, json.dumps(result, ensure_ascii=False, indent=2))
 
     counts = Counter(v["verdict"] for v in result["images"].values())
     total = len(result["images"])

@@ -113,7 +113,8 @@
         return !watcherAlive(r) || msAgo(r.requestedAt) > 30 * 60 * 1000;
       }
       if (r.status === "running") {
-        return !watcherAlive(r) || msAgo(r.startedAt) > 90 * 60 * 1000;
+        // functions/index.js 의 REFRESH_RUN_STALE_MS 와 같은 값 — 스케줄러 제한 2시간 + 여유
+        return !watcherAlive(r) || msAgo(r.startedAt) > 130 * 60 * 1000;
       }
       return false;
     }

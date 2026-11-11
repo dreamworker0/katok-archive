@@ -59,7 +59,7 @@ import re
 import sys
 from pathlib import Path
 
-from scripts import llm
+from scripts import jsonio, llm
 from scripts import ontology
 from scripts import tags as taglib
 
@@ -134,9 +134,8 @@ def load_json(path: Path):
 
 
 def save_json(path: Path, data) -> None:
-    path.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    # topics.json 을 쓴다 — 쓰다 끊겨도 옛 파일이 남도록 원자적으로(jsonio).
+    jsonio.write_text_atomic(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
 def tag_corpus() -> tuple[list[str], int, int]:

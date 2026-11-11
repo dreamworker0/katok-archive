@@ -108,22 +108,11 @@ def rebuild_participants(messages: list[dict]) -> dict:
     """제외 반영 후의 메시지에서 참여자 통계를 다시 만든다.
 
     participants.json 을 그대로 쓰면 제외된 사람의 옛 카운트가 남으므로 재계산한다.
+    계산은 증분 반영(ingest_incremental)과 한 곳에서 한다 — 두 벌로 있으면 한쪽만
+    고쳐지는 날이 온다(2026-11-11 외부 평가 지적).
     """
-    rows: dict[str, dict] = {}
-    for m in messages:
-        nk = m["nickname"]
-        r = rows.get(nk)
-        if r is None:
-            rows[nk] = {"nickname": nk, "message_count": 1,
-                        "first_timestamp": m["timestamp"], "last_timestamp": m["timestamp"]}
-        else:
-            r["message_count"] += 1
-            if m["timestamp"] < r["first_timestamp"]:
-                r["first_timestamp"] = m["timestamp"]
-            if m["timestamp"] > r["last_timestamp"]:
-                r["last_timestamp"] = m["timestamp"]
-    ordered = sorted(rows.values(), key=lambda r: r["message_count"], reverse=True)
-    return {"participants": ordered}
+    from scripts.ingest_incremental import rebuild_participants as _rebuild
+    return _rebuild(messages)
 
 
 def prune_knowledge(knowledge: dict, messages: list[dict], exclusions: dict) -> dict:
@@ -179,9 +168,6 @@ CHUNK_BYTES = 600 * 1024
 # 나눠 담는 컬렉션이 이 문서 수를 넘으면 검사가 막는다. 문서 수가 곧 모두의 첫
 # 화면 읽기 수라, 조용히 늘게 두지 않는다.
 CHUNK_DOCS_MAX = 6
-# 예전 이름 — 검사와 다른 모듈이 아직 부를 수 있다.
-MY_MESSAGES_LIMIT = DOC_LIMIT
-BUNDLE_LIMIT = DOC_LIMIT
 
 
 def _nbytes(obj) -> int:

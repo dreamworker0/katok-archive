@@ -397,10 +397,6 @@ class DocumentPlanTest(unittest.TestCase):
         self.assertTrue(any(w.startswith("threads 의 항목 하나가") for w in warns), warns)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class SharedNicknameTest(unittest.TestCase):
     """한 표시명이 두 계정에 붙었을 때 — 실제 데이터가 없어도 도는 검사다.
 
@@ -452,3 +448,7 @@ class SharedNicknameTest(unittest.TestCase):
         participants = {"participants": [{"nickname": "홍길동"}]}
         warnings = bfp.check_member_nicknames(members, participants)
         self.assertTrue(any("홍길동" in w and "bot@x.com" in w for w in warnings))
+
+
+if __name__ == "__main__":
+    unittest.main()

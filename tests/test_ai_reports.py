@@ -364,10 +364,6 @@ class WriteTests(unittest.TestCase):
             ar.AI_REPORTS_DIR = old
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 # 클래스 속성으로 두면 PUBLIC 이 메서드로 묶여 host 자리에 self 가 들어간다.
 def _resolver(mapping):
     """이름 → IP 를 정해 주는 가짜 DNS.
@@ -744,3 +740,7 @@ class SearchFallbackTests(unittest.TestCase):
         used = []
         self.assertIsNone(ar.call_search("물음", used=used))
         self.assertEqual(used, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

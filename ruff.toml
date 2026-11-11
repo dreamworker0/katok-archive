@@ -5,7 +5,7 @@
 # 처음 돌린 날(2026-09-02) 기준 15건이 걸렸고 전부 안 쓰는 import·변수였다.
 # 규칙을 넓히려면 먼저 `python -m ruff check --select <규칙> scripts tests` 로
 # 몇 건인지 본 뒤 한 번에 고치고 넣는다 — 걸리는 채로 넣으면 CI 가 빨간불에 익숙해진다.
-target-version = "py313"
+target-version = "py314"   # CI(.github/workflows/test.yml)와 같은 판
 line-length = 100
 
 [lint]

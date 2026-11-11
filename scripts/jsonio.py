@@ -78,6 +78,14 @@ def _atomic_write(path: str | Path, chunks) -> None:
                 pass
 
 
+def write_text_atomic(path: str | Path, text: str) -> None:
+    """글 한 덩이를 원자적으로 쓴다 — 모양을 바꾸지 않고 쓰는 방식만 바꿀 때.
+
+    원장을 손수 json.dumps 해서 `write_text` 로 쓰던 곳들이 있다(끝 줄바꿈이
+    있거나 없거나 제각각). 바이트를 그대로 두려고 모양은 부르는 쪽에 맡긴다."""
+    _atomic_write(path, [text])
+
+
 def write_json(path: str | Path, data, indent: int | None = 2) -> None:
     """사람이 읽고 git diff 로 볼 파일이라 들여쓰기를 준다."""
     _atomic_write(path, [_text(data, indent)])

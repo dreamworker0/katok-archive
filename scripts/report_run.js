@@ -170,6 +170,11 @@ async function main() {
   } catch (e) {
     console.error("settings/lastRun 기록 실패(무시하고 계속):", e.message);
   }
+  // 연결을 닫아 둔다. 안 닫으면 Firestore(gRPC) 핸들이 남아 프로세스가 한참 뒤에야
+  // 끝나 밤 갱신 마무리를 붙잡는다(2026-11-11 외부 평가 지적). process.exit 로 끊지
+  // 않는 것은 notify.js 와 같은 까닭이다 — 아래 디스코드 전송(fetch) 직후 끊으면
+  // Windows Node 가 UV_HANDLE_CLOSING 단언으로 죽는다.
+  try { await admin.app().delete(); } catch (e) { /* 초기화가 실패했으면 닫을 것도 없다 */ }
 
   const cfg = loadNotifyConfig();
   if (cfg && cfg.on.indexOf(status) !== -1) {

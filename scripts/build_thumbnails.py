@@ -29,13 +29,12 @@
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
 
-from scripts import build_site
+from scripts import build_site, jsonio
 from scripts.optimize_ui_art import optimize_image
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -146,9 +145,7 @@ def run(force: bool) -> dict:
             saved_to += size
             made += 1
 
-    with (OUTPUT / "images.jsonl").open("w", encoding="utf-8") as fh:
-        for row in rows:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    jsonio.write_jsonl(OUTPUT / "images.jsonl", rows)   # 원자적으로 — 끊겨도 옛 목록이 남는다
 
     print("작은 사진: 새로 %d개 · 그대로 %d개 · 원본 사용 %d개 · 못 읽음 %d개"
           % (made, kept, skipped, failed))

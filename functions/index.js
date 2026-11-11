@@ -260,9 +260,11 @@ exports.setThreadHidden = onCall(async (request) => {
 
 // 대기가 이만큼 지나면 'PC 가 못 받았다'로 보고 새 요청을 허용한다.
 const REFRESH_QUEUE_STALE_MS = 30 * 60 * 1000;
-// 실행이 이만큼 지나면 죽은 것으로 본다. 작업 스케줄러 시간 제한이 1시간이므로
-// 그보다 넉넉히 잡아, 살아 있는 실행을 죽었다고 오판하지 않는다.
-const REFRESH_RUN_STALE_MS = 90 * 60 * 1000;
+// 실행이 이만큼 지나면 죽은 것으로 본다. 작업 스케줄러 시간 제한(2시간, 2026-11-01
+// 에 1시간에서 늘렸다)보다 넉넉히 잡아, 살아 있는 실행을 죽었다고 오판하지 않는다.
+// 90분일 때는 대량 백필로 95분째 돌던 실행 위에 새 요청을 받아 상태가 꼬일 수
+// 있었다(2026-11-11 외부 평가 지적). web/admin.js 의 refreshStuck 과 같은 값이어야 한다.
+const REFRESH_RUN_STALE_MS = 130 * 60 * 1000;
 
 /** ISO 문자열이든 Timestamp 든 밀리초로. 못 읽으면 null (= 아주 오래된 것으로 취급). */
 function millisOf(value) {
