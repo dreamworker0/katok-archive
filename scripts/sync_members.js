@@ -166,7 +166,11 @@ async function main() {
   console.log(`\nconfig/members.json 갱신 (${members.length}명)`);
 }
 
-main().catch((e) => {
-  console.error("\n실패:", e.message);
-  process.exit(1);
-});
+// 끝나면 연결을 닫는다(2026-11-11) — 안 닫으면 Firestore(gRPC) 핸들이 남아 프로세스가
+// 늦게 끝난다. process.exit 로 끊지 않는다(Windows Node 의 UV_HANDLE_CLOSING).
+main()
+  .then(() => admin.app().delete().catch(() => {}))
+  .catch((e) => {
+    console.error("\n실패:", e.message);
+    process.exit(1);
+  });

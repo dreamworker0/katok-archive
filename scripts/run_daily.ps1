@@ -811,7 +811,15 @@ Invoke-Step '사진 개인정보 검사' {
 } | Out-Null
 
 # 7) 발행본 재생성
-Invoke-Step '발행본 생성' { python -m scripts.build_firestore_payload } | Out-Null
+$payloadOut = Invoke-Step '발행본 생성' { python -m scripts.build_firestore_payload }
+# 문서 크기가 한도의 80% 를 넘었으면 사람이 보는 자리에 올린다(2026-11-11).
+# 넘은 채로 더 자라 한도에 닿으면 그 밤 테스트(8)가 발행을 막는다 — 그 전에 나눠 담을
+# 길을 정해야 한다. 자세한 문서 이름은 위 로그의 [주의] 줄에 있다.
+foreach ($l in @($payloadOut)) {
+    if ("$l" -match '^SIZE_WARN=(\d+)$' -and [int]$Matches[1] -gt 0) {
+        Add-StepWarnQuiet "발행 문서 $($Matches[1])개가 크기 한도의 80% 를 넘음"
+    }
+}
 
 # 8) 정합성 확인 — 파이썬(발행본 무결성) + 노드(증분 적재 규칙)
 #

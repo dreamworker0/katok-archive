@@ -61,21 +61,6 @@ def _pixels(img: Image.Image) -> list[float]:
     return [float(v) for v in getter()]
 
 
-def _row_means(img: Image.Image) -> list[float]:
-    """세로 방향 줄별 평균 밝기."""
-    h = img.height
-    if h == 0:
-        return []
-    return _pixels(img.convert("L").resize((1, h), Image.BOX))
-
-
-def _col_means(img: Image.Image) -> list[float]:
-    """가로 방향 칸별 평균 밝기."""
-    w = img.width
-    if w == 0:
-        return []
-    return _pixels(img.convert("L").resize((w, 1), Image.BOX))
-
 
 def _fold(img: Image.Image, vertical: bool) -> Image.Image:
     """절반씩 겹쳐 접어 픽셀별 **최솟값**을 남긴다.

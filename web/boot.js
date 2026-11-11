@@ -787,8 +787,13 @@
   }
 
   function showEditionNotice() {
+    // 알림은 한 자리에 하나만(2026-11-11). '새 버전' 알림(pwa.js)과 같은 자리에 겹쳐
+    // 떴다 — 둘 다 '새로고침' 하나로 풀리므로, 이미 떠 있으면 새로 띄우지 않는다.
+    var shown = document.querySelector(".pwa-toast:not([hidden])");
+    if (shown) return;
     var bar = document.createElement("div");
     bar.className = "pwa-toast";
+    bar.setAttribute("data-kind", "edition");
     bar.setAttribute("role", "status");
     bar.setAttribute("aria-live", "polite");
     var text = document.createElement("p");

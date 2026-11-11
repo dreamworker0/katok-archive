@@ -355,6 +355,12 @@ function liveDoc(sandbox, clock) {
   sandbox.document.visibilityState = "visible";
   sandbox.document.createElement = () => ({ appendChild() {}, setAttribute() {}, addEventListener() {} });
   sandbox.document.body = { appendChild(x) { appended.push(x); } };
+  // 떠 있는 알림은 붙인 것뿐이다 — 아무것도 안 붙였으면 '없다' 고 답한다. 예전 가짜
+  // querySelector 는 무엇을 물어도 요소를 돌려줘, '알림은 한 자리에 하나만'(2026-11-11)
+  // 검사가 늘 '이미 떠 있다' 로 읽혔다.
+  const realQuery = sandbox.document.querySelector;
+  sandbox.document.querySelector = (sel) =>
+    String(sel).indexOf("pwa-toast") !== -1 ? (appended[0] || null) : realQuery(sel);
   const RealDate = Date;
   sandbox.Date = Object.assign(function (...a) { return new RealDate(...a); }, { now: () => clock.t });
   const auth = sandbox.firebase.auth;

@@ -35,6 +35,10 @@
   var toast = null;
 
   function showToast(message, action) {
+    // '새 판' 알림(boot.js)이 먼저 떠 있으면 걷어 낸다 — 같은 자리에 겹쳐 떴다
+    // (2026-11-11). 이쪽 새로고침이 새 판까지 함께 불러온다.
+    var edition = document.querySelector('.pwa-toast[data-kind="edition"]');
+    if (edition && edition.parentNode) edition.parentNode.removeChild(edition);
     if (!toast) {
       toast = document.createElement("div");
       toast.className = "pwa-toast";

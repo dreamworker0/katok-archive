@@ -109,8 +109,11 @@ async function deleteAll(db, ids) {
 module.exports = { rollup, KEEP_DAYS };
 
 if (require.main === module) {
-  main().catch((e) => {
-    console.error("사용 기록 접기 실패:", e.message || e);
-    process.exit(1);
-  });
+  // 끝나면 연결을 닫는다(2026-11-11) — 안 닫으면 gRPC 핸들이 남아 늦게 끝난다
+  main()
+    .then(() => admin.app().delete().catch(() => {}))
+    .catch((e) => {
+      console.error("사용 기록 접기 실패:", e.message || e);
+      process.exit(1);
+    });
 }
