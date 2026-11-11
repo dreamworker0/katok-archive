@@ -587,6 +587,22 @@
   }
 
   // ---------- 초기화 ----------
+  /* 위에 붙는 검색 줄(.utility-bar)의 높이를 --utility-h 로 알린다. (2026-11-11)
+   *
+   * 화면 안에서 따로 위에 붙는 것(태그 화면의 '고른 태그' 막대)이 top: 0 이면 검색
+   * 줄 뒤로 숨는다 — 검색 줄이 z-index 20 으로 먼저 붙어 있기 때문이다. 높이는 폭에
+   * 따라 다르고(넓은 화면 87px · 좁은 화면 더 낮음) 글자 크기 단추로도 바뀌므로
+   * 숫자로 박지 않고 재서 넘긴다. */
+  function trackUtilityBarHeight() {
+    var bar = document.querySelector(".utility-bar");
+    if (!bar) return;
+    var root = document.documentElement;
+    var set = function () { root.style.setProperty("--utility-h", bar.offsetHeight + "px"); };
+    set();
+    if (window.ResizeObserver) new ResizeObserver(set).observe(bar);
+    else window.addEventListener("resize", set);
+  }
+
   function init(session) {
     // boot.js 가 Firestore 로드를 끝낸 뒤 호출하므로 여기서 다시 읽는다
     A = window.ARCHIVE || {};
@@ -620,6 +636,7 @@
     if (!canManageMine()) removeViewControls("mine");
     if (!isAdmin()) removeViewControls("admin");
     renderMobileMore();
+    trackUtilityBarHeight();
     el.roomTitle.textContent = A.chat_room || "아카이브";
     var t = STATS.totals || {};
     el.roomSub.innerHTML =

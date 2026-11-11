@@ -317,7 +317,7 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
 .tag-chip[disabled]:hover { color: var(--ink); border-color: var(--line);
   background: var(--surface); }
 /* 고른 태그와 결과 수 — 목록 위에 붙어 따라온다 */
-.tag-bar { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap;
+.tag-bar { position: sticky; top: var(--utility-h, 0px); z-index: 3; display: flex; flex-wrap: wrap;
   align-items: center; gap: 8px; margin: 0 0 10px; padding: 10px 12px;
   border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .tag-bar-n { font-size: 13px; font-weight: 600; color: var(--ink-soft);
