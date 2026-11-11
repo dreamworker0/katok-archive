@@ -232,7 +232,7 @@
       });
       function tl(t) {
         var range = t.start_date === t.end_date ? t.start_date : t.start_date + " ~ " + t.end_date;
-        return '<div class="thread-line" data-start="t-' + esc(t.id) + '"><b>' + esc(t.title) +
+        return '<div class="thread-line" role="link" tabindex="0" data-start="t-' + esc(t.id) + '"><b>' + esc(t.title) +
           '</b><span class="tl-date">' + esc(range) + '</span><span class="tl-n">💬 ' + t.count + "</span></div>";
       }
       /* 갈래가 있으면 갈래가 접힘 단위다.
@@ -283,7 +283,7 @@
         return String(b.end_date || "").localeCompare(String(a.end_date || ""));
       });
       var also = alsoRows.map(function (t) {
-        return '<div class="thread-line also" data-start="t-' + esc(t.id) + '"><b>' +
+        return '<div class="thread-line also" role="link" tabindex="0" data-start="t-' + esc(t.id) + '"><b>' +
           esc(t.title) + '</b><span class="tl-home" style="--c:' + colorFor(t.category) +
           '">' + esc(ctx.data().CAT_LABEL[t.category] || t.category) + "</span>" +
           '<span class="tl-n">💬 ' + t.count + "</span></div>";
@@ -410,8 +410,15 @@
           setView("timeline");
         };
       });
+      /* 주제 줄은 타임라인의 그 주제로 가는 링크다. 마크업이 <div> 라 키보드로는 닿지
+       * 않았다(2026-11-11 외부 평가) — role="link"·tabindex 를 달고 Enter 로 간다.
+       * <a> 로 바꾸면 줄 안의 flex 배치와 글자색 규칙을 다시 맞춰야 해서 역할만 더한다. */
       Array.prototype.forEach.call(scope.querySelectorAll(".thread-line"), function (b) {
-        b.onclick = function () { jumpToTimeline(b.getAttribute("data-start")); };
+        var go = function () { jumpToTimeline(b.getAttribute("data-start")); };
+        b.onclick = go;
+        b.onkeydown = function (e) {
+          if (e.key === "Enter") { e.preventDefault(); go(); }
+        };
       });
       // 사람이 여닫은 갈래는 폭 맞추기가 건드리지 않는다(syncFacetFolds).
       Array.prototype.forEach.call(scope.querySelectorAll(".facet-fold"), function (d) {

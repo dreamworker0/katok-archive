@@ -1285,6 +1285,14 @@ class KeyboardAccessContractTests(unittest.TestCase):
         self.assertIn("activatable(img,", src)
         self.assertIn("activatable(cap,", src)
 
+    def test_summary_thread_lines_are_keyboard_links(self):
+        src = self.read("summary.js")
+        self.assertEqual(src.count('class="thread-line'), 2)
+        self.assertEqual(src.count('role="link" tabindex="0" data-start='), 2)
+        bind = src[src.index('querySelectorAll(".thread-line")'):][:400]
+        self.assertIn("b.onkeydown", bind)
+        self.assertIn('e.key === "Enter"', bind)
+
     def test_lightbox_is_a_modal_dialog(self):
         for name in ("index.hosting.html", "index.html"):
             html = self.read(name)
