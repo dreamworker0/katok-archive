@@ -132,18 +132,10 @@ def build_search_prompt(question: str, answer: str, today: str) -> str:
     )
 
 
-_LOGIN_HOSTS = ("accounts.google.com", "login.microsoftonline.com", "nid.naver.com",
-                "accounts.kakao.com", "www.facebook.com/login")
-_LOGIN_PATH = re.compile(r"/(signin|sign-in|login|log-in|auth)(/|\?|$)", re.I)
-
-
-def is_login(url: str) -> bool:
-    """끝 주소가 로그인 화면인가. 열리긴 해도 내용은 못 본 것이다 — 실측 2026-10-30:
-    초대 페이지가 accounts.google.com 로그인으로 넘어갔는데 출처 번호를 달고 나왔다."""
-    u = str(url or "").lower()
-    host = re.sub(r"^https?://", "", u).split("/")[0]
-    return any(host == h or u.split("://", 1)[-1].startswith(h) for h in _LOGIN_HOSTS) \
-        or bool(_LOGIN_PATH.search(u.split("://", 1)[-1][len(host):]))
+# 로그인 화면 판정은 ai_reports 로 옮겼다(2026-11-11) — open_url 이 직접 걸러, 밤의
+# AI 검증 주석도 같은 기준을 쓴다. 예전에는 이쪽에만 있어 밤 쪽은 로그인 창을
+# '열린 출처' 로 셌다(외부 평가 지적). 이름은 검사·옛 호출을 위해 남긴다.
+is_login = AR.is_login
 
 
 def link_lines(links: list[dict]) -> tuple[list[str], list[dict]]:

@@ -70,9 +70,15 @@
     var legend = document.createElement("div");
     legend.className = "legend";
     cats.forEach(function (c) {
+      // 이름은 글자로 넣는다(textContent) — 발행본에서 온 값을 innerHTML 에 그대로
+      // 이어 붙이지 않는다(2026-11-11 외부 평가 지적). 색 점만 요소로 만든다.
       var s = document.createElement("span");
-      s.innerHTML = '<i class="lg-mark" style="background:' + opts.colorFor(c) +
-        ';border-radius:50%"></i>' + (opts.catLabel[c] || c);
+      var mark = document.createElement("i");
+      mark.className = "lg-mark";
+      mark.style.background = opts.colorFor(c);
+      mark.style.borderRadius = "50%";
+      s.appendChild(mark);
+      s.appendChild(document.createTextNode(opts.catLabel[c] || c));
       legend.appendChild(s);
     });
     toolbar.appendChild(legend);

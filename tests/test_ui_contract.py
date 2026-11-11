@@ -1323,6 +1323,18 @@ class GraphSettleSpeedContractTests(unittest.TestCase):
         self.assertNotIn("a.vx += fx", body)
 
 
+class GraphLegendEscapeContractTests(unittest.TestCase):
+    """관계망 범례의 분류 이름은 글자(textContent)로 넣는다. (2026-11-11)"""
+
+    def test_legend_label_is_not_concatenated_into_inner_html(self):
+        src = (ROOT / "web" / "graph.js").read_text(encoding="utf-8")
+        legend = src[src.index("cats.forEach(function (c) {"):]
+        legend = legend[:legend.index("toolbar.appendChild(legend)")]
+        code = " ".join(ln for ln in legend.splitlines() if not ln.strip().startswith("//"))
+        self.assertNotIn("innerHTML", code)
+        self.assertIn("createTextNode(opts.catLabel[c] || c)", legend)
+
+
 class RefactorLeftoverTests(unittest.TestCase):
     """화면 파일을 떼어낼 때의 일괄 바꾸기가 남긴 자국.
 

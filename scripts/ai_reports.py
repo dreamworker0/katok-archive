@@ -426,6 +426,23 @@ def extract_urls(text: str, limit: int = MAX_LINKS_PER_REPORT) -> list[str]:
     return out
 
 
+_LOGIN_HOSTS = ("accounts.google.com", "login.microsoftonline.com", "nid.naver.com",
+                "accounts.kakao.com", "www.facebook.com/login")
+_LOGIN_PATH = re.compile(r"/(signin|sign-in|login|log-in|auth)(/|\?|$)", re.I)
+
+
+def is_login(url: str) -> bool:
+    """끝 주소가 로그인 화면인가. 열리긴 해도 내용은 못 본 것이다 — 실측 2026-10-30:
+    초대 페이지가 accounts.google.com 로그인으로 넘어갔는데 출처 번호를 달고 나왔다.
+
+    open_url 이 이것으로 거른다(2026-11-11). 밤의 AI 검증 주석과 실시간 확인
+    (verify_answer)이 같은 기준을 쓴다."""
+    u = str(url or "").lower()
+    host = re.sub(r"^https?://", "", u).split("/")[0]
+    return any(host == h or u.split("://", 1)[-1].startswith(h) for h in _LOGIN_HOSTS) \
+        or bool(_LOGIN_PATH.search(u.split("://", 1)[-1][len(host):]))
+
+
 def is_root(url: str) -> bool:
     """홈페이지 대문인가(경로가 없는 주소인가).
 
@@ -591,8 +608,14 @@ def open_url(url: str, timeout: int = FETCH_TIMEOUT_SEC, resolve=None) -> dict:
             code = getattr(r, "status", 200)
             r.read(2048)          # 연결이 실제로 열리는지까지 본다
             final = r.geturl() or url
+            ok = 200 <= code < 400
+            # 로그인 화면으로 넘어갔으면 열린 게 아니다 — 내용은 못 봤다
+            if ok and is_login(final):
+                return {"url": url, "final": final, "root": False, "ok": False,
+                        "status": code, "blocked": False,
+                        "note": "로그인 화면으로 넘어가 내용을 못 봄"}
             return {"url": url, "final": final, "root": is_root(final),
-                    "ok": 200 <= code < 400, "status": code, "blocked": False, "note": ""}
+                    "ok": ok, "status": code, "blocked": False, "note": ""}
     except BlockedURL as e:
         return {"url": url, "final": url, "root": False, "ok": False, "status": 0,
                 "blocked": True, "note": "리다이렉트를 따라가지 않음 — %s" % e}

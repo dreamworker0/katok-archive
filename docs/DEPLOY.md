@@ -14,7 +14,9 @@ Firebase 프로젝트: `katok-crawling-project`
 ```
 [공개] Hosting     hosting/  — 앱 껍데기 61KB. 대화 데이터·이미지 없음(공개돼도 안전)
 [인증] Auth        Google 로그인
-[보호] Firestore   대화 전문 — members/ 명부에 있는 사람만 읽기
+[보호] Firestore   주제 요약·보고서·사진 목록 — members/ 명부에 있는 사람만 읽기
+                   (대화 원문은 올리지 않는다 — 원문은 이 PC 의 output/ 에만 있다.
+                    본인 글만 myMessages/{이메일} 로 본인에게)
 [보호] Storage     이미지 64장 + 첨부 11개 — 멤버만 인증 요청으로 열람
 [서버] Functions   승인·권한 부여 (asia-northeast3)
 ```
@@ -68,7 +70,8 @@ firebase login
   { "email": "member@example.org", "name": "멤버", "nickname": "한도윤", "role": "user" }
 ]}
 ```
-- `role: admin` — 원본 메시지 열람, (P2) 관리자 페이지 권한
+- `role: admin` — 관리 탭(열람 승인·삭제 요청 처리·지금 갱신) 권한. 남의 원문은
+  관리자도 웹에서 못 본다(2026-11-11) — 원문 확인은 이 PC 의 `output/messages.jsonl` 에서
 - `nickname` — 카톡 대화방 표시명. 발행할 때 `output/participants.json` 과 대조해
   오타·미기입을 경고한다. 첫 관리자만 손으로 넣고, 나머지는 아래 승인 절차가 채운다.
 - 이 파일은 개인정보이므로 `.gitignore` 처리됨

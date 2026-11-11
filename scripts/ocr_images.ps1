@@ -89,7 +89,10 @@ foreach ($f in $files) {
     $i++
     # 키는 저장소 기준 상대경로 — 발행 목록(images.json)과 같은 표기여야 맞춰볼 수 있다
     $key = $f.FullName.Substring($root.Length + 1).Replace('\', '/')
-    if ($done.ContainsKey($key)) { continue }
+    # 읽은 사진만 건너뛴다. 못 읽은 것(null)은 다음 밤에 다시 해 본다(2026-11-11 외부
+    # 평가 지적) — 한 번 실패를 영구 '확인 못 함' 으로 굳히면, 판정 쪽이 그 사진을 공개
+    # 쪽으로 넘기는 동안 다시 볼 기회가 없었다. 계속 실패하면 null 로 남을 뿐이다.
+    if ($done.ContainsKey($key) -and $null -ne $done[$key]) { continue }
 
     try {
         # 작은 사진은 확대해야 글자가 읽힌다. 큰 화면 캡처는 원본 배율로 충분하고

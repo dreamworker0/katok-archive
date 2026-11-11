@@ -464,6 +464,39 @@ class OpenUrlGuardTests(unittest.TestCase):
         self.assertTrue(got["blocked"])
         self.assertIn("열지 않음", got["note"])
 
+    def test_a_page_that_lands_on_a_login_screen_is_not_opened(self):
+        """밤의 AI 주석도 로그인 창을 '열린 출처' 로 세지 않는다(2026-11-11).
+        실시간 확인(verify_answer)에만 있던 판정을 open_url 로 옮겼다."""
+
+        class _Resp:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self, n=-1):
+                return b"<html>"
+
+            def geturl(self):
+                return "https://accounts.google.com/v3/signin/identifier?continue=x"
+
+        class _Op:
+            def open(self, *a, **kw):
+                return _Resp()
+
+        old = ar._opener
+        ar._opener = lambda: _Op()
+        try:
+            got = ar.open_url("https://docs.google.com/forms/d/x",
+                              resolve=_resolver({"docs.google.com": ["142.250.1.1"]}))
+        finally:
+            ar._opener = old
+        self.assertFalse(got["ok"])
+        self.assertIn("로그인", got["note"])
+
     def test_blocked_addresses_are_not_asked_again(self):
         """recover_links 는 '못 연 것' 만 되짚는다 — 막은 것을 되물으면 또 막힌다."""
         links = [
