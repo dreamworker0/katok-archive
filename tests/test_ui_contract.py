@@ -1306,6 +1306,23 @@ class KeyboardAccessContractTests(unittest.TestCase):
         self.assertIn('e.key === "Tab" && el.lightbox.classList.contains("on")', app)
 
 
+class GraphSettleSpeedContractTests(unittest.TestCase):
+    """관계망의 밀어내기 계산은 숫자 배열에서 한다. (2026-11-11)
+
+    노드 객체에서 직접 계산하던 동안 관계망을 열 때마다 화면이 3~4초 멈췄다
+    (노드 301개 · 실측 4,734ms → 363ms). 배치가 바뀌지 않게 더하는 차례도 예전과
+    같아야 한다 — 따로 모아 한꺼번에 더하면 노드가 수백 px 옮겨 앉는다.
+    """
+
+    def test_repulsion_runs_on_typed_arrays_in_the_original_order(self):
+        src = (ROOT / "web" / "graph.js").read_text(encoding="utf-8")
+        body = src[src.index("function tick()"):]
+        body = body[:body.index("edges.forEach")]
+        self.assertIn("new Float64Array(nodes.length)", src)
+        self.assertIn("VX[i] += fx; VY[i] += fy; VX[j] -= fx; VY[j] -= fy;", body)
+        self.assertNotIn("a.vx += fx", body)
+
+
 class RefactorLeftoverTests(unittest.TestCase):
     """화면 파일을 떼어낼 때의 일괄 바꾸기가 남긴 자국.
 

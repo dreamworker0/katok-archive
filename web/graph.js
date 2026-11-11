@@ -406,19 +406,37 @@
      * 움직임만 차분해진다. */
     var FRICTION = 0.82, DRAG_FRICTION = 0.6, DRAG_HEAT = 0.12, MAX_STEP = 6;
     var interactive = false;   // settle() 이 끝나면 켠다
+    /* 서로 밀어내는 힘은 숫자 배열(Float64Array)에서 계산한다. (2026-11-11)
+     *
+     * 노드 쌍마다 도는 계산이라 노드 수의 제곱으로 는다(301개면 한 번에 4만 5천 쌍,
+     * 자리 잡기에 약 350번). 예전에는 노드 객체의 x·vx 를 직접 읽고 썼는데, 객체에
+     * 그리기용 속성(_g·_label…)이 붙어 있어 브라우저가 빠른 길로 못 가 관계망을 열
+     * 때마다 화면이 3~4초 멈췄다(실측 2,853ms → 배열 183ms).
+     *
+     * 계산식뿐 아니라 **더하는 차례까지** 예전과 똑같이 둔다. 힘을 따로 모아 한꺼번에
+     * 더했더니 소수점 끝자리 차이가 350번 반복하며 불어나 노드가 최대 526px 옮겨
+     * 앉았다(같은 날 실측) — 사람들이 익힌 그림이 바뀐다. 아래는 비트 단위로 같은
+     * 결과를 낸다. */
+    var PX = new Float64Array(nodes.length), PY = new Float64Array(nodes.length);
+    var VX = new Float64Array(nodes.length), VY = new Float64Array(nodes.length);
     function tick() {
-      for (var i = 0; i < nodes.length; i++) {
-        var a = nodes[i];
-        for (var j = i + 1; j < nodes.length; j++) {
-          var b = nodes[j];
-          var dx = a.x - b.x, dy = a.y - b.y;
+      var N = nodes.length, i, j;
+      for (i = 0; i < N; i++) {
+        var nn = nodes[i];
+        PX[i] = nn.x; PY[i] = nn.y; VX[i] = nn.vx; VY[i] = nn.vy;
+      }
+      for (i = 0; i < N; i++) {
+        var ax = PX[i], ay = PY[i];
+        for (j = i + 1; j < N; j++) {
+          var dx = ax - PX[j], dy = ay - PY[j];
           var d2 = dx * dx + dy * dy + 0.01;
           var f = REP / d2;
           var d = Math.sqrt(d2);
           var fx = (dx / d) * f, fy = (dy / d) * f;
-          a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+          VX[i] += fx; VY[i] += fy; VX[j] -= fx; VY[j] -= fy;
         }
       }
+      for (i = 0; i < N; i++) { nodes[i].vx = VX[i]; nodes[i].vy = VY[i]; }
       edges.forEach(function (e) {
         var dx = e.t.x - e.s.x, dy = e.t.y - e.s.y;
         var d = Math.sqrt(dx * dx + dy * dy) + 0.01;
