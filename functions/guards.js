@@ -287,6 +287,10 @@ async function removeMember(db, email, opts) {
       }
     }
     tx.delete(ref);
+    // 본인 원문 묶음도 같은 트랜잭션에서 지운다(2026-11-11 외부 평가 지적). 남겨 두면
+    // 다음 밤 적재가 지울 때까지 탈퇴한 사람이 읽을 수 있었다 — 규칙도 이제 명부를
+    // 보지만(isMember), 문서가 없는 편이 확실하다. setMemberNicknames 와 같은 꼴.
+    tx.delete(db.collection("myMessages").doc(email));
     return { email, role: d.role || "user" };
   });
 }

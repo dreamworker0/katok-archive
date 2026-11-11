@@ -62,8 +62,10 @@ service cloud.firestore {
     // 웹 관리 화면 어디서도 쓰지 않았고, 이 문서는 개인정보를 가리기 전 원문이다 —
     // messagesSource 를 닫은 까닭(관리자 계정 하나가 털리면 원문 전체가 나간다)이
     // 여기에도 그대로 맞았다. 오탐 확인은 PC 의 원장(output/)에서 한다.
+    // 명부에 있어야 한다(isMember, 2026-11-11). 탈퇴했거나 연결이 풀린 계정이 다음
+    // 밤 적재 전까지 남은 문서를 읽던 틈을 막는다(removeMember 도 이제 지운다).
     match /myMessages/{ownerEmail} {
-      allow get:  if signedIn() && callerEmail() == ownerEmail;
+      allow get:  if isMember() && callerEmail() == ownerEmail;
       allow list, write: if false;
     }
 

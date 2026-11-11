@@ -276,6 +276,9 @@ const CASES = [
   // ── 내가 쓴 글: 본인만 ──
   testCase("내 글은 본인이 읽는다", "ALLOW", read(`myMessages/${MEMBER}`, MEMBER), IN),
   testCase("남의 글은 못 읽는다", "DENY", read(`myMessages/${OTHER}`, MEMBER), IN),
+  // 탈퇴·연결 해제된 계정 — 본인 이메일이어도 명부에 없으면 못 읽는다(2026-11-11)
+  testCase("명부에 없으면 내 글이어도 못 읽는다", "DENY",
+    read(`myMessages/${OUTSIDER}`, OUTSIDER), OUT),
   // 관리자도 남의 원문은 못 본다(2026-11-11). 가리기 전 원문이라, 관리자 계정
   // 하나가 털리면 방 전체가 나간다 — messagesSource 를 닫은 것과 같은 까닭.
   testCase("관리자도 남의 글은 못 읽는다", "DENY",

@@ -428,6 +428,17 @@ test("일반 멤버는 지워진다", async () => {
   assert.equal(db.__data("members/eul@x.com"), null);
 });
 
+test("탈퇴하면 본인 원문 묶음(myMessages)도 그 자리에서 지운다", async () => {
+  const db = fakeDb({
+    "members/gap@x.com": member("admin"),
+    "members/eul@x.com": member("user"),
+    "myMessages/eul@x.com": { items: [{ id: "m-1", text: "내 글" }] },
+  });
+  await guards.removeMember(db, "eul@x.com", {});
+  assert.equal(db.__data("myMessages/eul@x.com"), null,
+    "다음 밤 적재까지 기다리지 않는다");
+});
+
 test("지우는 사이 표시명이 바뀌었으면 멈춘다 — 박아둔 이름이 낡았다", async () => {
   const db = fakeDb({
     "members/gap@x.com": member("admin"),
