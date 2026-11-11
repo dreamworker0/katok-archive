@@ -214,6 +214,10 @@ exports.removeMember = onCall(async (request) => {
     const user = await admin.auth().getUserByEmail(email);
     await admin.auth().setCustomUserClaims(user.uid, { member: false, admin: false });
     claimCleared = true;
+    // 새로 고친 토큰도 못 받게 한다(2026-11-11 외부 평가 지적). 이미 받은 ID 토큰은
+    // 만료(최대 1시간)까지 Storage 규칙을 통과한다 — 그 1시간은 받아들인 몫이다
+    // (Storage 규칙은 Firestore 명부를 보지 않는다). 다만 그 뒤로 다시 받는 길은 막는다.
+    await admin.auth().revokeRefreshTokens(user.uid);
   } catch (e) {
     if (e.code !== "auth/user-not-found") throw e;
   }

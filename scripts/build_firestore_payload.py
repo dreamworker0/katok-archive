@@ -104,6 +104,52 @@ def prune_topics(topics: dict, kept_ids: set[str]) -> dict:
     return out
 
 
+def effective_exclusions(messages_raw: list[dict], topics: dict):
+    """그날 실제로 적용할 제외 규칙. (exclusions, hidden_threads, requests, resolved)
+
+    손으로 쓴 제외(exclusions.json) 위에 관리자가 숨긴 주제와 멤버 요청을 얹는다.
+    발행(build_payload)과 '무엇이 발행되나' 를 묻는 곳(published_thread_ids)이 같은
+    계산을 써야 해서 함수로 뺐다(2026-11-11).
+    """
+    # 멤버가 웹에서 낸 요청을 손으로 쓴 제외 규칙 위에 얹는다. 삭제 요청은 반드시
+    # 소유권을 확인한 뒤에 반영한다 — 보안 규칙만으로는 남의 글을 지우려는 요청을
+    # 막을 수 없다. member_requests 모듈 설명 참고.
+    exclusions = load_exclusions()
+
+    # 관리자가 뺀 주제는 그 주제의 메시지를 전부 제외하는 것과 같다. 기존 제외
+    # machinery 를 그대로 태우면 통계·그래프·요지까지 일관되게 빠진다.
+    hidden_threads = set(member_requests.load_hidden_threads())
+    if hidden_threads:
+        hidden_ids = [
+            mid for t in topics["threads"] if t["id"] in hidden_threads
+            for mid in t["message_ids"]
+        ]
+        exclusions = dict(exclusions)
+        exclusions["exclude_message_ids"] = list(
+            set(exclusions.get("exclude_message_ids") or []) | set(hidden_ids)
+        )
+
+    requests = member_requests.load_requests()
+    resolved = member_requests.verify_ownership(requests, messages_raw)
+    exclusions = member_requests.merge_into_exclusions(exclusions, resolved)
+    return exclusions, hidden_threads, requests, resolved
+
+
+def published_thread_ids() -> set[str]:
+    """발행본에 실리는 주제 ID — 숨김·삭제 요청·제외 규칙을 반영한 뒤.
+
+    AI 보고서가 이것만 고른다(2026-11-11 외부 평가 지적). 예전에는 topics.json
+    전체에서 골라, 관리자가 숨긴 주제나 멤버가 지워 달라고 한 글만으로 된 주제의
+    보고서도 외부 모델(agy·claude)로 나갔다. 발행하지 않는 것을 밖으로 보내지 않는다.
+    """
+    messages_raw = build_site._read_jsonl(OUTPUT / "messages.jsonl")
+    topics = build_site._read_json(OUTPUT / "topics.json")
+    exclusions = effective_exclusions(messages_raw, topics)[0]
+    kept, _ = apply_exclusions(messages_raw, exclusions)
+    pruned = prune_topics(topics, {m["id"] for m in kept})
+    return {t["id"] for t in pruned["threads"]}
+
+
 def rebuild_participants(messages: list[dict]) -> dict:
     """제외 반영 후의 메시지에서 참여자 통계를 다시 만든다.
 
@@ -435,27 +481,7 @@ def build_payload() -> dict:
     files_path = OUTPUT / "files.jsonl"
     files = build_site._read_jsonl(files_path) if files_path.exists() else []
 
-    # 멤버가 웹에서 낸 요청을 손으로 쓴 제외 규칙 위에 얹는다. 삭제 요청은 반드시
-    # 소유권을 확인한 뒤에 반영한다 — 보안 규칙만으로는 남의 글을 지우려는 요청을
-    # 막을 수 없다. member_requests 모듈 설명 참고.
-    exclusions = load_exclusions()
-
-    # 관리자가 뺀 주제는 그 주제의 메시지를 전부 제외하는 것과 같다. 기존 제외
-    # machinery 를 그대로 태우면 통계·그래프·요지까지 일관되게 빠진다.
-    hidden_threads = set(member_requests.load_hidden_threads())
-    if hidden_threads:
-        hidden_ids = [
-            mid for t in topics["threads"] if t["id"] in hidden_threads
-            for mid in t["message_ids"]
-        ]
-        exclusions = dict(exclusions)
-        exclusions["exclude_message_ids"] = list(
-            set(exclusions.get("exclude_message_ids") or []) | set(hidden_ids)
-        )
-
-    requests = member_requests.load_requests()
-    resolved = member_requests.verify_ownership(requests, messages_raw)
-    exclusions = member_requests.merge_into_exclusions(exclusions, resolved)
+    exclusions, hidden_threads, requests, resolved = effective_exclusions(messages_raw, topics)
 
     kept, report = apply_exclusions(messages_raw, exclusions)
     report["hidden_threads"] = sorted(hidden_threads)

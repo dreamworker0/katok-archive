@@ -12,6 +12,7 @@
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from scripts import ai_reports as ar
@@ -661,6 +662,7 @@ class AgyCallTests(unittest.TestCase):
         def fake_run(cmd, **kw):
             cwd = Path(kw["cwd"])
             self.seen["cmd"], self.seen["cwd"] = cmd, cwd
+            self.seen["env"] = kw.get("env")
             self.seen["files"] = sorted(str(p.relative_to(cwd)).replace("\\", "/")
                                         for p in cwd.rglob("*") if p.is_file())
             agent = cwd / ".agents" / "agents" / ("%s.md" % ar.AGY_AGENT)
@@ -689,6 +691,17 @@ class AgyCallTests(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("--output-format") + 1], "stream-json")
         self.assertIn("--sandbox", cmd)
         self.assertNotIn("--dangerously-skip-permissions", cmd)
+
+    def test_child_does_not_inherit_secret_env(self):
+        """부모 셸의 키·토큰 이름 변수를 agy 에 물려주지 않는다(2026-11-11)."""
+        with mock.patch.dict(ar.os.environ, {"SOME_API_KEY": "x", "KATOK_SA_KEY": "y",
+                                             "PLAIN_VALUE": "z"}):
+            ar.call_agy("물음")
+        env = self.seen["env"]
+        self.assertIsNotNone(env, "env 를 넘겨야 한다 — None 이면 부모 것을 그대로 쓴다")
+        self.assertNotIn("SOME_API_KEY", env)
+        self.assertNotIn("KATOK_SA_KEY", env)
+        self.assertEqual(env.get("PLAIN_VALUE"), "z")
 
     def test_a_too_long_prompt_is_not_sent(self):
         self.assertIsNone(ar.call_agy("가" * (ar.AGY_MAX_PROMPT_CHARS + 1)))
@@ -740,6 +753,57 @@ class SearchFallbackTests(unittest.TestCase):
         used = []
         self.assertIsNone(ar.call_search("물음", used=used))
         self.assertEqual(used, [])
+
+class OnlyPublishedThreadsGoOutTests(unittest.TestCase):
+    """발행하지 않는 주제의 보고서는 외부 모델로 보내지 않는다. (2026-11-11)
+
+    관리자가 숨긴 주제, 멤버가 지워 달라고 한 글만으로 된 주제가 그대로 agy·claude
+    로 나갔다(외부 평가 지적). 보내는 본문도 발행본처럼 연락처를 가린다.
+    """
+
+    def run_main(self, published, reports, argv=("--limit", "5")):
+        threads = [{"id": "t-1", "title": "보이는 주제"}, {"id": "t-2", "title": "숨긴 주제"}]
+        sent = []
+
+        def fake_run_one(t, body, today, model, dry):
+            sent.append((t["id"], body))
+            return "written"
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "output").mkdir()
+            (root / "output" / "topics.json").write_text(
+                json.dumps({"threads": threads}, ensure_ascii=False), encoding="utf-8")
+            with mock.patch.object(ar, "ROOT", root), \
+                    mock.patch.object(ar, "load_reports", lambda: reports), \
+                    mock.patch.object(ar, "pick_targets", lambda th, lim, ids: list(th)), \
+                    mock.patch.object(ar, "pick_requeued", lambda th, today: ([], {})), \
+                    mock.patch.object(ar, "load_skips", lambda: {}), \
+                    mock.patch.object(ar, "save_skips", lambda s: None), \
+                    mock.patch.object(ar, "run_one", fake_run_one), \
+                    mock.patch.object(ar.pii, "load_allow", lambda: {"phones": set(), "emails": set()}), \
+                    mock.patch("scripts.build_firestore_payload.published_thread_ids", published), \
+                    mock.patch.object(ar.sys, "argv", ["ai_reports", *argv]):
+                ar.main()
+        return sent
+
+    def test_hidden_threads_are_not_sent(self):
+        reports = {"t-1": {"report": "본문 하나"}, "t-2": {"report": "본문 둘"}}
+        sent = self.run_main(lambda: {"t-1"}, reports)
+        self.assertEqual([tid for tid, _ in sent], ["t-1"])
+
+    def test_if_the_published_set_is_unknown_nothing_is_sent(self):
+        def boom():
+            raise RuntimeError("원장 못 읽음")
+        reports = {"t-1": {"report": "본문"}, "t-2": {"report": "본문"}}
+        self.assertEqual(self.run_main(boom, reports), [])
+
+    def test_contacts_are_masked_before_sending(self):
+        reports = {"t-1": {"report": "메일은 nobody9f3a@hanmail.net 으로 주세요"}}
+        sent = self.run_main(lambda: {"t-1"}, reports)
+        self.assertEqual(len(sent), 1)
+        self.assertNotIn("nobody9f3a@hanmail.net", sent[0][1])
+
 
 
 if __name__ == "__main__":

@@ -55,7 +55,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from scripts import llm
+from scripts import llm, pii
 from scripts.topic_reports import AI_REPORT_RULES, AI_REPORTS_DIR, load_reports
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -360,8 +360,11 @@ def call_agy(prompt: str, timeout: int = SEARCH_TIMEOUT_SEC) -> str | None:
             agents = Path(work) / ".agents" / "agents"
             agents.mkdir(parents=True)
             (agents / ("%s.md" % AGY_AGENT)).write_text(AGY_AGENT_MD, encoding="utf-8")
+            # 환경 변수도 거른다 — llm.call_claude 와 같은 child_env(키·토큰 이름은
+            # 넘기지 않는다). 예전엔 부모 셸 것을 그대로 물려받았다(2026-11-11 지적).
             r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                               errors="replace", timeout=timeout, cwd=work)
+                               errors="replace", timeout=timeout, cwd=work,
+                               env=llm.child_env())
     except FileNotFoundError:
         print("    agy CLI 를 찾을 수 없습니다.")
         return None
@@ -879,6 +882,21 @@ def main() -> None:
         print("주제 목록을 읽지 못했습니다(%s) — AI 보고서를 건너뜁니다." % e)
         return
 
+    # 발행되는 주제만 고른다(2026-11-11 외부 평가 지적). 관리자가 숨긴 주제, 멤버가
+    # 지워 달라고 한 글만으로 된 주제는 화면에 안 나가는데, 그 보고서를 외부 모델
+    # (agy·claude)로 보낼 까닭이 없다. 계산을 못 하면 쓰지 않는다 — 모를 때 다
+    # 내보내는 쪽으로 기울면 그게 바로 막으려던 사고다.
+    try:
+        from scripts.build_firestore_payload import published_thread_ids
+        published = published_thread_ids()
+    except Exception as e:
+        print("발행 대상 주제를 계산하지 못했습니다(%s) — AI 보고서를 건너뜁니다." % e)
+        return
+    before = len(threads)
+    threads = [t for t in threads if t.get("id") in published]
+    if len(threads) != before:
+        print("[AI보고서] 발행하지 않는 주제 %d개는 대상에서 뺍니다." % (before - len(threads)))
+
     reports = load_reports()
     ids = [x.strip() for x in args.ids.split(",") if x.strip()]
     targets = pick_targets(threads, args.limit, ids or None)
@@ -898,6 +916,9 @@ def main() -> None:
     print("[AI보고서] %d편을 씁니다." % len(targets))
     requeued_ids = {t["id"] for t in requeued}
     skips = load_skips()
+    # 발행본과 같게 연락처(certain 등급)를 가린 본문을 보낸다. 발행된 보고서도
+    # 이렇게 가려져 나가므로, 검증할 사실(도구·링크·주장)은 그대로 남는다.
+    allow = pii.load_allow()
     counts = {"written": 0, "skipped": 0, "failed": 0}
     for t in targets:
         r = reports.get(t["id"])
@@ -906,6 +927,7 @@ def main() -> None:
             print("  %s 사람 보고서가 없어 건너뜁니다." % t["id"])
             counts["failed"] += 1
             continue
+        body = pii.mask(body, allow)[0]
         try:
             res = run_one(t, body, today, args.model, args.dry_run)
         except Exception as e:      # 한 편의 사고가 갱신을 멈추지 않는다
