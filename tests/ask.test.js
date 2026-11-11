@@ -179,3 +179,27 @@ test("ArchiveAnswer: PC 가 받아 running 이 된 직후(아직 forAskedAt 없�
   vcb({ state: "done", forAskedAt: ASKED - 1, body: "옛 확인" });
   assert.match(A.boxHtml("질문이에요"), /data-ai-verify/);
 });
+
+/* ── 질문이 running 에 멈추면 다시 묻게 한다 (2026-11-11) ──
+ * 처리기가 잡은 뒤 죽으면 스냅샷이 더 오지 않는다. 예전에는 '쓰는 중' 에 영영 갇혔다. */
+function answerWith(doc) {
+  const reqs = { ask: () => Promise.resolve(), watchAsk: (cb) => { cb(doc); return () => {}; },
+    verify: () => Promise.resolve(), watchVerify: () => () => {} };
+  const A = K.ArchiveAnswer({ esc: T.esc, state: { session: { requests: reqs } }, jumpToTimeline: () => {} });
+  A.boxHtml(doc.question);   // 듣기 시작
+  return A.boxHtml(doc.question);
+}
+
+test("ArchiveAnswer: 5분 넘게 running 이면 '멈춘 것 같아요' 와 다시 묻기 단추", () => {
+  const h = answerWith({ question: "질문이에요", state: "running",
+    startedAt: new Date(Date.now() - 6 * 60 * 1000).toISOString() });
+  assert.match(h, /멈춘 것 같아요/);
+  assert.match(h, /data-ai-ask/);
+});
+
+test("ArchiveAnswer: 방금 시작한 running 은 그대로 기다린다", () => {
+  const h = answerWith({ question: "질문이에요", state: "running",
+    startedAt: new Date(Date.now() - 30 * 1000).toISOString() });
+  assert.match(h, /답을 쓰는 중/);
+  assert.doesNotMatch(h, /멈춘 것 같아요/);
+});

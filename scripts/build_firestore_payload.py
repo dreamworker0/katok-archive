@@ -653,12 +653,22 @@ def build_payload() -> dict:
 
 
 def write_payload(payload: dict) -> None:
-    if PAYLOAD.exists():
-        shutil.rmtree(PAYLOAD)
-    PAYLOAD.mkdir(parents=True)
+    """발행본 폴더를 **한 번에** 바꿔 끼운다. (2026-11-11 외부 평가 지적)
+
+    예전에는 폴더를 지우고 파일을 하나씩 썼다. 그 몇 초 사이 상주하는 질문 처리기
+    (ask_worker.js — 이 폴더의 threads.json·meta.json 을 읽는다)가 읽으면 파일이 없거나
+    반쯤이었다. 옆 폴더에 다 쓴 뒤 이름만 바꾼다 — 비는 순간은 이름 두 번 바꾸는 사이
+    뿐이고, 처리기는 그때 들고 있던 판으로 답한다.
+    """
+    staging = PAYLOAD.with_name(PAYLOAD.name + ".new")
+    old = PAYLOAD.with_name(PAYLOAD.name + ".old")
+    for d in (staging, old):
+        if d.exists():
+            shutil.rmtree(d)        # 지난번에 끊긴 찌꺼기
+    staging.mkdir(parents=True)
 
     def dump(name: str, obj) -> None:
-        (PAYLOAD / name).write_text(
+        (staging / name).write_text(
             json.dumps(obj, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
         )
 
@@ -672,10 +682,26 @@ def write_payload(payload: dict) -> None:
     dump("members.json", payload["members"])
     dump("images.json", payload["images"])
     dump("files.json", payload["files"])
-    (PAYLOAD / "exclusion-report.json").write_text(
+    (staging / "exclusion-report.json").write_text(
         json.dumps(payload["exclusion_report"], ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+    # Windows 는 있는 폴더 위로 이름을 바꿀 수 없다 — 옛것을 비켜 두고 새것을 넣는다.
+    # 다른 프로그램이 잠깐 쥐고 있으면(백신 등) 몇 번 더 해 본다.
+    import time
+    for attempt in range(6):
+        try:
+            if PAYLOAD.exists():
+                PAYLOAD.rename(old)
+            staging.rename(PAYLOAD)
+            break
+        except PermissionError:
+            if attempt == 5:
+                raise
+            time.sleep(0.25 * (attempt + 1))
+    if old.exists():
+        shutil.rmtree(old, ignore_errors=True)
 
 
 def main() -> None:

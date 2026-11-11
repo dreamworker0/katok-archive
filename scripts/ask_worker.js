@@ -86,7 +86,18 @@ const MAX_CITES = 6;
 /* ---------- 발행본 읽기 (바뀌었을 때만 다시) ---------- */
 
 let cache = { mtime: 0, threads: [], names: [], catLabel: {}, index: "", byId: {} };
+/* 밤 갱신이 발행본을 다시 쓰는 그 몇 초에 읽으면 파일이 없거나 반쯤일 수 있다.
+ * 그때는 들고 있던 판으로 답한다 — 하루 묵은 판이 답을 못 하는 것보다 낫다.
+ * 들고 있던 것도 없으면(막 켜졌다) 던지고, handle 이 'failed' 로 마감한다. (2026-11-11) */
 function payload() {
+  try {
+    return readPayload();
+  } catch (e) {
+    if (cache.mtime) return cache;
+    throw e;
+  }
+}
+function readPayload() {
   const file = path.join(PAYLOAD, "threads.json");
   const mtime = fs.statSync(file).mtimeMs;
   if (mtime !== cache.mtime) {
@@ -531,6 +542,20 @@ async function claim(db, ref, askedAtMs) {
   });
 }
 
+/* 'running' 으로 잡은 뒤에 예외가 나면 반드시 마감한다. (2026-11-11 외부 평가 지적)
+ *
+ * 예전에는 잡은 뒤의 예외(발행본을 못 읽음 등)가 듣기 쪽 .catch 에서 로그만 남기고
+ * 끝나, 그 사람의 문서가 영영 'running' 이었다 — 화면은 계속 '찾는 중' 이었다. */
+async function settleOnError(fn, finish, say, who, message) {
+  try {
+    return await fn();
+  } catch (e) {
+    say(`${who} 처리 중 오류 — ${e && e.message}`, "ERROR");
+    try { await finish({ state: "failed", message }); } catch (_) { /* 마감도 못 하면 화면 쪽 타임아웃이 받는다 */ }
+    return undefined;
+  }
+}
+
 async function handle(db, snap, { say, dry }) {
   const ref = snap.ref;
   const email = snap.id;
@@ -548,7 +573,12 @@ async function handle(db, snap, { say, dry }) {
   }
   if (dry) { say(`[dry-run] ${email} 의 질문(${question.length}자)에 답할 차례입니다.`); return; }
   if (!(await claim(db, ref, askedAtMs))) return;
+  return settleOnError(() => answerClaimed(db, ref, email, question, finish, say), finish, say,
+    `질문 ${email}`, "답을 쓰지 못했어요. 잠시 뒤 다시 물어봐 주세요.");
+}
 
+/** 잡은(running) 질문에 답한다 — 여기서 나는 예외는 settleOnError 가 마감한다. */
+async function answerClaimed(db, ref, email, question, finish, say) {
   const limited = takeQuota(email, Date.now());
   if (limited) {
     say(`질문 한도 — ${email}`, "WARN");
@@ -686,7 +716,12 @@ async function handleVerify(db, snap, { say, dry }) {
   }
   if (dry) { say(`[dry-run] ${email} 의 답 확인 차례입니다.`); return; }
   if (!(await claim(db, ref, askedAtMs))) return;
+  return settleOnError(() => verifyClaimed(db, ref, email, askedAtMs, finish, say), finish, say,
+    `확인 ${email}`, "확인하지 못했어요. 잠시 뒤 다시 눌러 주세요.");
+}
 
+/** 잡은(running) 확인 부탁을 처리한다 — 예외는 settleOnError 가 마감한다. */
+async function verifyClaimed(db, ref, email, askedAtMs, finish, say) {
   // 확인할 것은 멤버가 보낸 글이 아니라, 이 PC 가 그 사람에게 써 준 마지막 답이다.
   const ask = (await db.collection("asks").doc(email).get()).data() || {};
   if (ask.state !== "done" || !ask.answer || !(ask.cites || []).length) {
@@ -848,7 +883,7 @@ function start(db, { say, dry = false, once = false, onIdle } = {}) {
   };
 }
 
-module.exports = { start, candidates, mergeCandidates, buildIndex, buildPickPrompt, parsePick,
+module.exports = { start, settleOnError, candidates, mergeCandidates, buildIndex, buildPickPrompt, parsePick,
                    buildPrompt, parseAnswer, labelAnchors, seenMaterials, keepMaterials,
                    takeQuota, takeVerifyQuota, parseStage, runVerifyForTest: runVerify,
                    hasChanges, requeueTopics, childEnv, claudeArgs, callClaude, payload,

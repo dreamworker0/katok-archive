@@ -235,3 +235,32 @@ test("requeueTopics: 주제 번호·날짜·횟수만 덧붙인다", () => {
   assert.deepEqual(Object.keys(q["t-2"]).sort(), ["count", "last", "since", "why"]);
   delete process.env.KATOK_AI_REQUEUE_FILE;
 });
+
+/* ── running 으로 잡은 뒤의 예외는 반드시 마감한다 (2026-11-11) ──
+ * 밤 갱신이 발행본을 다시 쓰는 사이 읽기에 실패하면, 예전에는 로그만 남고 그 사람의
+ * 문서가 영영 'running' 이었다. */
+test("잡은 뒤 예외가 나면 failed 로 마감한다", async () => {
+  const done = [];
+  const said = [];
+  const r = await W.settleOnError(
+    async () => { throw new Error("ENOENT threads.json"); },
+    async (f) => { done.push(f); return true; },
+    (m, lvl) => said.push([m, lvl]),
+    "질문 a@b", "답을 쓰지 못했어요.");
+  assert.equal(r, undefined);
+  assert.deepEqual(done, [{ state: "failed", message: "답을 쓰지 못했어요." }]);
+  assert.equal(said[0][1], "ERROR");
+});
+
+test("예외가 없으면 마감을 건드리지 않는다", async () => {
+  const done = [];
+  const r = await W.settleOnError(async () => "ok", async (f) => { done.push(f); },
+    () => {}, "질문", "x");
+  assert.equal(r, "ok");
+  assert.deepEqual(done, []);
+});
+
+test("마감 쓰기마저 실패해도 던지지 않는다 — 듣기 고리가 끊기면 안 된다", async () => {
+  await W.settleOnError(async () => { throw new Error("a"); },
+    async () => { throw new Error("네트워크"); }, () => {}, "질문", "x");
+});

@@ -384,6 +384,9 @@
    * verifies/{이메일} 에 '확인해 달라' 는 표시만 쓴다 — 무엇을 확인할지는 PC 가 그 사람의
    * 답을 직접 읽는다. 출처 링크는 PC 가 연 주소 목록(sources)에서만 단다. */
   var VERIFY_STUCK_MS = 9 * 60 * 1000;   // PC 쪽 제한(7분)을 넘겨도 running 이면 멈춘 것
+  // 질문도 같다(2026-11-11). PC 쪽은 고르기 1분 + 답 쓰기 2분 30초가 상한이라, 5분이
+  // 지나도 running 이면 멈춘 것이다. 예전에는 이 분기가 없어 '쓰는 중' 에 영영 갇혔다.
+  var ASK_STUCK_MS = 5 * 60 * 1000;
 
   function millisOf(v) {
     if (!v) return null;
@@ -516,6 +519,21 @@
           "답은 틀릴 수 있으니 근거 주제를 꼭 확인해 주세요.</p></div>";
       }
       var st = doc.state;
+      if (st === "running") {
+        var startedAt = millisOf(doc.startedAt);
+        if (startedAt) {
+          var left = startedAt + ASK_STUCK_MS - Date.now();
+          if (left <= 0) {
+            return '<div class="ai-answer__ask"><p class="ai-answer__note ai-answer__note--warn">' +
+              "답이 멈춘 것 같아요. 다시 물어봐 주세요.</p>" + askButton("🤖 다시 물어보기") + "</div>";
+          }
+          // 스냅샷이 더 오지 않아도 그 시각에 한 번 다시 그린다 — 멈춘 처리기는 알려 주지 않는다.
+          if (typeof document !== "undefined") {
+            clearTimeout(stuckTimer);
+            stuckTimer = setTimeout(paint, left + 500);
+          }
+        }
+      }
       if (st === "queued" || st === "running") {
         return '<p class="ai-answer__wait"><span class="ai-answer__dot" aria-hidden="true"></span>' +
           (st === "running" ? "기록을 읽고 답을 쓰는 중이에요… 보통 20~40초 걸려요."
@@ -561,6 +579,8 @@
       return '<section class="ai-answer" id="aiAnswer" aria-live="polite" data-q="' +
         esc(q) + '">' + inner(q) + "</section>";
     }
+
+    var stuckTimer = null;
 
     /** 문서가 바뀌면 칸 안만 다시 그린다 — 타임라인 전체를 다시 그리면 읽던 자리를 잃는다. */
     function paint() {
