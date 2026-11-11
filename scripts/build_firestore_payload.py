@@ -707,10 +707,14 @@ def main() -> None:
         likely = [h for h in hits if h.grade == "likely"]
         print("개인정보 %d건 가림 (%s)" % (len(certain), pii.summarize(hits)))
         # 경고 등급은 사람이 봐야 한다 — 가리지 않았으므로 그대로 발행된다.
+        #
+        # 로그에는 가린 모양(h.masked)만 찍는다(2026-11-11). 원래 값을 찍으면 매일
+        # 쌓이는 logs/daily-*.log 가 연락처 목록이 된다. 앞머리·끝 네 자리가 남아
+        # 원장에서 찾아 확인하기에는 충분하다.
         for h in likely[:10]:
             print("[개인정보 확인] %s %s — 근처에 연락처를 뜻하는 말이 없어 "
                   "가리지 않았습니다. 개인정보면 config/pii_allow.json 반대편, 즉 "
-                  "원문 제외 규칙을 쓰세요." % (h.kind, h.value))
+                  "원문 제외 규칙을 쓰세요." % (h.kind, h.masked))
     else:
         print("개인정보 검사: 가릴 것 없음")
 

@@ -23,11 +23,24 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# 자식 claude 에 넘기지 않을 환경 변수 — verify_answer._SECRET_ENV 와 같다.
+_SECRET_ENV = re.compile(r"TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|KATOK_SA", re.I)
+
+
+def child_env() -> dict:
+    """토큰·키류를 뺀 환경. claude.ai 커넥터와 자동 갱신도 끈다."""
+    env = {k: v for k, v in os.environ.items() if not _SECRET_ENV.search(k)}
+    env.update({"ENABLE_CLAUDEAI_MCP_SERVERS": "false", "DISABLE_AUTOUPDATER": "1",
+                "FORCE_COLOR": "0"})
+    return env
 
 # LLM 이 오래 물고 있으면 갱신 전체가 늦어진다. 넘기면 포기하고 미분류로 남긴다.
 TIMEOUT_SEC = 300
@@ -76,6 +89,15 @@ def call_claude(prompt: str, model: str, timeout: int = TIMEOUT_SEC,
     프롬프트는 **stdin** 으로 넘긴다. 인자로 주면 두 가지가 걸린다: `--tools`
     가 가변인자(`<tools...>`)라 뒤따르는 프롬프트까지 삼켜버리고(실측), 메시지가
     쌓인 날에는 명령줄 길이 제한에 닿는다.
+
+    나머지 격리는 `verify_answer.call_claude`·`ask_worker.js` 와 같게 맞춘다(2026-11-11,
+    외부 평가 지적). 이 함수만 느슨했다:
+      - `--setting-sources ""` — 사용자·프로젝트 설정(훅·권한·CLAUDE.md)을 읽지 않는다
+      - `--disable-slash-commands` — 프롬프트 속 `/...` 가 명령으로 풀리지 않는다
+      - `--no-session-persistence` — 가리기 전 단톡방 글이 든 프롬프트를
+        `%USERPROFILE%\\.claude` 의 세션 기록에 남기지 않는다
+      - 빈 임시 폴더에서 띄운다 — 작업 폴더가 원장(output/)이 있는 저장소 루트가 아니다
+      - 이름에 TOKEN·KEY·SECRET 등이 든 환경 변수는 넘기지 않는다
     """
     cmd = [
         "claude", "-p",
@@ -83,15 +105,20 @@ def call_claude(prompt: str, model: str, timeout: int = TIMEOUT_SEC,
         "--model", model,
         "--strict-mcp-config",
         "--mcp-config", '{"mcpServers":{}}',
+        "--setting-sources", "",
+        "--disable-slash-commands",
+        "--no-session-persistence",
         "--tools", tools,
     ]
     if tools:
         cmd += ["--allowedTools", tools]
     try:
-        r = subprocess.run(
-            cmd, input=prompt, capture_output=True, text=True, encoding="utf-8",
-            timeout=timeout, cwd=str(ROOT),
-        )
+        with tempfile.TemporaryDirectory(prefix="katok-llm-",
+                                         ignore_cleanup_errors=True) as work:
+            r = subprocess.run(
+                cmd, input=prompt, capture_output=True, text=True, encoding="utf-8",
+                timeout=timeout, cwd=work, env=child_env(),
+            )
     except FileNotFoundError:
         print(f"claude CLI 를 찾을 수 없습니다 — {what}를 건너뜁니다.")
         return None

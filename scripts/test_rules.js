@@ -86,6 +86,8 @@ function forApi(c) {
 }
 
 const NOW = "2026-07-28T12:00:00Z";
+// NOW 의 한국 날짜. 사용 기록의 day 는 이것 무렵이어야 받는다(usageDayOk).
+const NOW_DAY = "2026-07-28";
 
 /** preferences 문서에 쓰는 요청.
  *
@@ -271,15 +273,18 @@ const CASES = [
   testCase("chunks 는 멤버도 못 읽는다", "DENY", read("chunks/c-1", MEMBER), IN),
   testCase("chunks 는 관리자도 못 읽는다", "DENY", read("chunks/c-1", MEMBER), ADMIN),
 
-  // ── 내가 쓴 글: 본인과 관리자만 ──
+  // ── 내가 쓴 글: 본인만 ──
   testCase("내 글은 본인이 읽는다", "ALLOW", read(`myMessages/${MEMBER}`, MEMBER), IN),
   testCase("남의 글은 못 읽는다", "DENY", read(`myMessages/${OTHER}`, MEMBER), IN),
-  testCase("관리자는 남의 글도 읽는다(오탐 되돌릴 근거)", "ALLOW",
+  // 관리자도 남의 원문은 못 본다(2026-11-11). 가리기 전 원문이라, 관리자 계정
+  // 하나가 털리면 방 전체가 나간다 — messagesSource 를 닫은 것과 같은 까닭.
+  testCase("관리자도 남의 글은 못 읽는다", "DENY",
     read(`myMessages/${OTHER}`, MEMBER), ADMIN),
-  // list 는 관리자만. 멤버가 목록을 받으면 방 전체의 원문을 훑을 수 있다.
+  testCase("관리자도 자기 글은 읽는다", "ALLOW",
+    read(`myMessages/${MEMBER}`, MEMBER), ADMIN),
   testCase("멤버는 내 글 컬렉션을 훑지 못한다", "DENY",
     read("myMessages", MEMBER, "list"), IN),
-  testCase("관리자는 내 글 컬렉션을 훑는다", "ALLOW",
+  testCase("관리자도 내 글 컬렉션을 훑지 못한다", "DENY",
     read("myMessages", MEMBER, "list"), ADMIN),
   testCase("내 글에는 클라이언트가 쓰지 못한다", "DENY",
     write(`myMessages/${MEMBER}`, { items: [] }, MEMBER), IN),
@@ -419,28 +424,39 @@ const CASES = [
 
   // ── 사용 기록: 멤버는 새로 쓰기만, 검색어·메뉴에는 이름을 못 붙인다 ──
   testCase("멤버의 접속을 남긴다", "ALLOW",
-    write("usageEvents/e1", { type: "visit", day: "2026-11-01", by: MEMBER }, MEMBER, "create"), IN),
+    write("usageEvents/e1", { type: "visit", day: NOW_DAY, by: MEMBER }, MEMBER, "create"), IN),
   testCase("남의 이름으로 접속을 남기지 못한다", "DENY",
-    write("usageEvents/e1", { type: "visit", day: "2026-11-01", by: OTHER }, MEMBER, "create"), IN),
+    write("usageEvents/e1", { type: "visit", day: NOW_DAY, by: OTHER }, MEMBER, "create"), IN),
   testCase("명부에 없는 사람은 기록을 남기지 못한다", "DENY",
-    write("usageEvents/e1", { type: "visit", day: "2026-11-01", by: OUTSIDER }, OUTSIDER, "create"), OUT),
+    write("usageEvents/e1", { type: "visit", day: NOW_DAY, by: OUTSIDER }, OUTSIDER, "create"), OUT),
   testCase("메뉴 누름을 남긴다", "ALLOW",
-    write("usageEvents/e2", { type: "view", day: "2026-11-01", key: "timeline" }, MEMBER, "create"), IN),
+    write("usageEvents/e2", { type: "view", day: NOW_DAY, key: "timeline" }, MEMBER, "create"), IN),
   testCase("검색어를 남긴다", "ALLOW",
-    write("usageEvents/e3", { type: "search", day: "2026-11-01", key: "한글 자동화" }, MEMBER, "create"), IN),
+    write("usageEvents/e3", { type: "search", day: NOW_DAY, key: "한글 자동화" }, MEMBER, "create"), IN),
   testCase("AI 단추 누름을 남긴다", "ALLOW",
-    write("usageEvents/e4", { type: "ai", day: "2026-11-01", key: "ask" }, MEMBER, "create"), IN),
+    write("usageEvents/e4", { type: "ai", day: NOW_DAY, key: "ask" }, MEMBER, "create"), IN),
   // 합계만 보기로 했다 — 검색어가 사람에게 이어지면 안 된다.
   testCase("검색어에 이름을 붙이지 못한다", "DENY",
-    write("usageEvents/e3", { type: "search", day: "2026-11-01", key: "요금", by: MEMBER }, MEMBER, "create"), IN),
+    write("usageEvents/e3", { type: "search", day: NOW_DAY, key: "요금", by: MEMBER }, MEMBER, "create"), IN),
   testCase("검색어는 40자까지", "DENY",
-    write("usageEvents/e3", { type: "search", day: "2026-11-01", key: "가".repeat(41) }, MEMBER, "create"), IN),
+    write("usageEvents/e3", { type: "search", day: NOW_DAY, key: "가".repeat(41) }, MEMBER, "create"), IN),
   testCase("모르는 종류는 막는다", "DENY",
-    write("usageEvents/e5", { type: "anything", day: "2026-11-01", key: "x" }, MEMBER, "create"), IN),
+    write("usageEvents/e5", { type: "anything", day: NOW_DAY, key: "x" }, MEMBER, "create"), IN),
   testCase("날짜 모양이 틀리면 막는다", "DENY",
     write("usageEvents/e2", { type: "view", day: "어제", key: "timeline" }, MEMBER, "create"), IN),
+  // 먼 날짜로 쌓으면 밤 정리(오늘보다 앞선 날만 접는다)가 영영 못 지운다.
+  testCase("어제 날짜는 받는다(자정 무렵 어긋남)", "ALLOW",
+    write("usageEvents/e2", { type: "view", day: "2026-07-27", key: "timeline" }, MEMBER, "create"), IN),
+  testCase("먼 미래 날짜는 막는다", "DENY",
+    write("usageEvents/e2", { type: "view", day: "2099-12-31", key: "timeline" }, MEMBER, "create"), IN),
+  testCase("내일 모레 날짜는 막는다", "DENY",
+    write("usageEvents/e2", { type: "view", day: "2026-07-30", key: "timeline" }, MEMBER, "create"), IN),
+  testCase("며칠 지난 날짜는 막는다", "DENY",
+    write("usageEvents/e2", { type: "view", day: "2026-07-20", key: "timeline" }, MEMBER, "create"), IN),
+  testCase("없는 날짜(13월)는 막는다", "DENY",
+    write("usageEvents/e2", { type: "view", day: "2026-13-01", key: "timeline" }, MEMBER, "create"), IN),
   testCase("남긴 기록은 고치지 못한다", "DENY",
-    write("usageEvents/e2", { type: "view", day: "2026-11-01", key: "stats" }, MEMBER), IN),
+    write("usageEvents/e2", { type: "view", day: NOW_DAY, key: "stats" }, MEMBER), IN),
   testCase("남긴 기록은 지우지 못한다", "DENY", del("usageEvents/e2", MEMBER), IN),
   testCase("멤버는 사용 기록을 못 읽는다", "DENY", read("usageEvents", MEMBER, "list"), IN),
   testCase("관리자는 사용 기록을 훑는다", "ALLOW", read("usageEvents", MEMBER, "list"), ADMIN),

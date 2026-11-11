@@ -78,18 +78,32 @@ async function main() {
   const cur = await ref.get();
   const r = rollup(events, cur.exists ? cur.data() : null, today);
 
+  // 내일보다 뒤 날짜는 화면이 쓸 수 없는 값이다 — 규칙이 '오늘 무렵' 만 받게 되기
+  // 전(2026-11-11)에 들어온 것일 수 있다. 위 질의('오늘보다 앞선 날')로는 영영
+  // 안 잡히므로 따로 찾아 합계에 넣지 않고 지운다.
+  const tomorrow = USAGE.addDays(today, 1);
+  const futureSnap = await db.collection("usageEvents").where("day", ">", tomorrow).get();
+  const futureIds = futureSnap.docs.map((d) => d.id);
+
   const line = `사용 기록 ${events.length}건 · 새로 접은 날 ${r.folded.length}일` +
-    (r.folded.length ? ` (${r.folded[0]} ~ ${r.folded[r.folded.length - 1]})` : "");
+    (r.folded.length ? ` (${r.folded[0]} ~ ${r.folded[r.folded.length - 1]})` : "") +
+    (futureIds.length ? ` · 미래 날짜 ${futureIds.length}건` : "");
   if (dry) { console.log("[dry-run] " + line); return; }
+
+  await deleteAll(db, futureIds);
   if (!events.length) { console.log(line); return; }
 
   await ref.set(r.doc);
-  for (let i = 0; i < r.deleteIds.length; i += BATCH) {
+  await deleteAll(db, r.deleteIds);
+  console.log(line + ` · 원본 ${r.deleteIds.length + futureIds.length}건 지움`);
+}
+
+async function deleteAll(db, ids) {
+  for (let i = 0; i < ids.length; i += BATCH) {
     const b = db.batch();
-    r.deleteIds.slice(i, i + BATCH).forEach((id) => b.delete(db.collection("usageEvents").doc(id)));
+    ids.slice(i, i + BATCH).forEach((id) => b.delete(db.collection("usageEvents").doc(id)));
     await b.commit();
   }
-  console.log(line + ` · 원본 ${r.deleteIds.length}건 지움`);
 }
 
 module.exports = { rollup, KEEP_DAYS };

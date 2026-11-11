@@ -30,7 +30,17 @@ class BundleCacheContractTest(unittest.TestCase):
         """멤버 전용 내용이 공용 컴퓨터의 브라우저에 남으면 안 된다."""
         sign_out = BOOT[BOOT.index("signOut: function ()"):]
         sign_out = sign_out[:sign_out.index("},")]
-        self.assertIn("clearBundleCache", sign_out)
+        self.assertIn("signOutClean()", sign_out)
+        # 정리는 한 곳에서: 번들 캐시·서비스 워커 캐시를 비우고, 메모리(아카이브·
+        # 사진 blob)는 페이지를 새로 띄워 통째로 버린다(2026-11-11).
+        clean = BOOT[BOOT.index("function signOutClean()"):]
+        clean = clean[:clean.index("\n  }")]
+        self.assertIn("clearBundleCache()", clean)
+        self.assertIn("ArchivePWA.clearCaches()", clean)
+        self.assertIn("window.location.reload()", clean)
+        self.assertLess(clean.index("clearBundleCache()"), clean.index("auth().signOut()"))
+        # 열람 신청·오류 화면의 '다른 계정으로 로그인' 도 같은 길로
+        self.assertIn("so.onclick = signOutClean", BOOT)
         signed_out_branch = BOOT[BOOT.index("if (user) onSignedIn(user);"):]
         signed_out_branch = signed_out_branch[:signed_out_branch.index("gateSignIn();")]
         self.assertIn("clearBundleCache", signed_out_branch)
@@ -53,6 +63,29 @@ class BundleCacheContractTest(unittest.TestCase):
         self.assertIn("return false;", flush, "못 물으면 두지 않는다")
         self.assertLess(flush.index("content_hash === hash"), flush.index("writePart("),
                         "확인이 저장보다 먼저여야 한다")
+
+
+class GateEscapingContractTest(unittest.TestCase):
+    """로그인 관문 화면은 받은 글을 함수 **안에서** 이스케이프한다. (2026-11-11)
+
+    전에는 부르는 쪽이 escapeHtml 을 해서 넘겼다. 지금 부르는 곳은 다 그렇게
+    하지만, 하나라도 잊으면 오류 메시지(서버가 돌려준 글)가 그대로 innerHTML 에
+    들어간다. 방어선을 부르는 쪽의 기억에 맡기지 않는다.
+    """
+
+    def test_gate_error_escapes_detail(self):
+        body = BOOT[BOOT.index("function gateError("):]
+        body = body[:body.index("bindSignOut();")]
+        self.assertIn("escapeHtml(detail)", body)
+
+    def test_gate_claim_escapes_warning(self):
+        body = BOOT[BOOT.index("function gateClaim("):]
+        body = body[:body.index("var input")]
+        self.assertIn("escapeHtml(warn)", body)
+
+    def test_callers_do_not_escape_twice(self):
+        # 두 번 하면 화면에 &amp; · &lt; 가 그대로 보인다
+        self.assertNotIn("escapeHtml(e.message", BOOT)
 
 
 class LazyLoadContractTest(unittest.TestCase):

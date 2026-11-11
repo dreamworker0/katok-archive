@@ -63,7 +63,7 @@
         : "") +
       '<button class="btn ghost gate-btn" id="signOutBtn">다른 계정으로 로그인</button></div>' +
       '<details class="error-detail"><summary>자세한 내용</summary><p>' +
-      detail + "</p></details>"
+      escapeHtml(detail) + "</p></details>"
     ));
     bindSignOut();
     var rt = document.getElementById("retryBtn");
@@ -80,7 +80,27 @@
 
   function bindSignOut() {
     var so = document.getElementById("signOutBtn");
-    if (so) so.onclick = function () { firebase.auth().signOut(); };
+    if (so) so.onclick = signOutClean;
+  }
+
+  /* 로그아웃 — 이 브라우저에 멤버 전용 내용이 남지 않게 다 비운다. (2026-11-11)
+   *
+   * 전에는 번들 캐시(IndexedDB)만 비웠다. 메모리의 아카이브(window.ARCHIVE),
+   * 받아 둔 사진·동영상(blob: 주소), 서비스 워커 캐시(ArchivePWA.clearCaches —
+   * '로그아웃 때 부른다' 고 적어 놓고 아무도 부르지 않았다)는 탭을 닫을 때까지
+   * 남았다. 공용 PC 에서 로그아웃만 누르고 자리를 뜨면 다음 사람이 볼 수 있다.
+   *
+   * 하나씩 찾아 지우는 대신 정리한 뒤 페이지를 새로 띄운다 — 메모리는 통째로
+   * 사라지고, blob: 주소는 문서를 떠날 때 브라우저가 거둔다. 사용 통계가 한 번만
+   * 붙는 문제(usage.js installed)도 함께 풀린다. */
+  function signOutClean() {
+    return clearBundleCache()
+      .then(function () {
+        return window.ArchivePWA ? window.ArchivePWA.clearCaches() : null;
+      })
+      .catch(function () { /* 비우기 실패가 로그아웃을 막으면 안 된다 */ })
+      .then(function () { return firebase.auth().signOut(); })
+      .then(function () { window.location.reload(); });
   }
 
   /* ---------- 열람 신청 ---------- */
@@ -92,7 +112,7 @@
       '<h1 class="gate-title">열람 신청</h1>' +
       '<p class="gate-desc"><b>' + escapeHtml(user.email) + "</b> 으로 로그인했습니다.<br>" +
       "대화방에서 쓰시는 이름을 적어주세요. 관리자가 확인한 뒤 열어드립니다.</p>" +
-      (warn ? '<p class="gate-warn">' + warn + "</p>" : "") +
+      (warn ? '<p class="gate-warn">' + escapeHtml(warn) + "</p>" : "") +
       '<input class="gate-input" id="claimNick" type="text" maxlength="40" ' +
       'autocomplete="off" placeholder="대화방 표시 이름" value="' +
       escapeHtml(prefill || "") + '" />' +
@@ -127,7 +147,7 @@
       function () { gatePending(user, nickname); },
       function (e) {
         gateClaim(user, nickname,
-          "신청을 보내지 못했습니다: " + escapeHtml(e.message || String(e)));
+          "신청을 보내지 못했습니다: " + (e.message || String(e)));
       }
     );
   }
@@ -664,7 +684,7 @@
       role: member.role || "user",
       signOut: function () {
         // 멤버 전용 내용이 이 브라우저에 남지 않게 먼저 지운다
-        clearBundleCache().then(function () { firebase.auth().signOut(); });
+        signOutClean();
       },
       requests: makeRequestApi(firebase.firestore(), user),
       admin: member.role === "admin"
@@ -695,7 +715,7 @@
             },
             function (e) {
               gateClaim(user, "",
-                "신청 상태를 확인하지 못했습니다: " + escapeHtml(e.message || String(e)));
+                "신청 상태를 확인하지 못했습니다: " + (e.message || String(e)));
             }
           );
           return;
@@ -709,7 +729,7 @@
             watchNewEdition(db, meta.content_hash);
           },
           function (e) {
-            gateError("아카이브를 불러오지 못했습니다", escapeHtml(e.message || String(e)),
+            gateError("아카이브를 불러오지 못했습니다", e.message || String(e),
               { retry: true });
           }
         );
@@ -718,7 +738,7 @@
         // 규칙 거부(permission-denied)도 여기로 온다
         gateError(
           "접근 권한이 없습니다",
-          "구성원 명부 확인에 실패했습니다: " + escapeHtml(e.message || String(e))
+          "구성원 명부 확인에 실패했습니다: " + (e.message || String(e))
         );
       }
     );
