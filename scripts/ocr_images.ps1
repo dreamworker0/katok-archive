@@ -25,21 +25,58 @@ function Save-Json {
        읽는 쪽이 `scripts/scan_image_pii.py` 이므로 여기서 맞춰 준다. #>
     param($Object, [string]$Path)
     $json = $Object | ConvertTo-Json -Depth 4 -Compress
-    [System.IO.File]::WriteAllText($Path, $json, [System.Text.UTF8Encoding]::new($false))
+    # 옆에 다 쓴 뒤 바꿔 끼운다(2026-11-11 외부 평가 지적). 바로 덮어쓰다 끊기면 파일이
+    # 깨지고, 다음 밤 이 스크립트가 읽다 죽어 '사진 개인정보 검사' 단계(치명)가 그날
+    # 발행 전체를 멈췄다.
+    $tmp = "$Path.tmp"
+    [System.IO.File]::WriteAllText($tmp, $json, [System.Text.UTF8Encoding]::new($false))
+    if (Test-Path $Path) { [System.IO.File]::Replace($tmp, $Path, $null) }
+    else { [System.IO.File]::Move($tmp, $Path) }
 }
 
 $outPath = Join-Path $root "output\image_ocr.json"
 $done = @{}
 if ((Test-Path $outPath) -and -not $Force) {
-    $prev = Get-Content $outPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    foreach ($p in $prev.PSObject.Properties) { $done[$p.Name] = $p.Value }
-    "이미 읽은 사진 $($done.Count)장은 건너뜁니다 (-Force 로 다시 읽기)"
+    try {
+        $prev = Get-Content $outPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($p in $prev.PSObject.Properties) { $done[$p.Name] = $p.Value }
+        "이미 읽은 사진 $($done.Count)장은 건너뜁니다 (-Force 로 다시 읽기)"
+    } catch {
+        # 깨진 결과 파일 때문에 발행이 멈추면 안 된다 — 옆으로 치우고 처음부터 읽는다.
+        # 오래 걸릴 뿐(사진 수백 장) 틀린 판정을 내지는 않는다.
+        $broken = "$outPath.broken-$(Get-Date -Format yyyyMMddHHmmss)"
+        Move-Item -LiteralPath $outPath -Destination $broken -Force
+        Write-Warning "OCR 결과 파일을 읽지 못해 $broken 로 옮기고 처음부터 읽습니다: $($_.Exception.Message)"
+        $done = @{}
+    }
 }
 
 # OCR 엔진이 받는 최대 변 길이. Windows.Media.Ocr 은 넘으면 예외를 던진다.
 $maxDim = 4000
 $sliceHeight = 3000     # 잘라 넣을 때 한 조각의 높이
 $sliceOverlap = 120     # 자른 자리에 걸친 글자 줄을 잃지 않게 겹치는 폭
+
+function Read-Upscaled {
+    <# 작은 사진을 두 배로 키운 PNG 를 임시로 만들어 OCR 하고 글자 줄만 돌려준다. #>
+    param([string]$Path, [int]$Width, [int]$Height)
+    $src = [System.Drawing.Image]::FromFile($Path)
+    $tmp = [System.IO.Path]::Combine($env:TEMP, "ocrup-$([guid]::NewGuid().ToString('N')).png")
+    try {
+        $bmp = New-Object System.Drawing.Bitmap ($Width * 2), ($Height * 2)
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $g.DrawImage($src, 0, 0, $Width * 2, $Height * 2)
+        $g.Dispose()
+        $bmp.Save($tmp, [System.Drawing.Imaging.ImageFormat]::Png)
+        $bmp.Dispose()
+        # 줄을 하나씩 흘려보낸다 — 부르는 쪽이 @( ) 로 받는다. 배열로 한 겹 싸서
+        # 돌려주면 @( ) 안에서 '배열 하나짜리 배열' 이 되어 글자가 System.Object[] 로 남는다.
+        Get-OcrLines -Path $tmp -Scale 2 | ForEach-Object { $_.text }
+    } finally {
+        $src.Dispose()
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+    }
+}
 
 function Split-TallImage {
     <# 긴 이미지를 조각으로 잘라 각각 OCR 하고 줄 목록을 합친다. #>
@@ -95,15 +132,25 @@ foreach ($f in $files) {
     if ($done.ContainsKey($key) -and $null -ne $done[$key]) { continue }
 
     try {
-        # 작은 사진은 확대해야 글자가 읽힌다. 큰 화면 캡처는 원본 배율로 충분하고
-        # 2배로 키우면 시간만 두 배가 된다.
-        $img = [System.Drawing.Image]::FromFile($f.FullName)
-        $w = $img.Width; $h = $img.Height
-        $img.Dispose()
-        $scale = if ($w -lt 1000) { 2 } else { 1 }
+        # 크기를 잰다. GDI+(System.Drawing)는 .webp 를 못 연다 — 그때는 크기를 모른 채
+        # WinRT 디코더(OCR 이 쓰는 것)에 원본을 바로 넘긴다. 예전에는 여기서 예외가 나
+        # 그 사진이 '확인 못 함' 으로 공개됐다(2026-11-11 외부 평가 지적).
+        $w = 0; $h = 0
+        try {
+            $img = [System.Drawing.Image]::FromFile($f.FullName)
+            $w = $img.Width; $h = $img.Height
+            $img.Dispose()
+        } catch { $w = 0 }
 
-        if ($h -le $sliceHeight -and $w -le $maxDim) {
-            $lines = @(Get-OcrLines -Path $f.FullName -Scale $scale | ForEach-Object { $_.text })
+        if ($w -eq 0) {
+            $lines = @(Get-OcrLines -Path $f.FullName -Scale 1 | ForEach-Object { $_.text })
+        } elseif ($w -lt 1000 -and $h * 2 -le $sliceHeight) {
+            # 작은 사진은 **실제로** 두 배로 키워서 읽는다. Get-OcrLines 의 -Scale 은 돌려줄
+            # 좌표만 나누는 값이라, 예전처럼 -Scale 2 만 넘기면 확대 없이 그대로 읽었다
+            # (2026-11-11 외부 평가 지적 — 작은 캡처 속 전화번호를 놓칠 수 있었다).
+            $lines = @(Read-Upscaled -Path $f.FullName -Width $w -Height $h)
+        } elseif ($h -le $sliceHeight -and $w -le $maxDim) {
+            $lines = @(Get-OcrLines -Path $f.FullName -Scale 1 | ForEach-Object { $_.text })
         } else {
             # 긴 화면 캡처는 OCR 엔진의 최대 크기를 넘는다(실측: 카톡 대화 통짜
             # 캡처 한 장이 "Image dimensions are too large" 로 실패했다).
