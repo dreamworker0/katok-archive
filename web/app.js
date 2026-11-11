@@ -707,6 +707,18 @@
           setMobileMore(false);
           el.mobileMoreButton.focus();
         }
+      } else if (e.key === "Tab" && el.lightbox.classList.contains("on")) {
+        // 열린 라이트박스 뒤의 화면으로 탭이 새지 않게(aria-modal 과 같은 약속).
+        // 단추가 닫기 하나뿐이어도 가둔다 — 동영상이면 재생 조절이 함께 잡힌다.
+        var inBox = Array.prototype.filter.call(
+          el.lightbox.querySelectorAll("button, video[controls]"),
+          function (n) { return n.offsetParent !== null; });   // 숨은 동영상 자리는 뺀다
+        if (inBox.length) {
+          var at = inBox.indexOf(document.activeElement);
+          var next = at === -1 ? 0
+            : (at + (e.shiftKey ? -1 : 1) + inBox.length) % inBox.length;
+          e.preventDefault(); inBox[next].focus();
+        }
       } else if (e.key === "Tab" && !el.mobileMore.hidden) {
         trapFocus(el.mobileMore, e);
       }

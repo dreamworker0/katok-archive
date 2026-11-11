@@ -49,6 +49,9 @@
     var TYPES = (opts.nodeTypes || []).map(function (t) {
       return [t.id, t.short || t.label || t.id];
     });
+    // 화면 낭독기가 읽는 노드 이름에 붙인다 — '오픈소스, 도구' 처럼.
+    var TYPE_NAME = {};
+    (opts.nodeTypes || []).forEach(function (t) { TYPE_NAME[t.id] = t.label || t.short || t.id; });
     if (!TYPES.length) {
       // 표를 못 받은 옛 캐시. 라벨 표를 여기 다시 적지 않고, 실제로 있는 종류로
       // 단추를 만든다 — 이름이 투박해도 걸러내기는 돌아간다.
@@ -128,7 +131,8 @@
     toolbar.appendChild(resetBtn);
     mount.appendChild(toolbar);
 
-    var s = svg("svg", { id: "graphSvg" });
+    var s = svg("svg", { id: "graphSvg", role: "group",
+      "aria-label": "관계망 — 탭으로 노드를 옮겨 다니고 Enter 로 엽니다. Esc 는 선택을 풉니다." });
 
     /* 노드에 얹는 부드러운 그림자.
      * 흰 테두리로 배경과 분리하던 것을 그림자로 바꿨다. 테두리는 겹친
@@ -157,7 +161,11 @@
     });
     // 노드 요소
     nodes.forEach(function (n) {
-      var g = svg("g", { class: "gnode" });
+      // 키보드로도 닿게 한다(2026-11-11). 예전에는 포인터 이벤트뿐이라 마우스·터치
+      // 없이는 노드 하나 열 수 없었다. 걸러져 숨은 노드(display:none)는 탭이 건너뛴다.
+      var g = svg("g", { class: "gnode", tabindex: "0", role: "button",
+        "aria-pressed": "false",
+        "aria-label": n.label + (TYPE_NAME[n.type] ? ", " + TYPE_NAME[n.type] : "") });
       var col = opts.colorFor(n.category);
       var shape;
       if (n.type === "tool") {
@@ -309,15 +317,32 @@
 
     var selectedId = null;
 
-    function toggleSelect(n) {
+    function markPressed() {
+      nodes.forEach(function (m) {
+        m._g.setAttribute("aria-pressed", m.id === selectedId ? "true" : "false");
+      });
+    }
+    /* how.keyboard 가 참이면 키보드로 연 것이다 — 화면(graph-view)은 그때 포인터와
+     * 달리 노드 패널로 포커스를 옮긴다. 패널은 DOM 에서 노드 수백 개 뒤에 있어,
+     * 옮겨 주지 않으면 탭으로는 거기 닿을 수 없다. */
+    function toggleSelect(n, how) {
       selectedId = (selectedId === n.id) ? null : n.id;
-      highlight(selectedId);
-      if (opts.onSelect) opts.onSelect(selectedId ? n : null, selectedId ? adj[n.id] : null);
+      highlight(selectedId); markPressed();
+      if (opts.onSelect) opts.onSelect(selectedId ? n : null, selectedId ? adj[n.id] : null, how || {});
     }
     function clearSelect() {
       if (!selectedId) return;
-      selectedId = null; highlight(null);
-      if (opts.onSelect) opts.onSelect(null, null);
+      selectedId = null; highlight(null); markPressed();
+      if (opts.onSelect) opts.onSelect(null, null, {});
+    }
+    /* 포커스가 간 노드가 화면 밖이면 그쪽으로 옮겨 보여 준다. SVG 안의 위치는
+     * 브라우저가 스크롤로 따라가 주지 않는다(transform 으로 그리기 때문). */
+    function revealFocused(n) {
+      var w = s.clientWidth || 800, h = s.clientHeight || 500, pad = 40;
+      var sx = n.x * view.k + view.x, sy = n.y * view.k + view.y;
+      if (Math.abs(sx) > w / 2 - pad || Math.abs(sy) > h / 2 - pad) {
+        view.x = -n.x * view.k; view.y = -n.y * view.k; applyView();
+      }
     }
 
     function bindNode(n) {
@@ -334,6 +359,19 @@
       });
       n._g.addEventListener("pointerenter", function () { if (!selectedId) highlight(n.id); });
       n._g.addEventListener("pointerleave", function () { if (!selectedId) highlight(null); });
+      // 키보드: 포커스는 마우스를 올린 것과 같게 보이고, Enter·Space 는 누른 것과 같다
+      n._g.addEventListener("focus", function () {
+        revealFocused(n);
+        if (!selectedId) highlight(n.id);
+      });
+      n._g.addEventListener("blur", function () { if (!selectedId) highlight(null); });
+      n._g.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault(); toggleSelect(n, { keyboard: true });
+        } else if (ev.key === "Escape") {
+          clearSelect();
+        }
+      });
     }
 
     function highlight(id) {
@@ -535,7 +573,7 @@
       focus: function (nodeId) {
         var n = byId[nodeId]; if (!n) return;
         reveal(n);
-        selectedId = nodeId; highlight(nodeId);
+        selectedId = nodeId; highlight(nodeId); markPressed();
         view.k = 1.4; view.x = -n.x * view.k; view.y = -n.y * view.k; applyView();
         if (opts.onSelect) opts.onSelect(n, adj[nodeId]);
       },

@@ -22,19 +22,35 @@
     function renderGraph() {
       el.view.innerHTML =
         '<div class="graph-wrap"><div id="gmount"></div>' +
-        '<div class="node-panel" id="nodePanel"><button class="np-close" id="npClose">×</button>' +
+        '<div class="node-panel" id="nodePanel" role="region" aria-label="노드 자세히" tabindex="-1">' +
+        '<button class="np-close" id="npClose" type="button" aria-label="노드 자세히 닫기">×</button>' +
         '<div id="npBody"></div></div></div>';
       var panel = document.getElementById("nodePanel");
-      document.getElementById("npClose").onclick = function () { panel.classList.remove("on"); };
+      // 키보드로 연 노드. 패널을 닫으면 그 노드로 돌아간다 — 안 그러면 포커스가
+      // 사라져 다시 처음부터 탭을 눌러야 한다.
+      var openedFrom = null;
+      function closePanel() {
+        panel.classList.remove("on");
+        if (openedFrom && document.contains(openedFrom)) openedFrom.focus();
+        openedFrom = null;
+      }
+      document.getElementById("npClose").onclick = closePanel;
+      panel.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") { e.stopPropagation(); closePanel(); }
+      });
 
       state.graph = window.KGraph.render(document.getElementById("gmount"), {
         nodes: ctx.data().KNOW.nodes, edges: ctx.data().KNOW.edges, colorFor: colorFor, catLabel: ctx.data().CAT_LABEL,
         // 노드 종류 표는 발행본이 준다 — 원본은 scripts/ontology.py 다.
         nodeTypes: ctx.data().KNOW.node_types,
-        onSelect: function (node) {
-          if (!node) { panel.classList.remove("on"); return; }
+        onSelect: function (node, adj, how) {
+          if (!node) { panel.classList.remove("on"); openedFrom = null; return; }
           fillNodePanel(node);
           panel.classList.add("on");
+          if (how && how.keyboard) {
+            openedFrom = document.activeElement;
+            panel.focus();
+          }
         },
       });
     }

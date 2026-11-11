@@ -380,6 +380,12 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
   transform: scale(1.18); }
 .gnode circle, .gnode rect { transition: transform .14s ease; }
 .gnode.dim { opacity: .1; }
+/* 키보드 포커스는 SVG 안이라 outline 이 그려지지 않는 브라우저가 있다 — 모양에 테를 두른다. */
+.gnode:focus { outline: none; }
+.gnode:focus-visible circle, .gnode:focus-visible rect {
+  stroke: var(--accent); stroke-width: 4; paint-order: stroke; }
+.node-panel:focus { outline: none; }
+.node-panel:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 72%, white); }
 /* 글자는 배경을 얇게 깔아 겹쳐도 읽힌다 */
 .gnode text { font-size: 10px; font-weight: 600; fill: var(--ink-soft);
   paint-order: stroke; stroke: var(--surface); stroke-width: 3.5px; stroke-linejoin: round;

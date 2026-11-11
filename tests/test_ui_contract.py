@@ -1241,6 +1241,63 @@ class PhotoAltContractTests(unittest.TestCase):
         self.assertIn("el.lightboxImg.alt = img.alt", self.read("gallery.js"))
 
 
+class KeyboardAccessContractTests(unittest.TestCase):
+    """관계망·갤러리·라이트박스는 마우스 없이도 쓸 수 있어야 한다. (2026-11-11)
+
+    외부 평가에서 셋 다 키보드로는 닿을 수 없다고 지적받았다 — 관계망 노드는
+    포인터 이벤트뿐, 갤러리 사진·날짜 줄은 <img>·<figcaption> 에 클릭만, 라이트박스는
+    대화상자 역할도 포커스 이동도 없었다. 리팩터링으로 조용히 빠지지 않게 본다.
+    """
+
+    @staticmethod
+    def read(name):
+        return (ROOT / "web" / name).read_text(encoding="utf-8")
+
+    def test_graph_nodes_are_focusable_buttons_with_names(self):
+        src = self.read("graph.js")
+        node = src[src.index('var g = svg("g", { class: "gnode"'):][:300]
+        self.assertIn('tabindex: "0"', node)
+        self.assertIn('role: "button"', node)
+        self.assertIn('"aria-label"', node)
+
+    def test_graph_nodes_open_with_enter_and_space(self):
+        src = self.read("graph.js")
+        bind = src[src.index("function bindNode(n)"):]
+        bind = bind[:bind.index("function highlight(")]
+        self.assertIn('"keydown"', bind)
+        self.assertIn('ev.key === "Enter" || ev.key === " "', bind)
+        self.assertIn("toggleSelect(n, { keyboard: true })", bind)
+        self.assertIn('"focus"', bind)
+
+    def test_keyboard_selection_moves_focus_into_the_panel_and_back(self):
+        src = self.read("graph-view.js")
+        self.assertIn('aria-label="노드 자세히 닫기"', src)
+        self.assertIn("how.keyboard", src)
+        self.assertIn("panel.focus()", src)
+        self.assertIn("openedFrom.focus()", src)
+
+    def test_gallery_items_are_reachable_by_keyboard(self):
+        src = self.read("gallery.js")
+        helper = src[src.index("function activatable("):][:600]
+        self.assertIn('setAttribute("tabindex", "0")', helper)
+        self.assertIn('setAttribute("role", "button")', helper)
+        self.assertIn('e.key === "Enter" || e.key === " "', helper)
+        self.assertIn("activatable(img,", src)
+        self.assertIn("activatable(cap,", src)
+
+    def test_lightbox_is_a_modal_dialog(self):
+        for name in ("index.hosting.html", "index.html"):
+            html = self.read(name)
+            tag = html[html.index('id="lightbox"') - 30:][:200]
+            self.assertIn('role="dialog"', tag, name)
+            self.assertIn('aria-modal="true"', tag, name)
+        gal = self.read("gallery.js")
+        self.assertIn("focusLightbox(img)", gal)
+        self.assertIn("lightboxReturn.focus()", gal)
+        app = self.read("app.js")
+        self.assertIn('e.key === "Tab" && el.lightbox.classList.contains("on")', app)
+
+
 class RefactorLeftoverTests(unittest.TestCase):
     """화면 파일을 떼어낼 때의 일괄 바꾸기가 남긴 자국.
 

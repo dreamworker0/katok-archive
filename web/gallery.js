@@ -17,6 +17,20 @@
     var state = ctx.state, el = ctx.el, esc = ctx.esc, emptyState = ctx.emptyState,
         fmtSize = ctx.fmtSize, jumpToTimeline = ctx.jumpToTimeline;
 
+    /* 마우스로만 누를 수 있던 것을 키보드로도 — 탭으로 닿고, Enter·Space 로 연다.
+     * (2026-11-11 외부 평가: 갤러리 사진과 그 아래 날짜·이름 줄은 <img>·<figcaption>
+     * 에 클릭만 걸려 있어 키보드로는 닿을 수 없었다.) 마크업을 단추로 바꾸면
+     * 격자·목록 CSS 가 다 흔들리므로 역할과 키만 더한다. */
+    function activatable(node, label, fn) {
+      node.setAttribute("tabindex", "0");
+      node.setAttribute("role", "button");
+      if (label) node.setAttribute("aria-label", label);
+      node.onclick = fn;
+      node.onkeydown = function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fn.call(node, e); }
+      };
+    }
+
     function mediaKey(m) { return (m.date || "") + " " + (m.time || ""); }
 
     // ---------- 갤러리 ----------
@@ -79,8 +93,10 @@
         };
       });
       Array.prototype.forEach.call(el.view.querySelectorAll("figure"), function (fig) {
-        fig.querySelector("img").onclick = function () { openLightbox(this); };
-        fig.querySelector("figcaption").onclick = function () { jumpToTimeline(fig.getAttribute("data-jump")); };
+        var img = fig.querySelector("img"), cap = fig.querySelector("figcaption");
+        activatable(img, null, function () { openLightbox(img); });   // 이름은 alt 가 한다
+        activatable(cap, "타임라인에서 보기 — " + cap.textContent,
+          function () { jumpToTimeline(fig.getAttribute("data-jump")); });
       });
       bindImages(el.view);
       bindFiles(el.view);
@@ -208,10 +224,19 @@
 
     function bindImages(scope) {
       Array.prototype.forEach.call(scope.querySelectorAll(".imgs img"), function (img) {
-        img.onclick = function () { openLightbox(img); };
+        activatable(img, null, function () { openLightbox(img); });
       });
       // 보호모드에서는 화면에 들어올 때 인증 요청으로 받아온다
       if (window.ArchiveImages) window.ArchiveImages.observe(scope);
+    }
+    /* 라이트박스는 대화상자다(2026-11-11). 열면 포커스를 닫기 단추로 옮기고,
+     * 닫으면 누른 사진으로 돌려보낸다 — 그러지 않으면 키보드 사용자는 닫은 뒤
+     * 페이지 맨 위에서 다시 시작한다. 탭 가두기와 Esc 는 app.js 의 keydown 이 한다. */
+    var lightboxReturn = null;
+    function focusLightbox(img) {
+      lightboxReturn = img || document.activeElement;
+      var c = document.getElementById("lightboxClose");
+      if (c) c.focus();
     }
     function openLightbox(img) {
       // 크게 볼 때는 원본이어야 한다. 화면의 칸에 걸린 것은 갤러리용 작은 사진이라
@@ -232,6 +257,7 @@
         v.removeAttribute("src");
         v.poster = img.src || "";
         el.lightbox.classList.add("on");
+        focusLightbox(img);
         window.ArchiveImages.urlFor(full).then(function (u) {
           v.src = u;
           v.play().catch(function () { /* 자동재생을 막는 브라우저는 눌러서 본다 */ });
@@ -252,6 +278,7 @@
         window.ArchiveImages.urlFor(path).then(function (u) { el.lightboxImg.src = u; });
       }
       el.lightbox.classList.add("on");
+      focusLightbox(img);
     }
     /** 라이트박스에 동영상 자리를 만든다(처음 필요할 때 한 번). */
     function ensureLightboxVideo() {
@@ -266,7 +293,10 @@
       return v;
     }
     function closeLightbox() {
+      var wasOpen = el.lightbox.classList.contains("on");
       el.lightbox.classList.remove("on");
+      if (wasOpen && lightboxReturn && document.contains(lightboxReturn)) lightboxReturn.focus();
+      lightboxReturn = null;
       el.lightboxImg.src = "";
       // 닫을 때 src 를 비우지 않으면 동영상이 뒤에서 계속 내려온다
       var v = document.getElementById("lightboxVideo");
