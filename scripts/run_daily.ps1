@@ -6,7 +6,7 @@
   2. 멤버 명부 거울 갱신                       sync_members.js
   3. 멤버 요청(수집 동의·삭제) 내려받기        sync_member_requests.js
   4. inbox/*.txt 를 증분 반영                  ingest_incremental.py
-  4b. 답장 관계 건져오기 (비치명적)             kakao_replies.ps1 + reply_bubbles.py
+  4c. 답장 관계 건져오기 (비치명적)             kakao_replies.ps1 + reply_bubbles.py
       (그 앞에 서랍 첨부 받기와 첨부 대조)       kakao_drawer.ps1 + audit_attachments.py
   5. 주제 분류 (LLM, 비치명적)                 classify_unsorted.py
   5a. 답장 관계를 분류에 반영 (비치명적)        apply_replies.py
@@ -122,6 +122,19 @@ function Report-Run {
 # 발행한 날과 건너뛴 날 **둘 다** 부른다. 조용한 날에도 서랍은 첨부를 받아 assets/ 가
 # 바뀐다. 실패해도 갱신은 성공이다 — 대신 관리 탭 사유 줄과 디스코드로 알린다.
 # 백업이 조용히 멈추면 그것을 알게 되는 날은 백업이 필요한 날이다.
+# 실패를 삼키는 단계의 경고를 관리 탭 사유 줄(·디스코드)로 올린다. (2026-11-11)
+# 'Continue' 로 감싼 단계들은 실패해도 갱신을 멈추지 않는데, 종료 코드를 안 보던
+# 곳은 실패가 로그 어딘가에 묻혀 사람이 몰랐다(외부 평가 지적). 서랍·백업 경고와 같은
+# 자리에 얹는다 — 사람이 실제로 보는 곳이 거기다.
+$script:stepWarn = ''
+function Add-StepWarn([string]$msg) {
+    Say "    $msg" 'WARN'
+    $script:stepWarn = (@($script:stepWarn, $msg) | Where-Object { $_ }) -join ' · '
+}
+function Test-StepExit([string]$what, $code) {
+    if ($null -ne $code -and $code -ne 0) { Add-StepWarn "$what 실패(exit $code)" }
+}
+
 function Invoke-Backup {
     if ($DryRun) { return }
     Say '원본 데이터 백업'
@@ -355,9 +368,11 @@ try {
     }
     else {
         foreach ($l in (& python -m scripts.collect_drawer 2>&1)) { Say "    $l" }
+        Test-StepExit '서랍 첨부 옮기기' $LASTEXITCODE
         foreach ($l in (& python -m scripts.build_file_manifest 2>&1)) {
             if ($l -match '연결 \(|짝을 못 찾은|같은 이름의') { Say "    $l" }
         }
+        Test-StepExit '첨부 목록 만들기' $LASTEXITCODE
     }
 }
 finally { $ErrorActionPreference = $prevEap }
@@ -395,7 +410,7 @@ try {
 catch { Say "    첨부 대조 실패(갱신은 계속합니다): $_" 'WARN' }
 finally { $ErrorActionPreference = $prevEap }
 
-# 4b) 답장 관계 건져오기 — 실패해도 갱신을 멈추지 않는다
+# 4c) 답장 관계 건져오기 — 실패해도 갱신을 멈추지 않는다
 #
 #     대화 내보내기(txt)는 답장 구조를 통째로 버린다. '누구에게 답장' 머리글도,
 #     인용문도 없이 본문만 남는다. 그래서 몇 시간·며칠 전 글에 단 답장이 분류에서
@@ -503,7 +518,18 @@ $prevEap = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 try {
     $applyOut = & { python -m scripts.apply_replies --apply } 2>&1
-    foreach ($l in $applyOut) { Say "    $l" }
+    $applyCode = $LASTEXITCODE
+    $rewritePending = 0
+    foreach ($l in $applyOut) {
+        if ($l -match '^REWRITE_PENDING=(\d+)$') { $rewritePending = [int]$Matches[1]; continue }
+        Say "    $l"
+    }
+    Test-StepExit '답장 관계 반영' $applyCode
+    # 다시 써야 할 보고서가 남아 있으면 사람이 보는 자리에 올린다. 목록은 밤마다
+    # 쌓이고(apply_replies), 손으로 --rewrite-ids 를 돌려야 비워진다.
+    if ($rewritePending -gt 0) {
+        Add-StepWarn "다시 써야 할 보고서 $rewritePending 편(output/replies-applied.json)"
+    }
 }
 finally { $ErrorActionPreference = $prevEap }
 
@@ -524,8 +550,11 @@ $prevEap = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 try {
     $auditOut = & { python -m scripts.audit_same_day --recent 2 } 2>&1
+    $auditCode = $LASTEXITCODE
     foreach ($l in $auditOut) { Say "    $l" }
+    Test-StepExit '같은 날 주제 감사' $auditCode
     $mergeOut = & { python -m scripts.merge_threads --apply } 2>&1
+    $mergeCode = $LASTEXITCODE
     $rewriteIds = ''
     foreach ($l in $mergeOut) {
         if ($l -match '^MERGE_REWRITE=(.*)$') { $rewriteIds = $Matches[1].Trim(); continue }
@@ -537,11 +566,14 @@ try {
         }
         Say "    $l"
     }
+    Test-StepExit '같은 날 주제 합치기' $mergeCode
     if ($rewriteIds) {
         $merged = ($rewriteIds -split ',').Count
         Say "    합친 주제 $merged 개의 보고서를 다시 씁니다: $rewriteIds"
         foreach ($l in (& { python -m scripts.classify_unsorted --rewrite-ids $rewriteIds } 2>&1)) { Say "    $l" }
+        Test-StepExit '합친 주제 보고서 다시 쓰기' $LASTEXITCODE
         foreach ($l in (& { python -m scripts.ai_reports --ids $rewriteIds } 2>&1)) { Say "    $l" }
+        Test-StepExit '합친 주제 AI 주석' $LASTEXITCODE
     }
 }
 catch { Say "같은 날 주제 합치기가 실패했습니다 — 없이 계속합니다: $_" 'WARN' }
@@ -694,6 +726,7 @@ if ($added -eq 0 -and -not $requestsChanged -and $classified -eq 0 -and $merged 
     $skipWhy = '발행 사유 없음'
     if ($script:drawerWarn) { $skipWhy += " · ⚠ $($script:drawerWarn)" }
     if ($script:backupWarn) { $skipWhy += " · ⚠ $($script:backupWarn)" }
+    if ($script:stepWarn) { $skipWhy += " · ⚠ $($script:stepWarn)" }
     Report-Run -status 'skipped' -why $skipWhy -added 0
     Say "===== 일일 갱신 종료 ====="
     exit 0
@@ -768,6 +801,7 @@ Invoke-Backup
 # 발행 사유는 아니지만 같은 줄에 얹는다 — 여기가 사람이 실제로 보는 유일한 자리다.
 if ($script:drawerWarn) { $why += "⚠ $($script:drawerWarn)" }
 if ($script:backupWarn) { $why += "⚠ $($script:backupWarn)" }
+if ($script:stepWarn) { $why += "⚠ $($script:stepWarn)" }
 Say ("===== 일일 갱신 완료: {0} 발행 =====" -f ($why -join ', '))
 Report-Run -status 'ok' -why ($why -join ', ') -added $added
 

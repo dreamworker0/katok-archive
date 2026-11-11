@@ -188,14 +188,55 @@ def main() -> int:
             shutil.move(str(p), str(bak / p.name))
             moved_reports.append(p.name)
 
-    write_json(APPLIED, {"rewrite": rewrite, "removed_threads": gone,
-                         "moved_reports": moved_reports})
+    # 전날까지 남은 목록에 **얹는다**(2026-11-11 외부 평가 지적). 예전에는 밤마다
+    # 덮어써서, 손으로 다시 쓰기 전에 하룻밤만 지나도(옮길 게 없는 밤이면 빈 목록으로)
+    # 다시 써야 할 보고서가 목록에서 사라졌다. 비우는 것은 다시 쓰기 쪽이 한다
+    # (classify_unsorted --rewrite-ids 가 다 쓰면 그 ID 를 뺀다 — clear_rewrites).
+    prev = load_applied()
+    pending = merge_rewrites(prev.get("rewrite") or [], rewrite, gone)
+    write_json(APPLIED, {
+        "rewrite": pending,
+        "removed_threads": sorted(set(prev.get("removed_threads") or []) | set(gone)),
+        "moved_reports": sorted(set(prev.get("moved_reports") or []) | set(moved_reports)),
+    })
     print(f"\n고쳤습니다. 사라진 스레드 {len(gone)}개{': ' + ', '.join(gone) if gone else ''}")
     if moved_reports:
         print(f"  보고서는 {bak.name}/ 로 옮겼습니다: {', '.join(moved_reports)}")
-    print(f"  다시 써야 할 보고서 {len(rewrite)}편 — {APPLIED.name} 에 적었습니다:")
-    print(f"    python -m scripts.classify_unsorted --rewrite-ids {','.join(rewrite)}")
+    print(f"  다시 써야 할 보고서 {len(pending)}편(오늘 {len(rewrite)}편) — {APPLIED.name} 에 적었습니다:")
+    if pending:
+        print(f"    python -m scripts.classify_unsorted --rewrite-ids {','.join(pending)}")
+    # run_daily.ps1 이 읽는 표식 — 남은 편수를 관리 탭 사유 줄에 올린다.
+    print(f"REWRITE_PENDING={len(pending)}")
     return 0
+
+
+def load_applied() -> dict:
+    try:
+        data = read_json(APPLIED)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def merge_rewrites(prev: list[str], new: list[str], gone: list[str]) -> list[str]:
+    """남은 목록 + 오늘 것, 순서는 먼저 들어온 것부터. 사라진 스레드는 뺀다."""
+    out: list[str] = []
+    for tid in list(prev) + list(new):
+        if tid not in out and tid not in gone:
+            out.append(tid)
+    return out
+
+
+def clear_rewrites(done: list[str]) -> int:
+    """다시 쓴 주제를 목록에서 뺀다. 남은 편수를 돌려준다. 목록이 없으면 0."""
+    if not APPLIED.exists():
+        return 0
+    data = load_applied()
+    left = [t for t in (data.get("rewrite") or []) if t not in set(done)]
+    if left != (data.get("rewrite") or []):
+        data["rewrite"] = left
+        write_json(APPLIED, data)
+    return len(left)
 
 
 if __name__ == "__main__":

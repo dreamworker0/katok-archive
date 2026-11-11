@@ -437,5 +437,30 @@ class QuietNightStillCatchesUpTests(unittest.TestCase):
         self.assertIn("if (prevText === text) {", members)
 
 
+class SwallowedFailuresAreSurfacedTests(unittest.TestCase):
+    """실패를 삼키는 단계도 종료 코드는 본다. (2026-11-11 외부 평가 지적)
+
+    'Continue' 로 감싼 단계가 예외로 죽어도 로그에만 묻혀 사람이 몰랐다. 이제
+    Test-StepExit 가 관리 탭 사유 줄(stepWarn)에 올린다.
+    """
+
+    def test_each_swallowing_step_checks_its_exit_code(self):
+        for what in ("서랍 첨부 옮기기", "첨부 목록 만들기", "답장 관계 반영",
+                     "같은 날 주제 감사", "같은 날 주제 합치기",
+                     "합친 주제 보고서 다시 쓰기", "합친 주제 AI 주석"):
+            with self.subTest(step=what):
+                self.assertIn("Test-StepExit '%s'" % what, DAILY)
+
+    def test_warnings_reach_both_reason_lines(self):
+        self.assertIn('if ($script:stepWarn) { $skipWhy +=', DAILY)
+        self.assertIn('if ($script:stepWarn) { $why +=', DAILY)
+
+    def test_step_numbers_are_not_reused(self):
+        import re
+        heads = re.findall(r"^# (\d+[a-z]?(?:-\d+)?)\)", DAILY, re.M)
+        dupes = sorted({h for h in heads if heads.count(h) > 1})
+        self.assertEqual(dupes, [])
+
+
 if __name__ == "__main__":
     unittest.main()

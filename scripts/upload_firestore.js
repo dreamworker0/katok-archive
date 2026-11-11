@@ -698,7 +698,11 @@ async function main() {
   nextState.last_full = needFull ? nextState.updated_at
     : (prevState && prevState.last_full) || nextState.updated_at;
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
-  fs.writeFileSync(STATE_PATH, JSON.stringify(nextState) + "\n", "utf8");
+  // 옆에 임시 파일로 다 쓴 뒤 바꿔 끼운다(2026-11-11). 대장이 반쯤 잘리면 다음 실행이
+  // 못 읽어 전량 동기화로 돌고, publish_state 는 마지막 적재 시각을 잃는다.
+  const tmp = STATE_PATH + "." + process.pid + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(nextState) + "\n", "utf8");
+  fs.renameSync(tmp, STATE_PATH);
 
   console.log("\n완료. 다음: firebase deploy");
 }

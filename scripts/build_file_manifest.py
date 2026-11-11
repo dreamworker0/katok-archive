@@ -21,11 +21,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 from collections import defaultdict
 from pathlib import Path
 
-from scripts import build_site
+from scripts import build_site, jsonio
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
@@ -148,9 +147,7 @@ def main() -> int:
         print("\n--dry-run: 파일을 쓰지 않았습니다.")
         return 0
 
-    with MANIFEST.open("w", encoding="utf-8") as fh:
-        for r in rows:
-            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    jsonio.write_jsonl(MANIFEST, rows)   # 원자적으로 — 끊겨도 옛 목록이 남는다
     print("\noutput/files.jsonl 생성 (%d건)" % len(rows))
     return 0
 

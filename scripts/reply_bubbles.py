@@ -57,7 +57,7 @@ from PIL import Image
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.jsonio import read_json, read_jsonl
+from scripts.jsonio import read_json, read_jsonl, write_text_atomic
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
@@ -457,8 +457,8 @@ def merge_into(path: Path, rows: list[dict]) -> tuple[int, int]:
             if old["parent"] != r["parent"]:
                 changed += 1
     out = sorted(existing.values(), key=lambda r: r["child"])
-    path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in out),
-                    encoding="utf-8")
+    # 원자적으로 — 쓰다 끊겨도 쌓아 온 답장 관계가 반쯤 잘리지 않는다(2026-11-11)
+    write_text_atomic(path, "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in out))
     return added, changed
 
 

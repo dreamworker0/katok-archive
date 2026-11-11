@@ -544,7 +544,8 @@ def write_report(thread_id: str, thread: dict, raw_chars: int,
         return "되읽은 제목이 다릅니다"
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    (REPORTS_DIR / f"{thread_id}.md").write_text(text, encoding="utf-8")
+    # 원자적으로 — 다시 쓰다 끊겨도 옛 보고서가 반쯤 잘린 채 남지 않는다(2026-11-11)
+    jsonio.write_text_atomic(REPORTS_DIR / f"{thread_id}.md", text)
     return None
 
 
@@ -1066,6 +1067,13 @@ def main() -> int:
                            args.dry_run, args.timeout, min_by_id=need)
         if n and not args.dry_run:
             save_json(TOPICS, topics)
+        # 다 썼으면 답장 반영이 남긴 '다시 써야 할' 목록에서 뺀다(2026-11-11). 몇 편이
+        # 실패했으면 어느 것이 실패했는지 모르므로 목록을 그대로 둔다 — 다시 돌리면 된다.
+        if n == len(want) and not args.dry_run:
+            from scripts.apply_replies import clear_rewrites
+            left = clear_rewrites(want)
+            if left:
+                print("답장 반영 목록에 아직 다시 쓸 보고서 %d편이 남았습니다." % left)
         emit("REWRITTEN", n)
         return 0
 
