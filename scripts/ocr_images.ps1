@@ -30,7 +30,10 @@ function Save-Json {
     # 발행 전체를 멈췄다.
     $tmp = "$Path.tmp"
     [System.IO.File]::WriteAllText($tmp, $json, [System.Text.UTF8Encoding]::new($false))
-    if (Test-Path $Path) { [System.IO.File]::Replace($tmp, $Path, $null) }
+    # 셋째 인자(백업 경로)에 $null 을 그냥 넘기면 PowerShell 이 "" 로 바꿔 넘겨
+    # "The path is not of a legal form." 으로 죽는다(2026-11-11 밤 갱신이 여기서 멈춤).
+    # [NullString]::Value 라야 .NET 에 진짜 null 이 간다.
+    if (Test-Path $Path) { [System.IO.File]::Replace($tmp, $Path, [NullString]::Value) }
     else { [System.IO.File]::Move($tmp, $Path) }
 }
 

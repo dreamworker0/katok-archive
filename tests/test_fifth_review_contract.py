@@ -6,8 +6,13 @@
 """
 from __future__ import annotations
 
+import json
+import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -43,8 +48,29 @@ class OcrContractTests(unittest.TestCase):
         save = self.src[self.src.index("function Save-Json"):]
         save = save[:save.index("\n}\n") if "\n}\n" in save else 800]
         self.assertIn('$tmp = "$Path.tmp"', save)
-        self.assertIn("[System.IO.File]::Replace($tmp, $Path, $null)", save)
+        # 백업 경로에 $null 을 넘기면 PowerShell 이 "" 로 바꿔 Replace 가 죽는다
+        # (2026-11-11 밤 갱신이 여기서 멈췄다). 진짜 null 은 [NullString]::Value.
+        self.assertIn("[System.IO.File]::Replace($tmp, $Path, [NullString]::Value)", save)
+        self.assertNotRegex(save, r"Replace\([^)]*\$null\)")
         self.assertIn(".broken-", self.src)
+
+    @unittest.skipUnless(shutil.which("powershell"), "Windows PowerShell 이 없다")
+    def test_save_json_actually_overwrites_an_existing_file(self):
+        # 문자열 검사만으로는 위 사고를 못 잡았다 — 실제로 두 번 써서 덮어쓰기를 본다.
+        save = self.src[self.src.index("function Save-Json"):]
+        save = save[:save.index("\n}\n") + 3]
+        with tempfile.TemporaryDirectory() as d:
+            target = os.path.join(d, "x.json")
+            script = os.path.join(d, "t.ps1")
+            with open(script, "w", encoding="utf-8-sig") as f:
+                f.write(save + "\n$ErrorActionPreference='Stop'\n"
+                        "Save-Json @{a=1} $args[0]\nSave-Json @{a=2} $args[0]\n")
+            r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                                "-File", script, target], capture_output=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stderr.decode("utf-8", "replace"))
+            with open(target, encoding="utf-8") as f:
+                self.assertEqual(json.load(f), {"a": 2})
+            self.assertFalse(os.path.exists(target + ".tmp"))
 
 
 class SecretEnvTests(unittest.TestCase):
