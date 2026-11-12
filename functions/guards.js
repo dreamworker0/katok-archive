@@ -234,13 +234,56 @@ function sameNicknameSet(a, b) {
  *  이미 그 사람 브라우저에 내려간 것까지 거둘 수는 없다. 여기서 막는 것은
  *  **이제부터의 읽기**다.
  */
+/* ---------- '내 글' 지우기 ---------- */
+
+// 한 트랜잭션에 담을 '내 글' 조각 삭제 상한. Firestore 트랜잭션은 쓰기 500건이
+// 한도이고, 같은 트랜잭션에 멤버 문서·머리 문서도 들어간다. 조각은 사람당 몇 장
+// 이라(600KB 한 장) 실제로 닿을 일은 없지만, 넘으면 트랜잭션 전체가 실패해 연결
+// 고치기·탈퇴가 통째로 막힌다 — 그보다는 나머지를 커밋 뒤에 지우는 편이 낫다.
+const MINE_PARTS_IN_TX = 400;
+
+/** '내 글' 머리 문서와 조각(parts)을 지울 준비를 한다 — **읽기**만 한다.
+ *
+ *  2026-11-11 부터 한 사람분이 문서 한 장을 넘으면 myMessages/{이메일}/parts/{001…}
+ *  로 나눠 담는다(scripts/upload_firestore.js mineDocsFor). 머리만 지우면 조각이
+ *  남는다. 규칙이 '머리 문서가 있을 때만' 조각을 읽게 하므로 남은 조각은 이미 못
+ *  읽지만, 원문을 남겨 두지 않는다.
+ *
+ *  트랜잭션은 읽기를 모두 마친 뒤에 써야 한다. 그래서 읽기(여기)와 쓰기(apply)를
+ *  가른다. 조각 목록은 select() 로 이름만 받는다 — 내용(최대 600KB)은 필요 없다.
+ */
+async function planMineDelete(db, tx, email) {
+  const mineRef = db.collection("myMessages").doc(email);
+  const parts = await tx.get(mineRef.collection("parts").select());
+  const refs = parts.docs.map((d) => d.ref);
+  return {
+    count: refs.length,
+    /** 트랜잭션 안에서 지운다. 상한을 넘는 조각은 돌려준다(커밋 뒤에 지울 것). */
+    apply() {
+      tx.delete(mineRef);
+      refs.slice(0, MINE_PARTS_IN_TX).forEach((r) => tx.delete(r));
+      return refs.slice(MINE_PARTS_IN_TX);
+    },
+  };
+}
+
+/** 트랜잭션 상한을 넘어 남긴 조각을 지운다. 머리가 이미 없어 아무도 못 읽는다. */
+async function deleteLeftoverParts(db, refs) {
+  for (let i = 0; i < refs.length; i += MINE_PARTS_IN_TX) {
+    const batch = db.batch();
+    refs.slice(i, i + MINE_PARTS_IN_TX).forEach((r) => batch.delete(r));
+    await batch.commit();
+  }
+}
+
 async function setMemberNicknames(db, data, caller, now) {
   const email = normalizeEmail(data && data.email);
   const nicknames = normalizeNicknames(data && data.nicknames);
   const ref = db.collection("members").doc(email);
-  const mineRef = db.collection("myMessages").doc(email);
 
-  return db.runTransaction(async (tx) => {
+  let leftover = [];
+  const result = await db.runTransaction(async (tx) => {
+    leftover = [];
     const snap = await tx.get(ref);
     if (!snap.exists) throw new GuardError("not-found", "멤버가 아닙니다: " + email);
     const cur = snap.data() || {};
@@ -248,6 +291,8 @@ async function setMemberNicknames(db, data, caller, now) {
       ? cur.nicknames
       : (cur.nickname ? [cur.nickname] : []);
     const changed = !sameNicknameSet(before, nicknames);
+    // 읽기는 쓰기 전에 끝낸다 — 바뀔 때만 조각 목록을 읽는다.
+    const mine = changed ? await planMineDelete(db, tx, email) : null;
 
     tx.set(ref, {
       name: nicknames[0],
@@ -257,9 +302,11 @@ async function setMemberNicknames(db, data, caller, now) {
       nicknamesChangedAt: now,
     }, { merge: true });
 
-    if (changed) tx.delete(mineRef);
+    if (mine) leftover = mine.apply();
     return { email, nicknames, before, changed, clearedMyMessages: changed };
   });
+  await deleteLeftoverParts(db, leftover);
+  return result;
 }
 
 /* ---------- 탈퇴 ---------- */
@@ -271,7 +318,9 @@ async function setMemberNicknames(db, data, caller, now) {
  */
 async function removeMember(db, email, opts) {
   const ref = db.collection("members").doc(email);
-  return db.runTransaction(async (tx) => {
+  let leftover = [];
+  const result = await db.runTransaction(async (tx) => {
+    leftover = [];
     const snap = await tx.get(ref);
     if (!snap.exists) throw new GuardError("not-found", "멤버가 아닙니다: " + email);
     const d = snap.data() || {};
@@ -286,13 +335,18 @@ async function removeMember(db, email, opts) {
         throw new GuardError("aborted", "처리 중 표시명이 바뀌었습니다. 다시 시도해 주세요.");
       }
     }
+    // 읽기는 쓰기 전에 끝낸다 — 조각 목록도 여기서 읽는다.
+    const mine = await planMineDelete(db, tx, email);
     tx.delete(ref);
     // 본인 원문 묶음도 같은 트랜잭션에서 지운다(2026-11-11 외부 평가 지적). 남겨 두면
     // 다음 밤 적재가 지울 때까지 탈퇴한 사람이 읽을 수 있었다 — 규칙도 이제 명부를
     // 보지만(isMember), 문서가 없는 편이 확실하다. setMemberNicknames 와 같은 꼴.
-    tx.delete(db.collection("myMessages").doc(email));
+    // 나눠 담은 조각(parts)까지 지운다(2026-11-11).
+    leftover = mine.apply();
     return { email, role: d.role || "user" };
   });
+  await deleteLeftoverParts(db, leftover);
+  return result;
 }
 
 module.exports = {
@@ -300,4 +354,5 @@ module.exports = {
   normalizeEmail, normalizeNicknames, normalizeThreadId, wantedRole,
   nextHiddenList, requireAnotherAdmin, countOtherAdmins, sameNicknameSet,
   setThreadHidden, setMemberRole, approveClaim, setMemberNicknames, removeMember,
+  MINE_PARTS_IN_TX,
 };

@@ -64,9 +64,23 @@ service cloud.firestore {
     // 여기에도 그대로 맞았다. 오탐 확인은 PC 의 원장(output/)에서 한다.
     // 명부에 있어야 한다(isMember, 2026-11-11). 탈퇴했거나 연결이 풀린 계정이 다음
     // 밤 적재 전까지 남은 문서를 읽던 틈을 막는다(removeMember 도 이제 지운다).
+    //
+    // 한 사람분이 문서 한 장보다 커지면 나눠 담는다(2026-11-11). 머리 문서
+    // myMessages/{이메일} 에 첫 조각과 조각 수(parts)·판 지문(fp)을 두고, 나머지는
+    // 하위 컬렉션 parts/{001,002,…} 에 둔다. 대부분은 1조각이라 읽기는 여전히 1회다.
+    //
+    // 조각은 **머리 문서가 있을 때만** 읽힌다. 연결을 고치거나 탈퇴하면 머리 문서를
+    // 지우는데(functions/guards.js), 조각 삭제가 어떤 까닭으로든 덜 끝나도 그 순간
+    // 남은 조각은 아무도 못 읽는다. exists() 는 조각을 읽을 때만 드는 읽기 1회다.
     match /myMessages/{ownerEmail} {
       allow get:  if isMember() && callerEmail() == ownerEmail;
       allow list, write: if false;
+
+      match /parts/{partId} {
+        allow get:  if isMember() && callerEmail() == ownerEmail
+          && exists(/databases/$(database)/documents/myMessages/$(ownerEmail));
+        allow list, write: if false;
+      }
     }
 
     // ── 운영 설정: 관리자만 본다 ──

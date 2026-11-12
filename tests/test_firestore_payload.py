@@ -81,10 +81,22 @@ class PayloadShapeTest(unittest.TestCase):
                 self.assertIn(it["nickname"], names,
                               "%s 문서에 %s 의 글이 들어 있다" % (email, it["nickname"]))
 
-    def test_my_messages_fit_in_one_document(self):
-        for email, items in self.payload["my_messages"].items():
-            size = len(json.dumps({"items": items}, ensure_ascii=False).encode("utf-8"))
-            self.assertLess(size, 1_000_000, "%s 문서가 1MiB 를 넘음" % email)
+    def test_my_messages_split_into_few_documents_that_fit(self):
+        """'내 글' 은 사람마다 나눠 담는다(2026-11-11) — 문서마다 한도 아래, 조각 수는 상한 안.
+
+        조각 수가 곧 그 사람이 '내 글' 을 열 때의 읽기 수다. 한 문서로 담던 때는
+        가장 큰 사람이 366KB 로 검사 한도(700KB)의 절반을 넘어 있었다.
+        """
+        per: dict = {}
+        for d in bfp.plan_documents(self.payload):
+            if d["collection"] == "myMessages":
+                per.setdefault(d["owner"], []).append(d)
+        self.assertEqual(set(per), set(self.payload["my_messages"]))
+        for ds in per.values():
+            self.assertLessEqual(len(ds), bfp.CHUNK_DOCS_MAX)
+            for d in ds:
+                self.assertLess(d["bytes"], bfp.DOC_LIMIT)
+                self.assertLess(d["largest_item"] + 3, bfp.CHUNK_BYTES)
 
     def test_images_listed_exist_on_disk(self):
         """올릴 목록은 세 뿌리 중 하나여야 한다 — 원본·갤러리용 작은 사진·동영상.
@@ -373,7 +385,37 @@ class DocumentPlanTest(unittest.TestCase):
         self.assertTrue(by[("aiReports", "000")]["chunked"])   # 비어도 문서 하나
         self.assertFalse(by[("graph", "nodes")]["chunked"])
         self.assertFalse(by[("digests", "projects")]["chunked"])
-        self.assertFalse(by[("myMessages", "a@example.com")]["chunked"])
+        self.assertTrue(by[("myMessages", "a@example.com")]["chunked"])
+        self.assertEqual(by[("myMessages", "a@example.com")]["owner"], "a@example.com")
+
+    def test_my_messages_split_per_person(self):
+        """큰 사람만 조각이 생기고, 작은 사람은 머리 문서 하나뿐이다(읽기 1회)."""
+        big = [{"id": "msg-%04d" % i, "text": "가" * 100} for i in range(50)]
+        payload = self._payload(my_messages={"a@example.com": big,
+                                             "b@example.com": [{"id": "x", "text": "짧"}]})
+        docs = bfp.plan_documents(payload, mine_cap=4096)
+        a = [d for d in docs if d.get("owner") == "a@example.com"]
+        b = [d for d in docs if d.get("owner") == "b@example.com"]
+        self.assertGreaterEqual(len(a), 3)
+        self.assertEqual(a[0]["id"], "a@example.com")
+        self.assertEqual([d["id"] for d in a[1:]],
+                         ["a@example.com/parts/%03d" % i for i in range(1, len(a))])
+        self.assertEqual([d["id"] for d in b], ["b@example.com"])
+        for d in a:
+            self.assertLess(d["bytes"], 4096 + 200)   # 머리에는 parts·fp·표시명이 더 붙는다
+
+    def test_many_people_do_not_trip_the_doc_count_warning(self):
+        """'내 글' 은 사람마다 센다 — 45명이 1조각씩이어도 '문서가 많다' 가 아니다."""
+        mine = {"p%02d@example.com" % i: [{"id": "m%d" % i}] for i in range(45)}
+        self.assertEqual(bfp.size_warnings(bfp.plan_documents(self._payload(my_messages=mine))), [])
+
+    def test_warns_when_one_person_nears_the_part_limit(self):
+        big = [{"id": "msg-%04d" % i, "text": "가" * 100} for i in range(80)]
+        docs = bfp.plan_documents(self._payload(my_messages={"a@example.com": big}),
+                                  mine_cap=4096)
+        warns = bfp.size_warnings(docs)
+        self.assertTrue(any("'내 글' 한 사람분" in w for w in warns), warns)
+        self.assertFalse(any("@" in w for w in warns), "경고에 이메일을 적지 않는다")
 
     def test_warns_at_eighty_percent_for_unsplittable_docs(self):
         big = [{"id": "n%d" % i, "label": "가" * 200} for i in range(1000)]  # ≈ 600KB

@@ -183,6 +183,15 @@ const OUT = mocks(MEMBER, false);        // 명부에 없는 사람
 // 목(mock) 둘을 함께 줘야 한다 — exists 만 주면 get 에서 규칙이 멈춘다.
 const ADMIN = mocks(MEMBER, true, ADMIN_ROLE);
 
+/** '내 글' 머리 문서가 있는지 — 조각(parts) 규칙의 exists() 를 흉내 낸다. */
+function headMock(email, present) {
+  return [{
+    function: "exists",
+    args: [{ exactValue: "/databases/(default)/documents/myMessages/" + email }],
+    result: { value: !!present },
+  }];
+}
+
 const CASES = [
   // ── '관심 주제 빠지기' 스위치가 실제로 저장되는가 ──
   testCase(
@@ -292,6 +301,27 @@ const CASES = [
     read("myMessages", MEMBER, "list"), ADMIN),
   testCase("내 글에는 클라이언트가 쓰지 못한다", "DENY",
     write(`myMessages/${MEMBER}`, { items: [] }, MEMBER), IN),
+
+  // ── 내 글 조각(parts): 머리 문서와 같은 사람만, 머리 문서가 있을 때만 (2026-11-11) ──
+  //
+  // 하위 컬렉션은 부모 match 를 물려받지 않는다 — 규칙에 따로 적지 않으면 catch-all
+  // 이 막아 큰 사람의 글이 화면에서 반쯤 사라진다. 반대로 너무 열면 남의 조각이 읽힌다.
+  testCase("내 글 조각은 본인이 읽는다", "ALLOW",
+    read(`myMessages/${MEMBER}/parts/001`, MEMBER), IN.concat(headMock(MEMBER, true))),
+  testCase("머리 문서가 지워졌으면 남은 조각도 못 읽는다", "DENY",
+    read(`myMessages/${MEMBER}/parts/001`, MEMBER), IN.concat(headMock(MEMBER, false))),
+  testCase("남의 글 조각은 못 읽는다", "DENY",
+    read(`myMessages/${OTHER}/parts/001`, MEMBER), IN.concat(headMock(OTHER, true))),
+  testCase("관리자도 남의 글 조각은 못 읽는다", "DENY",
+    read(`myMessages/${OTHER}/parts/001`, MEMBER), ADMIN.concat(headMock(OTHER, true))),
+  testCase("명부에 없으면 내 글 조각이어도 못 읽는다", "DENY",
+    read(`myMessages/${OUTSIDER}/parts/001`, OUTSIDER),
+    mocks(OUTSIDER, false).concat(headMock(OUTSIDER, true))),
+  testCase("내 글 조각 목록은 본인도 훑지 못한다", "DENY",
+    read(`myMessages/${MEMBER}/parts`, MEMBER, "list"), IN.concat(headMock(MEMBER, true))),
+  testCase("내 글 조각에는 클라이언트가 쓰지 못한다", "DENY",
+    write(`myMessages/${MEMBER}/parts/001`, { items: [] }, MEMBER),
+    IN.concat(headMock(MEMBER, true))),
 
   // ── 운영 설정: 관리자만 ──
   //

@@ -199,8 +199,13 @@ def prune_knowledge(knowledge: dict, messages: list[dict], exclusions: dict) -> 
 #                   화면(boot.js)은 컬렉션 전체를 이어 붙인다. 총량이 커지는 것은
 #                   더 이상 고장이 아니다. 남는 위험은 하나 — **항목 하나**가 문서
 #                   한 장보다 큰 경우. 그것만 검사한다.
-#   나눌 수 없는 것  meta/archive · graph/nodes · graph/edges · digests/{분류} ·
-#                   myMessages/{이메일} — 화면이 문서 하나를 이름으로 읽는다.
+#                   myMessages(사람별 '내 글')도 2026-11-11 부터 여기 든다 — 가장 큰
+#                   사람이 366KB 로 한도의 절반을 넘었다. 사람마다 머리 문서
+#                   myMessages/{이메일}(첫 조각 + 조각 수 parts + 지문 fp)과
+#                   myMessages/{이메일}/parts/{001…} 로 나눈다(upload_firestore.js
+#                   mineDocsFor). 대부분은 1조각이라 읽기가 1회 그대로다.
+#   나눌 수 없는 것  meta/archive · graph/nodes · graph/edges · digests/{분류}
+#                   — 화면이 문서 하나를 이름으로 읽는다.
 #                   DOC_LIMIT 를 넘으면 검사가 막고, WARN_LIMIT(80%) 를 넘으면
 #                   발행 로그에 미리 적는다. 하루 몇 KB 씩 크는 것들이라 80% 에서
 #                   말하면 터지기 몇 주 전이다.
@@ -213,8 +218,10 @@ WARN_LIMIT = int(DOC_LIMIT * 0.8)   # 발행 로그가 미리 말하는 선
 # 업로더가 나눠 담을 때 자르는 크기(upload_firestore.js CHUNK_BYTES 와 같은 값).
 CHUNK_BYTES = 600 * 1024
 # 나눠 담는 컬렉션이 이 문서 수를 넘으면 검사가 막는다. 문서 수가 곧 모두의 첫
-# 화면 읽기 수라, 조용히 늘게 두지 않는다.
+# 화면 읽기 수라, 조용히 늘게 두지 않는다. '내 글' 은 사람마다 센다(그 사람의 읽기 수).
 CHUNK_DOCS_MAX = 6
+# 머리 문서에 함께 실리는 판 지문의 자리(upload_firestore.js docHash — 16자).
+_FP_PLACEHOLDER = "0" * 16
 
 
 def _nbytes(obj) -> int:
@@ -261,12 +268,16 @@ def chunk_items(items: list, cap: int = CHUNK_BYTES) -> list[list]:
     return docs
 
 
-def plan_documents(payload: dict) -> list[dict]:
+def plan_documents(payload: dict, mine_cap: int = CHUNK_BYTES) -> list[dict]:
     """발행본이 Firestore 에 어떤 문서로 올라가는지 — 이름·바이트·나눠 담는지.
 
     upload_firestore.js 의 main() 과 같은 모양이어야 한다. 그쪽이 컬렉션을 하나
     더 나누거나 합치면 여기도 따라 고친다 — 그래야 검사와 경고가 실제를 본다.
     (명부 members 는 멤버의 첫 화면 읽기가 아니고 문서마다 작아서 세지 않는다.)
+
+    '내 글' 은 사람마다 나눈다(mineDocsFor). 머리 문서의 id 는 이메일, 조각은
+    "{이메일}/parts/{001}" 이고 둘 다 collection 은 "myMessages", owner 가 그 사람이다.
+    mine_cap 은 검증용이다 — 작은 상한을 줘서 실데이터로 조각이 나뉘는지 본다.
     """
     docs: list[dict] = []
 
@@ -288,8 +299,21 @@ def plan_documents(payload: dict) -> list[dict]:
         one("digests", cat, obj)
     one("graph", "nodes", {"items": payload["graph"]["nodes"]})
     one("graph", "edges", {"items": payload["graph"]["edges"]})
+    nicknames_of = {m["email"]: m.get("nicknames") or []
+                    for m in payload.get("members") or []}
     for email, items in payload["my_messages"].items():
-        one("myMessages", email, {"items": items})
+        parts = chunk_items(items, mine_cap)
+        for i, part in enumerate(parts):
+            if i == 0:
+                doc_id = email
+                body = {"items": part, "nicknames": nicknames_of.get(email, []),
+                        "parts": len(parts), "fp": _FP_PLACEHOLDER}
+            else:
+                doc_id = "%s/parts/%03d" % (email, i)
+                body = {"items": part, "fp": _FP_PLACEHOLDER}
+            docs.append({"collection": "myMessages", "id": doc_id, "owner": email,
+                         "bytes": _nbytes(body), "chunked": True,
+                         "largest_item": max((_nbytes(it) for it in part), default=0)})
     return docs
 
 
@@ -300,20 +324,23 @@ def size_warnings(docs: list[dict]) -> list[str]:
     CHUNK_BYTES 의 80% 에 닿을 때와 문서 수가 상한에 다가갈 때 말한다.
     """
     out: list[str] = []
-    per_coll: dict[str, list[dict]] = {}
+    # '내 글' 은 사람마다 따로 센다 — 45명분을 한 컬렉션으로 세면 문서 수 상한에 바로
+    # 걸린다. 경고 문구에 이메일은 적지 않는다(밤 로그가 매일 쌓인다).
+    per_coll: dict[tuple, list[dict]] = {}
     for d in docs:
-        per_coll.setdefault(d["collection"], []).append(d)
-    for coll, ds in per_coll.items():
+        per_coll.setdefault((d["collection"], d.get("owner")), []).append(d)
+    for (coll, owner), ds in per_coll.items():
+        label = "'내 글' 한 사람분" if owner else coll
         if ds[0]["chunked"]:
             biggest = max(d["largest_item"] for d in ds)
             if biggest > CHUNK_BYTES * 0.8:
                 out.append("%s 의 항목 하나가 %dKB — 문서 한 장(%dKB)의 80%% 를 넘었습니다. "
                            "나눠 담아도 그 항목은 안 들어가게 됩니다."
-                           % (coll, biggest // 1024, CHUNK_BYTES // 1024))
+                           % (label, biggest // 1024, CHUNK_BYTES // 1024))
             if len(ds) >= CHUNK_DOCS_MAX - 1:
                 out.append("%s 가 %d문서로 갈라집니다 — 상한 %d 에 가깝습니다. "
                            "CHUNK_BYTES 나 상한을 다시 보세요."
-                           % (coll, len(ds), CHUNK_DOCS_MAX))
+                           % (label, len(ds), CHUNK_DOCS_MAX))
             continue
         for d in ds:
             if d["bytes"] > WARN_LIMIT:
@@ -740,17 +767,22 @@ def main() -> None:
     for coll in ("threads", "aiReports", "media"):
         ds = [d for d in docs if d["collection"] == coll]
         summary.append("%s %dKB→%d문서" % (coll, sum(d["bytes"] for d in ds) // 1024, len(ds)))
-    mine = [d for d in docs if d["collection"] == "myMessages"]
+    mine: dict[str, list[dict]] = {}
+    for d in docs:
+        if d["collection"] == "myMessages":
+            mine.setdefault(d["owner"], []).append(d)
     if mine:
-        summary.append("내 글 %d명분(최대 %dKB)"
-                       % (len(mine), max(d["bytes"] for d in mine) // 1024))
+        summary.append("내 글 %d명분(최대 %dKB, 최대 %d조각)"
+                       % (len(mine), max(sum(d["bytes"] for d in ds) for ds in mine.values()) // 1024,
+                          max(len(ds) for ds in mine.values())))
     print("문서 %d개: %s" % (len(docs), " · ".join(summary)))
     size_warns = size_warnings(docs)
     for w in size_warns:
         print("[주의] " + w)
     # run_daily.ps1 이 읽는 표식 — 문서가 한도의 80% 를 넘으면 관리 탭 사유 줄로
     # 올린다(2026-11-11). 로그에만 있던 경고라, 사람이 보기 전에 한도에 닿아 그 밤
-    # 발행이 검사에서 멈출 수 있었다(가장 큰 '내 글' 문서가 이미 한도의 절반쯤이다).
+    # 발행이 검사에서 멈출 수 있었다(가장 큰 '내 글' 문서가 한도의 절반쯤이었다 —
+    # 같은 날 '내 글' 도 나눠 담게 바꿨다).
     print("SIZE_WARN=%d" % len(size_warns))
     hidden_shots = sum(m.get("pii_hidden") or 0 for m in payload["media"])
     if hidden_shots:

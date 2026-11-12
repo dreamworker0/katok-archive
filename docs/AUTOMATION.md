@@ -743,8 +743,8 @@ python -m scripts.count_unsorted
   (`scripts/notify.js`)로 올린다. 조용한 날(발행 건너뜀)에도 올린다.
   처음 돌린 날 결과: 자동 수집 이후 놓친 것 0건. 그 전 '원본 없음' 41건은 따지지 않는다.
 - 문서 크기. Firestore 문서는 1MiB 가 한도다. 목록으로 늘어나는 것(threads ·
-  aiReports · media)은 업로더가 크기로 나눠 담고, 나눌 수 없는 것(meta · graph ·
-  digests · myMessages)은 발행 로그와 검사가 80% 에서 미리 말한다
+  aiReports · media, 그리고 2026-11-11 부터 사람별 myMessages)은 업로더가 크기로 나눠
+  담고, 나눌 수 없는 것(meta · graph · digests)은 발행 로그와 검사가 80% 에서 미리 말한다
   (`build_firestore_payload.plan_documents`). 그 경고가 뜨면 나눠 담을 길을 정할
   때다 — 2026-09-01 밤은 그 경고가 없어서 터진 뒤에 알았다.
 # 보고서 문맥 연결 감사

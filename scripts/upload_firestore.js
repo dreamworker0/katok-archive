@@ -242,6 +242,60 @@ function chunkDocs(items, maxBytes) {
   return docs.map((items, i) => ({ id: String(i).padStart(3, "0"), items }));
 }
 
+/* ---------- '내 글' 나눠 담기 (2026-11-11) ---------- */
+
+/** '내 글' 을 머리 문서와 조각 문서로 나눈다.
+ *
+ *  왜: 한 사람분을 문서 한 장(myMessages/{이메일})에 담았는데, 가장 많이 쓴 사람이
+ *  366KB 였다(2026-11-11). 검사 한도(700KB)에 닿으면 그 밤 발행이 멈춘다. 글은
+ *  줄지 않으므로 threads 처럼 크기로 나눠 담는다.
+ *
+ *  모양
+ *    myMessages/{이메일}              머리 — 첫 조각 items + parts(조각 수) + fp(판 지문)
+ *                                     + nicknames(아래 mineDocs 주석)
+ *    myMessages/{이메일}/parts/001…   나머지 조각 — items + fp
+ *
+ *  머리에 첫 조각을 그대로 싣는 까닭: 대부분은 1조각이라 **읽기가 1회 그대로**다.
+ *  조각이 하나뿐인 사람은 parts 문서가 아예 없다.
+ *
+ *  fp 는 이 사람 글 전체와 표시명의 지문이다. 화면은 머리와 조각의 fp 가 같을 때만
+ *  이어 붙인다 — 적재가 조각을 먼저 쓰고 머리를 나중에 쓰므로, 그 사이에 들어온
+ *  사람은 옛 머리와 새 조각을 섞어 볼 수 있다. 어긋나면 잠깐 뒤 다시 읽는다.
+ *  표시명을 지문에 넣는 이유: 연결을 고치면 guards 가 머리와 조각을 다 지운다. 글
+ *  목록이 그대로여도 지문이 바뀌어야 대장이 조각을 다시 쓴다.
+ *
+ *  조각의 대장 id 는 "{이메일}/parts/{001}" 이다 — collection("myMessages").doc(그 id)
+ *  가 그대로 하위 컬렉션 문서를 가리킨다.
+ */
+function mineDocsFor(mine, members, cap) {
+  const nicknamesOf = new Map((members || []).map((m) => [m.email, m.nicknames || []]));
+  const heads = [];
+  const parts = [];
+  for (const email of Object.keys(mine)) {
+    const items = mine[email];
+    const nicknames = nicknamesOf.get(email) || [];
+    const chunks = chunkDocs(items, cap);
+    const fp = docHash({ items, nicknames });
+    heads.push({ id: email, items: chunks[0].items, nicknames, parts: chunks.length, fp });
+    chunks.slice(1).forEach((c) => parts.push({ id: `${email}/parts/${c.id}`, items: c.items, fp }));
+  }
+  return { heads, parts };
+}
+
+/** 전량 모드에서 원격의 '내 글' 조각 id 를 모두 찾는다.
+ *
+ *  하위 컬렉션은 컬렉션 목록(select)에 나오지 않는다. listDocuments 는 머리 문서가
+ *  지워졌어도 조각이 남은 자리(빈 부모)까지 돌려주므로, 머리 없이 남은 조각도 찾는다. */
+async function listMineParts(db) {
+  const ids = [];
+  const heads = await db.collection("myMessages").listDocuments();
+  for (const h of heads) {
+    const ps = await h.collection("parts").listDocuments();
+    ps.forEach((p) => ids.push(`${h.id}/parts/${p.id}`));
+  }
+  return ids;
+}
+
 /* ---------- 발행 순서 ---------- */
 
 /** 컬렉션을 어떤 차례로 쓸지 정한다. **meta 가 마지막인 것이 이 함수의 요점이다.**
@@ -280,6 +334,11 @@ function publishPlan(p) {
     { name: "aiReports", docs: p.aiDocs },
     // 예전 media/all 문서도 마찬가지로 지워진다.
     { name: "media", docs: p.mediaDocs },
+    // '내 글' 조각을 머리보다 **먼저** 쓴다 — meta 와 같은 까닭이다. 머리가 새 조각
+    // 수·지문을 가리키는 순간 그 조각들이 이미 있어야 한다. 대장 이름은 따로(조각만의
+    // 해시 목록), 실제 자리는 myMessages/{이메일}/parts/{001} 이다.
+    { name: "myMessagesParts", collection: "myMessages", docs: p.mineParts || [],
+      listIds: listMineParts },
     { name: "myMessages", docs: p.mineDocs },
     // chunks 는 더 이상 발행하지 않는다. 예전 적재분을 지운다.
     { name: "chunks", docs: [] },
@@ -337,20 +396,46 @@ function planWrites(prev, docs) {
  *  full 이면 전부 쓰고, 대장에 없는 구문서까지 찾으려고 원격 목록을 한 번 읽는다.
  *  평소에는 대장이 지난 id 를 알고 있으므로 그 읽기(원문이면 1,500회)를 건너뛴다.
  */
+// 배치 한 번에 실어 보낼 바이트 상한. Firestore 요청 하나는 10MiB 가 한도다 —
+// 문서 수(BATCH_LIMIT)만 세면 600KB 짜리 조각 열여섯 장이 한 배치에 실려 터진다.
+const BATCH_BYTES = 8 * 1024 * 1024;
+
+/** 쓸 문서를 배치로 묶는다 — 문서 수와 바이트를 함께 센다. */
+function writeBatches(writes, maxDocs, maxBytes) {
+  const out = [];
+  let cur = [], size = 0;
+  for (const d of writes) {
+    const n = Buffer.byteLength(JSON.stringify(d), "utf8");
+    if (cur.length && (cur.length >= maxDocs || size + n > maxBytes)) {
+      out.push(cur);
+      cur = [];
+      size = 0;
+    }
+    cur.push(d);
+    size += n;
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+
+/** opts.collection — 실제 Firestore 컬렉션(기본은 name). 대장 이름과 자리가 다른
+ *  경우('내 글' 조각: 대장 myMessagesParts, 자리 myMessages/{이메일}/parts)에 쓴다.
+ *  opts.listIds — 전량 모드에서 원격 id 를 찾는 함수(기본은 컬렉션 select). */
 async function syncCollection(db, name, docs, opts) {
   const o = opts || {};
+  const coll = o.collection || name;
   const prev = o.full ? null : (o.prev || null);
   const plan = planWrites(prev, docs);
   let written = 0;
 
-  for (let i = 0; i < plan.writes.length; i += BATCH_LIMIT) {
+  for (const group of writeBatches(plan.writes, BATCH_LIMIT, BATCH_BYTES)) {
     const batch = db.batch();
-    for (const d of plan.writes.slice(i, i + BATCH_LIMIT)) {
+    for (const d of group) {
       const { id, ...data } = d;
-      batch.set(db.collection(name).doc(id), data);
+      batch.set(db.collection(coll).doc(id), data);
     }
     await batch.commit();
-    written += Math.min(BATCH_LIMIT, plan.writes.length - i);
+    written += group.length;
     process.stdout.write(`  ${name}: ${written}/${plan.writes.length}\r`);
   }
 
@@ -358,12 +443,14 @@ async function syncCollection(db, name, docs, opts) {
   if (prev === null) {
     // 대장을 믿을 수 없는 상황 — 원격을 훑어 페이로드에 없는 문서를 찾는다
     const ids = new Set(docs.map((d) => d.id));
-    const existing = await db.collection(name).select().get();
-    existing.docs.forEach((d) => { if (!ids.has(d.id) && stale.indexOf(d.id) === -1) stale.push(d.id); });
+    const existing = o.listIds
+      ? await o.listIds(db)
+      : (await db.collection(coll).select().get()).docs.map((d) => d.id);
+    existing.forEach((id) => { if (!ids.has(id) && stale.indexOf(id) === -1) stale.push(id); });
   }
   for (let i = 0; i < stale.length; i += BATCH_LIMIT) {
     const batch = db.batch();
-    stale.slice(i, i + BATCH_LIMIT).forEach((id) => batch.delete(db.collection(name).doc(id)));
+    stale.slice(i, i + BATCH_LIMIT).forEach((id) => batch.delete(db.collection(coll).doc(id)));
     await batch.commit();
   }
 
@@ -569,11 +656,10 @@ async function main() {
    * 다음 발행이 다시 쓴다. 이 표시명은 items 를 모을 때 쓴 바로 그 목록이다
    * (둘 다 config/members.json 거울에서 나온다). 화면은 items 만 읽으므로
    * 손댈 것이 없다.
+   *
+   * 한 사람분이 문서 한 장을 넘으면 조각으로 나눈다(2026-11-11, mineDocsFor).
    */
-  const nicknamesOf = new Map(members.map((m) => [m.email, m.nicknames || []]));
-  const mineDocs = Object.keys(mine).map((email) => ({
-    id: email, items: mine[email], nicknames: nicknamesOf.get(email) || [],
-  }));
+  const { heads: mineDocs, parts: mineParts } = mineDocsFor(mine, members);
   /* 이번 실행이 전량인지 먼저 정한다 — 계획 출력에도 그대로 쓴다. */
   const prevState = loadState(STATE_PATH);
   const needFull = FORCE_FULL || !prevState || staleState(prevState, Date.now(), FULL_EVERY_DAYS);
@@ -588,7 +674,9 @@ async function main() {
   console.log(`  meta 1 / threads ${threadDocs.length}문서 (${threads.length}건) / aiReports ${aiDocs.length}문서 (${aiReports.length}편) / media ${mediaDocs.length}문서 (${media.length}건)`);
   console.log(`  digests ${digestDocs.length} / graph 2`);
   console.log(`  members ${members.length}명 — 적재하지 않음 (Firestore 가 주인)`);
-  console.log(`  myMessages ${mineDocs.length}명분 (본인만 읽음)`);
+  const mineMaxParts = mineDocs.reduce((m, d) => Math.max(m, d.parts), 0);
+  console.log(`  myMessages ${mineDocs.length}명분 (본인만 읽음)` +
+    (mineParts.length ? ` + 조각 ${mineParts.length}장 (가장 큰 사람 ${mineMaxParts}조각)` : " — 모두 1조각"));
   console.log("  messagesSource 적재하지 않음 — 원문은 이 PC 에만 둔다 (남은 것은 지운다)");
   console.log(`  → 멤버가 전체를 읽을 때: ${docCount + 1}회 읽기`);
   console.log(`  이미지 ${images.length}장 (Storage, 지연 로딩)`);
@@ -603,6 +691,7 @@ async function main() {
       planWrites(prevState.collections.aiReports, aiDocs).writes.length +
       planWrites(prevState.collections.media, mediaDocs).writes.length +
       planWrites(prevState.collections.myMessages, mineDocs).writes.length +
+      planWrites(prevState.collections.myMessagesParts, mineParts).writes.length +
       planWrites(prevState.collections.digests, digestDocs).writes.length;
     console.log(`  방식: 변경분만 (대장 ${prevState.updated_at || "?"} 기준) — ` +
       `meta 1 + 그래프 최대 2 + 바뀐 문서 ${changed}건`);
@@ -628,9 +717,10 @@ async function main() {
   console.log("\nFirestore 적재" + (needFull ? ` — 전량 (${fullWhy})` : " — 변경분만"));
   const prev = (name) => (prevState && prevState.collections[name]) || null;
   const nextState = { state_version: STATE_VERSION, project: PROJECT_ID, collections: {} };
-  const sync = async (name, docs) => {
-    nextState.collections[name] = await syncCollection(db, name, docs,
-      { full: needFull, prev: prev(name) });
+  const sync = async (step) => {
+    nextState.collections[step.name] = await syncCollection(db, step.name, step.docs,
+      { full: needFull, prev: prev(step.name), collection: step.collection,
+        listIds: step.listIds });
   };
 
   /* 발행 순서 (2026-09-05 고침)
@@ -644,11 +734,11 @@ async function main() {
    * publishPlan 의 긴 주석을 함께 볼 것.
    */
   const { before, activate } = splitPlan(publishPlan({
-    meta, threadDocs, aiDocs, mediaDocs, mineDocs, digestDocs, graph,
+    meta, threadDocs, aiDocs, mediaDocs, mineDocs, mineParts, digestDocs, graph,
     now: new Date().toISOString(),
   }));
 
-  for (const step of before) await sync(step.name, step.docs);
+  for (const step of before) await sync(step);
 
   let pruneLater = null;
   if (!SKIP_IMAGES) {
@@ -685,7 +775,7 @@ async function main() {
 
   // ── 새 판을 켠다 ──
   console.log("발행 전환 (meta)");
-  await sync(activate.name, activate.docs);
+  await sync(activate);
 
   if (pruneLater) {
     console.log("Storage 정리 (지난 판에서 빠진 것)");
@@ -709,6 +799,7 @@ async function main() {
 
 module.exports = { stableStringify, docHash, planWrites, planUploads, loadState, staleState,
                    syncCollection, cacheHashWarning, publishPlan, splitPlan,
+                   chunkDocs, mineDocsFor, listMineParts, writeBatches, CHUNK_BYTES,
                    looksLikeNetwork, CRED_RETRY_WAITS_MS,
                    STATE_VERSION, STATE_PATH };
 

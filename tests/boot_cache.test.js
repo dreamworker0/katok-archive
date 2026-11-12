@@ -78,8 +78,8 @@ function fakeFirestore(data, reads, onRead) {
   // 바뀐 값이 이미 읽은 스냅샷에도 비쳐, 발행이 지나간 것을 알아채지 못한다.
   const snapOf = (id, d) => ({ id, exists: d !== undefined,
     data: () => (d === undefined ? d : structuredClone(d)) });
-  return {
-    collection(name) {
+  // 하위 컬렉션('내 글' 조각)은 "myMessages/{이메일}/parts" 라는 이름으로 센다.
+  function collection(name) {
       return {
         get() {
           reads[name] = (reads[name] || 0) + 1;
@@ -96,11 +96,12 @@ function fakeFirestore(data, reads, onRead) {
             },
             set: () => Promise.resolve(), delete: () => Promise.resolve(),
             onSnapshot: () => () => {},
+            collection: (sub) => collection(name + "/" + id + "/" + sub),
           };
         },
       };
-    },
-  };
+  }
+  return { collection };
 }
 
 const USER = {
@@ -396,4 +397,81 @@ test("돌아왔을 때 발행이 바뀌었으면 새로고침을 권한다 — 5
   await new Promise((r) => setTimeout(r, 10));
   assert.equal(reads.meta, before + 2, "안내한 뒤에는 더 묻지 않는다");
   assert.equal(live.appended.length, 1);
+});
+
+/* ── '내 글' 조각 이어 붙이기 (2026-11-11) ──
+ *
+ * 한 사람분이 문서 한 장을 넘으면 머리 myMessages/{이메일} + parts/{001…} 로 나눠
+ * 담는다. 대부분은 1조각 — 읽기가 1회 그대로인지, 큰 사람은 다 이어 붙는지, 적재
+ * 도중이라 판이 섞였으면 섞인 채 보여주지 않는지 본다.
+ */
+const ME = "member@example.com";
+const msgs = (from, n) => Array.from({ length: n }, (_, i) => ({ id: "m-" + (from + i) }));
+// 다시 읽기 전 2초 기다림을 검사에서는 줄인다 — 나머지 타이머는 그대로 둔다.
+const fastRetry = (sb) => { sb.setTimeout = (f, ms) => setTimeout(f, ms === 2000 ? 1 : ms); };
+
+async function loadMineWith(mine, onRead) {
+  const data = Object.assign(archiveData("h1"), mine);
+  const { got, reads } = await visit(fakeIndexedDB(), data, onRead, fastRetry);
+  const before = { ...reads };
+  const items = await got.started.requests.loadMine().then(plain, (e) => e);
+  const delta = {};
+  Object.keys(reads).forEach((k) => {
+    const n = reads[k] - (before[k] || 0);
+    if (n) delta[k] = n;
+  });
+  return { items, delta, data };
+}
+
+test("내 글이 1조각이면 머리 문서 한 장만 읽는다", async () => {
+  const { items, delta } = await loadMineWith({
+    myMessages: { [ME]: { items: msgs(0, 3), parts: 1, fp: "f" } },
+  });
+  assert.deepEqual(items.map((m) => m.id), ["m-0", "m-1", "m-2"]);
+  assert.deepEqual(delta, { myMessages: 1 });
+});
+
+test("옛 모양(parts 없는 머리)도 그대로 읽는다", async () => {
+  const { items, delta } = await loadMineWith({ myMessages: { [ME]: { items: msgs(0, 2) } } });
+  assert.equal(items.length, 2);
+  assert.deepEqual(delta, { myMessages: 1 });
+});
+
+test("내 글이 3조각이면 머리와 조각 둘을 읽어 차례대로 이어 붙인다", async () => {
+  const { items, delta } = await loadMineWith({
+    myMessages: { [ME]: { items: msgs(0, 2), parts: 3, fp: "f" } },
+    ["myMessages/" + ME + "/parts"]: {
+      "001": { items: msgs(2, 2), fp: "f" }, "002": { items: msgs(4, 1), fp: "f" },
+    },
+  });
+  assert.deepEqual(items.map((m) => m.id), ["m-0", "m-1", "m-2", "m-3", "m-4"]);
+  assert.deepEqual(delta, { myMessages: 1, ["myMessages/" + ME + "/parts"]: 2 });
+});
+
+test("적재 도중이라 판이 섞였으면 다시 읽어 새 판을 보여준다 — 섞인 채 보여주지 않는다", async () => {
+  let fixed = false;
+  const mine = {
+    // 옛 머리(fp=old)와 이미 새로 쓰인 조각(fp=new) — 머리가 아직 안 바뀐 순간
+    myMessages: { [ME]: { items: msgs(0, 1), parts: 2, fp: "old" } },
+    ["myMessages/" + ME + "/parts"]: { "001": { items: msgs(100, 1), fp: "new" } },
+  };
+  const res = await loadMineWith(mine, (name) => {
+    // 조각을 한 번 읽고 나면 적재가 머리까지 마친다
+    if (name.endsWith("/parts") && !fixed) {
+      fixed = true;
+      mine.myMessages[ME] = { items: msgs(50, 1), parts: 2, fp: "new" };
+    }
+  });
+  assert.ok(Array.isArray(res.items), String(res.items));
+  assert.deepEqual(res.items.map((m) => m.id), ["m-50", "m-100"]);
+  assert.equal(res.delta.myMessages, 2, "머리부터 다시 읽었다");
+});
+
+test("끝내 판이 맞지 않으면 섞인 목록 대신 오류를 낸다", async () => {
+  const { items } = await loadMineWith({
+    myMessages: { [ME]: { items: msgs(0, 1), parts: 2, fp: "old" } },
+    ["myMessages/" + ME + "/parts"]: {},            // 조각이 아직(또는 이미) 없다
+  });
+  assert.ok(items instanceof Error || (items && items.message), "오류여야 한다");
+  assert.match(String(items.message), /다시 열어/);
 });

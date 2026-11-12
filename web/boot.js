@@ -473,11 +473,50 @@
     var stamp = function () { return firebase.firestore.FieldValue.serverTimestamp(); };
 
     return {
-      /** 내가 쓴 글 원문. 사람별로 한 문서라 읽기 1회다. */
+      /** 내가 쓴 글 원문.
+       *
+       *  머리 문서 myMessages/{이메일} 에 첫 조각이 들어 있다. 한 사람분이 문서 한 장을
+       *  넘으면(2026-11-11 부터) 나머지가 parts/{001…} 에 있고, 머리의 parts 가 조각
+       *  수다. 대부분은 1조각이라 읽기가 여전히 1회다.
+       *
+       *  적재는 조각을 먼저, 머리를 나중에 쓴다. 그 사이에 들어오면 옛 머리와 새 조각이
+       *  섞일 수 있어 지문(fp)이 모두 같을 때만 이어 붙인다. 어긋나면 잠깐 뒤 머리부터
+       *  다시 읽는다 — 섞인 목록을 보여주면 지울 글을 잘못 고를 수 있다. */
       loadMine: function () {
-        return db.collection("myMessages").doc(email).get().then(function (d) {
-          return d.exists ? (d.data().items || []) : [];
-        });
+        var head = db.collection("myMessages").doc(email);
+        function once() {
+          return head.get().then(function (d) {
+            if (!d.exists) return [];
+            var h = d.data() || {};
+            var items = (h.items || []).slice();
+            var n = h.parts || 1;
+            if (n <= 1) return items;
+            var gets = [];
+            for (var i = 1; i < n; i++) {
+              gets.push(head.collection("parts").doc(("00" + i).slice(-3)).get());
+            }
+            return Promise.all(gets).then(function (snaps) {
+              for (var j = 0; j < snaps.length; j++) {
+                var p = snaps[j].exists ? snaps[j].data() : null;
+                if (!p || p.fp !== h.fp) return null;     // 판이 섞였다 — 다시 읽는다
+                items = items.concat(p.items || []);
+              }
+              return items;
+            });
+          });
+        }
+        function attempt(left) {
+          return once().then(function (items) {
+            if (items) return items;
+            if (!left) {
+              throw new Error("내 글을 끝까지 불러오지 못했습니다 — 마침 새 판을 올리는 중일 수 " +
+                              "있습니다. 잠시 뒤 다시 열어 주세요.");
+            }
+            return new Promise(function (r) { setTimeout(r, 2000); })
+              .then(function () { return attempt(left - 1); });
+          });
+        }
+        return attempt(3);
       },
       load: function () {
         return Promise.all([prefs.get(), dels.get()]).then(function (r) {

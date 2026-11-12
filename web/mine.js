@@ -46,7 +46,8 @@
       return u.nickname ? [u.nickname] : [];
     }
 
-    /** 내가 쓴 글 원문. 발행본에는 없고 본인 문서(myMessages/{이메일})에서 따로 받는다. */
+    /** 내가 쓴 글 원문. 발행본에는 없고 본인 문서(myMessages/{이메일})에서 따로 받는다.
+     *  많이 쓴 사람은 조각(parts)으로 나뉘어 있고, boot.js loadMine 이 이어 붙여 준다. */
     function myMessages() {
       return (state.mine && state.mine.items) || [];
     }

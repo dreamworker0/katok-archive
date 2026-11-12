@@ -22,7 +22,9 @@ function fakeDb(seed) {
   let rev = 0;
   const log = { attempts: 0, commits: 0, conflicts: 0 };
 
-  const split = (key) => [key.slice(0, key.indexOf("/")), key.slice(key.indexOf("/") + 1)];
+  // 마지막 '/' 에서 가른다 — 하위 컬렉션 문서("myMessages/a@x.com/parts/001")의
+  // 컬렉션은 "myMessages/a@x.com/parts" 다. 이메일에는 '/' 가 없다.
+  const split = (key) => [key.slice(0, key.lastIndexOf("/")), key.slice(key.lastIndexOf("/") + 1)];
 
   function put(key, data) {
     rev += 1;
@@ -38,7 +40,7 @@ function fakeDb(seed) {
 
   const snapOf = (key) => {
     const e = docs.get(key);
-    return { id: split(key)[1], exists: !!e,
+    return { id: split(key)[1], exists: !!e, ref: docRef(split(key)[0], split(key)[1]),
              data: () => (e ? structuredClone(e.data) : undefined) };
   };
 
@@ -52,6 +54,21 @@ function fakeDb(seed) {
     return { size: out.length, docs: out, empty: !out.length };
   }
 
+  function docRef(col, id) {
+    return { __col: col, __id: id, __key: col + "/" + id,
+             collection: (sub) => colRef(col + "/" + id + "/" + sub) };
+  }
+  function colRef(name) {
+    const c = {
+      __col: name,
+      doc: (id) => docRef(name, id),
+      where: (field, op, value) => ({ __col: name, __where: [field, op, value] }),
+      get: async () => queryGet({ __col: name }),
+    };
+    c.select = () => c;            // 이름만 받는 질의 — 가짜는 같은 것을 돌려준다
+    return c;
+  }
+
   const db = {
     __log: log,
     __interleave: null,           // 트랜잭션 첫 읽기 뒤에 끼어드는 다른 관리자
@@ -62,12 +79,14 @@ function fakeDb(seed) {
     __admins: () => [...docs.entries()]
       .filter(([k, e]) => split(k)[0] === "members" && e.data.role === "admin")
       .map(([k]) => split(k)[1]).sort(),
-    collection(name) {
+    collection(name) { return colRef(name); },
+    /** 트랜잭션 밖의 일괄 쓰기 — 트랜잭션 상한을 넘은 조각을 지울 때 쓴다. */
+    batch() {
+      const ops = [];
       return {
-        __col: name,
-        doc: (id) => ({ __col: name, __id: id, __key: name + "/" + id }),
-        where: (field, op, value) => ({ __col: name, __where: [field, op, value] }),
-        get: async () => queryGet({ __col: name }),
+        delete: (ref) => ops.push(ref),
+        commit: async () => { log.batchDeletes = (log.batchDeletes || 0) + ops.length;
+                              ops.forEach((ref) => drop(ref.__key)); },
       };
     },
     async runTransaction(fn) {
@@ -115,6 +134,9 @@ function fakeDb(seed) {
           put(ref.__key, Object.assign({}, prev, data));
         });
         log.commits += 1;
+        // 진짜 Firestore 는 트랜잭션 하나에 쓰기 500건이 한도다 — 넘으면 통째로 실패한다
+        if (writes.length > 500) throw new Error("트랜잭션 쓰기 500건 초과: " + writes.length);
+        log.maxTxWrites = Math.max(log.maxTxWrites || 0, writes.length);
         return result;
       }
       throw new Error("트랜잭션이 너무 많이 충돌했습니다");
@@ -437,6 +459,81 @@ test("탈퇴하면 본인 원문 묶음(myMessages)도 그 자리에서 지운�
   await guards.removeMember(db, "eul@x.com", {});
   assert.equal(db.__data("myMessages/eul@x.com"), null,
     "다음 밤 적재까지 기다리지 않는다");
+});
+
+/* ══════ ⑥ 나눠 담은 '내 글' 조각 (2026-11-11) ══════
+ *
+ * 한 사람분이 문서 한 장을 넘으면 myMessages/{이메일}/parts/{001…} 로 나눠 담는다.
+ * 머리만 지우면 조각에 원문이 남는다(규칙이 머리 없는 조각은 못 읽게 하지만, 남겨
+ * 두지 않는다).
+ */
+const partsOf = (db, email) => [...db.__docs.keys()]
+  .filter((k) => k.startsWith("myMessages/" + email + "/parts/")).sort();
+
+test("연결을 고치면 '내 글' 조각까지 지운다", async () => {
+  const db = fakeDb({
+    "members/eul@x.com": member("user", ["엉뚱한사람"]),
+    "myMessages/eul@x.com": { items: [{ id: "m-1" }], parts: 3, fp: "f" },
+    "myMessages/eul@x.com/parts/001": { items: [{ id: "m-2", text: "남의 글" }], fp: "f" },
+    "myMessages/eul@x.com/parts/002": { items: [{ id: "m-3" }], fp: "f" },
+    "myMessages/byung@x.com/parts/001": { items: [{ id: "m-9" }], fp: "g" },
+  });
+  await guards.setMemberNicknames(db,
+    { email: "eul@x.com", nicknames: ["제이름"] }, "gap@x.com", NOW);
+  assert.equal(db.__data("myMessages/eul@x.com"), null);
+  assert.deepEqual(partsOf(db, "eul@x.com"), [], "조각에 남의 원문이 남으면 안 된다");
+  assert.deepEqual(partsOf(db, "byung@x.com"), ["myMessages/byung@x.com/parts/001"],
+    "남의 조각은 건드리지 않는다");
+});
+
+test("연결이 그대로면 조각도 그대로다", async () => {
+  const db = fakeDb({
+    "members/eul@x.com": member("user", ["가"]),
+    "myMessages/eul@x.com": { items: [], parts: 2, fp: "f" },
+    "myMessages/eul@x.com/parts/001": { items: [{ id: "m-2" }], fp: "f" },
+  });
+  await guards.setMemberNicknames(db,
+    { email: "eul@x.com", nicknames: ["가"] }, "gap@x.com", NOW);
+  assert.deepEqual(partsOf(db, "eul@x.com"), ["myMessages/eul@x.com/parts/001"]);
+});
+
+test("탈퇴하면 '내 글' 조각까지 그 자리에서 지운다", async () => {
+  const db = fakeDb({
+    "members/gap@x.com": member("admin"),
+    "members/eul@x.com": member("user"),
+    "myMessages/eul@x.com": { items: [{ id: "m-1" }], parts: 2, fp: "f" },
+    "myMessages/eul@x.com/parts/001": { items: [{ id: "m-2", text: "내 글" }], fp: "f" },
+  });
+  await guards.removeMember(db, "eul@x.com", {});
+  assert.equal(db.__data("myMessages/eul@x.com"), null);
+  assert.deepEqual(partsOf(db, "eul@x.com"), []);
+  assert.equal(db.__log.batchDeletes || 0, 0, "몇 장뿐이면 전부 한 트랜잭션에서 지운다");
+});
+
+test("머리 없이 조각만 남아 있어도 탈퇴 때 지운다", async () => {
+  const db = fakeDb({
+    "members/gap@x.com": member("admin"),
+    "members/eul@x.com": member("user"),
+    "myMessages/eul@x.com/parts/001": { items: [{ id: "m-2" }], fp: "f" },
+  });
+  await guards.removeMember(db, "eul@x.com", {});
+  assert.deepEqual(partsOf(db, "eul@x.com"), []);
+});
+
+test("조각이 트랜잭션 한도를 넘으면 나머지는 커밋 뒤에 지운다 — 탈퇴가 막히지 않는다", async () => {
+  const seed = {
+    "members/gap@x.com": member("admin"),
+    "members/eul@x.com": member("user"),
+    "myMessages/eul@x.com": { items: [], parts: 601, fp: "f" },
+  };
+  for (let i = 1; i <= 600; i++) {
+    seed["myMessages/eul@x.com/parts/" + String(i).padStart(3, "0")] = { items: [], fp: "f" };
+  }
+  const db = fakeDb(seed);
+  await guards.removeMember(db, "eul@x.com", {});
+  assert.deepEqual(partsOf(db, "eul@x.com"), []);
+  assert.ok(db.__log.maxTxWrites <= 500, "트랜잭션 쓰기 " + db.__log.maxTxWrites + "건");
+  assert.equal(db.__log.batchDeletes, 600 - guards.MINE_PARTS_IN_TX);
 });
 
 test("지우는 사이 표시명이 바뀌었으면 멈춘다 — 박아둔 이름이 낡았다", async () => {

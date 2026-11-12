@@ -205,10 +205,14 @@ test("발행 계획: meta 가 마지막이다 — 새 판은 내용이 다 올�
   assert.equal(plan.filter((s) => s.name === "meta").length, 1);
   // 화면이 읽는 것이 전부 meta 앞에 있어야 한다
   const names = plan.map((s) => s.name);
-  ["threads", "aiReports", "media", "digests", "graph", "myMessages", "messagesSource"]
+  ["threads", "aiReports", "media", "digests", "graph", "myMessages", "myMessagesParts",
+   "messagesSource"]
     .forEach((n) => assert.ok(names.indexOf(n) !== -1 && names.indexOf(n) < names.indexOf("meta"),
       n + " 은 meta 보다 먼저 써야 한다"));
   assert.equal(names.indexOf("members"), -1, "members 는 Firestore 가 주인이다");
+  // '내 글' 조각은 머리보다 먼저 — 머리가 가리키는 순간 조각이 이미 있어야 한다
+  assert.ok(names.indexOf("myMessagesParts") < names.indexOf("myMessages"),
+    "조각을 머리보다 먼저 써야 한다");
   // 원문 전체는 클라우드에 두지 않는다 — 빈 목록이라 예전 적재분을 지운다 (2026-10-08).
   assert.deepEqual(plan.find((s) => s.name === "messagesSource").docs, [],
     "messagesSource 에 원문이 실렸다");
@@ -309,4 +313,118 @@ test("연결이 바뀌면 글 목록이 그대로여도 '내 글' 문서를 다�
   // 연결도 글도 그대로면 다시 쓰지 않는다 — 증분 적재의 값어치는 지킨다
   const third = up.planWrites(second.next, [after]);
   assert.equal(third.writes.length, 0);
+});
+
+/* ── '내 글' 나눠 담기 (2026-11-11) ──
+ *
+ * 한 사람분이 문서 한 장(600KB)을 넘으면 머리 myMessages/{이메일} + 조각
+ * myMessages/{이메일}/parts/{001…} 로 나눈다. 대부분은 1조각이라 조각 문서가 없다.
+ */
+const many = (n, len) => Array.from({ length: n },
+  (_, i) => ({ id: "m-" + String(i).padStart(4, "0"), text: "가".repeat(len) }));
+
+test("mineDocsFor: 작은 사람은 머리 한 장뿐이다 — 읽기 1회 그대로", () => {
+  const { heads, parts } = up.mineDocsFor({ "a@x.com": many(3, 10) },
+    [{ email: "a@x.com", nicknames: ["가"] }]);
+  assert.equal(heads.length, 1);
+  assert.equal(parts.length, 0);
+  assert.equal(heads[0].parts, 1);
+  assert.equal(heads[0].items.length, 3);
+  assert.deepEqual(heads[0].nicknames, ["가"]);
+});
+
+test("mineDocsFor: 큰 사람은 조각으로 나뉘고, 이어 붙이면 원래 순서 그대로다", () => {
+  const items = many(50, 100);                 // 하나 ≈ 330 바이트 → 4KB 상한이면 여러 장
+  const { heads, parts } = up.mineDocsFor({ "a@x.com": items, "b@x.com": many(1, 5) },
+    [], 4096);
+  const head = heads.find((h) => h.id === "a@x.com");
+  assert.ok(head.parts >= 3, "조각 " + head.parts);
+  const mine = parts.filter((p) => p.id.startsWith("a@x.com/parts/"));
+  assert.equal(mine.length, head.parts - 1);
+  assert.deepEqual(mine.map((p) => p.id.split("/").pop()),
+    mine.map((_, i) => String(i + 1).padStart(3, "0")), "조각 id 는 001 부터 차례로");
+  mine.forEach((p) => assert.equal(p.fp, head.fp, "조각과 머리의 지문이 같다"));
+  const joined = head.items.concat(...mine.map((p) => p.items));
+  assert.deepEqual(joined, items);
+  [head, ...mine].forEach((d) => assert.ok(
+    Buffer.byteLength(JSON.stringify({ items: d.items }), "utf8") <= 4096 + 2));
+  assert.equal(heads.find((h) => h.id === "b@x.com").parts, 1);
+});
+
+test("mineDocsFor: 표시명이 바뀌면 지문이 바뀐다 — 지워진 조각을 다시 쓰게", () => {
+  const items = many(30, 100);
+  const a = up.mineDocsFor({ "a@x.com": items }, [{ email: "a@x.com", nicknames: ["옛"] }], 4096);
+  const b = up.mineDocsFor({ "a@x.com": items }, [{ email: "a@x.com", nicknames: ["새"] }], 4096);
+  assert.notEqual(a.heads[0].fp, b.heads[0].fp);
+  const first = up.planWrites(null, a.parts);
+  assert.equal(up.planWrites(first.next, b.parts).writes.length, a.parts.length,
+    "글이 그대로여도 조각을 다시 쓴다(guards 가 지웠을 수 있다)");
+});
+
+/** 화면(web/boot.js loadMine)과 같은 판단 — 머리를 읽고, 조각의 지문이 다 같을 때만
+ *  이어 붙인다. 어긋나면 null(다시 읽을 것). */
+function readMine(store, email) {
+  const head = store.get("myMessages/" + email);
+  if (!head) return [];
+  const out = (head.items || []).slice();
+  for (let i = 1; i < (head.parts || 1); i++) {
+    const p = store.get("myMessages/" + email + "/parts/" + String(i).padStart(3, "0"));
+    if (!p || p.fp !== head.fp) return null;
+    out.push(...p.items);
+  }
+  return out;
+}
+
+test("적재 도중 어느 순간에 읽어도 '내 글' 이 섞여 보이지 않는다", quiet(async () => {
+  const cases = [
+    [many(40, 100), many(55, 100)],            // 늘었다 (3조각 → 4조각쯤)
+    [many(55, 100), many(20, 100)],            // 줄었다 (조각이 사라진다)
+    [many(40, 100), many(2, 10)],              // 1조각이 되었다
+  ];
+  for (const [oldItems, newItems] of cases) {
+    const db = fakeDb();
+    const state = {};
+    const run = async (items, full) => {
+      const { heads, parts } = up.mineDocsFor({ "a@x.com": items }, [], 4096);
+      const seen = [];
+      for (const s of up.publishPlan({ ...payloadOf("x"), mineDocs: heads, mineParts: parts })) {
+        state[s.name] = await up.syncCollection(db, s.name, s.docs,
+          { full, prev: state[s.name], collection: s.collection, listIds: async () => [] });
+        seen.push(readMine(db.store, "a@x.com"));
+      }
+      return seen;
+    };
+    await run(oldItems, true);
+    assert.deepEqual(readMine(db.store, "a@x.com"), oldItems);
+    const seen = await run(newItems, false);
+    seen.forEach((got, i) => {
+      if (got === null) return;                 // 어긋남을 알아챘다 → 화면이 다시 읽는다
+      assert.ok(JSON.stringify(got) === JSON.stringify(oldItems) ||
+                JSON.stringify(got) === JSON.stringify(newItems),
+        i + "번째 단계 뒤: 옛것과 새것이 섞였다");
+    });
+    assert.deepEqual(seen[seen.length - 1], newItems, "끝나면 새것이다");
+    const leftovers = [...db.store.keys()].filter((k) => k.includes("/parts/"));
+    const want = up.mineDocsFor({ "a@x.com": newItems }, [], 4096).parts.length;
+    assert.equal(leftovers.length, want, "옛 조각이 남지 않는다");
+  }
+}));
+
+test("전량 모드는 대장에 없는 '내 글' 조각도 찾아 지운다", quiet(async () => {
+  const db = fakeDb([["myMessages/a@x.com/parts/007", { items: [] }]]);
+  await up.syncCollection(db, "myMessagesParts", [], {
+    full: true, collection: "myMessages",
+    listIds: async () => ["a@x.com/parts/007"],
+  });
+  assert.deepEqual(db.log.deletes, ["myMessages/a@x.com/parts/007"]);
+  assert.equal(db.log.selects, 0, "하위 컬렉션은 select 가 아니라 listIds 로 찾는다");
+}));
+
+test("writeBatches: 문서 수와 바이트를 함께 센다 — 요청 10MiB 한도", () => {
+  const big = { id: "x", s: "a".repeat(1000) };
+  const groups = up.writeBatches(Array(10).fill(big), 450, 3000);
+  assert.ok(groups.length >= 4, "바이트로 나뉘어야 한다: " + groups.length);
+  assert.equal(groups.flat().length, 10);
+  assert.equal(up.writeBatches(Array(5).fill({ id: "y" }), 2, 1e9).length, 3, "문서 수로도 나뉜다");
+  assert.deepEqual(up.writeBatches([], 450, 1000), []);
 });
