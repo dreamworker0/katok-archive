@@ -138,7 +138,16 @@ def apply(topics: dict, todo: dict) -> tuple[dict, list[str], list[str]]:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--apply", action="store_true", help="실제로 고친다(기본은 보여주기만)")
+    ap.add_argument("--pending", action="store_true",
+                    help="다시 써야 할 보고서가 지금 몇 편 남았는지만 센다(REWRITE_PENDING=)")
     args = ap.parse_args()
+
+    # 밤 갱신이 경고 숫자를 **합치기·다시 쓰기 뒤에** 세려고 부른다(2026-11-13).
+    # --apply 직후 숫자는 그날 밤 합쳐져 바로 다시 쓰인 주제까지 세어 1~2편 많았다.
+    if args.pending:
+        pending = load_applied().get("rewrite") or []      # 파일이 없으면 {} → 0편
+        print(f"REWRITE_PENDING={len(pending)}")
+        return 0
 
     topics = read_json(TOPICS)
     if not REPLIES.exists():

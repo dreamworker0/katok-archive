@@ -535,19 +535,34 @@ $ErrorActionPreference = 'Continue'
 try {
     $applyOut = & { python -m scripts.apply_replies --apply } 2>&1
     $applyCode = $LASTEXITCODE
-    $rewritePending = 0
     foreach ($l in $applyOut) {
-        if ($l -match '^REWRITE_PENDING=(\d+)$') { $rewritePending = [int]$Matches[1]; continue }
+        # 남은 편수는 여기서 올리지 않는다 — 아래 합치기가 목록을 바꾸므로 그 뒤에
+        # 센다(Add-RewritePendingWarn). 여기 숫자는 그날 밤 합쳐져 바로 다시 쓰인
+        # 주제까지 세어 1~2편 많았다(2026-11-13).
+        if ($l -match '^REWRITE_PENDING=(\d+)$') { continue }
         Say "    $l"
     }
     Test-StepExit '답장 관계 반영' $applyCode
-    # 다시 써야 할 보고서가 남아 있으면 사람이 보는 자리에 올린다. 목록은 밤마다
-    # 쌓이고(apply_replies), 손으로 --rewrite-ids 를 돌려야 비워진다.
-    if ($rewritePending -gt 0) {
-        Add-StepWarn "다시 써야 할 보고서 $rewritePending 편(output/replies-applied.json)"
-    }
 }
 finally { $ErrorActionPreference = $prevEap }
+
+# 다시 써야 할 보고서가 남아 있으면 사람이 보는 자리에 올린다. 목록은 밤마다
+# 쌓이고(apply_replies), --rewrite-ids 로 다시 쓰면 빠진다. 같은 날 합치기(5a-2)가
+# 사라진 주제를 남는 주제로 바꾸고 그 자리에서 다시 쓰므로 **그 뒤에** 센다.
+function Add-RewritePendingWarn {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $n = 0
+        foreach ($l in (& { python -m scripts.apply_replies --pending } 2>&1)) {
+            if ("$l" -match '^REWRITE_PENDING=(\d+)$') { $n = [int]$Matches[1] }
+        }
+        if ($n -gt 0) {
+            Add-StepWarn "다시 써야 할 보고서 $n 편(output/replies-applied.json)"
+        }
+    }
+    finally { $ErrorActionPreference = $prevEap }
+}
 
 # 5a-2) 같은 날 한 대화가 둘로 갈린 주제 합치기 — 실패해도 갱신을 멈추지 않는다
 #
@@ -594,6 +609,7 @@ try {
 }
 catch { Say "같은 날 주제 합치기가 실패했습니다 — 없이 계속합니다: $_" 'WARN' }
 finally { $ErrorActionPreference = $prevEap }
+Add-RewritePendingWarn
 
 # 5a-3) 삭제·제외된 글이 든 주제의 보고서를 남은 글로 다시 쓴다 (2026-11-11)
 #

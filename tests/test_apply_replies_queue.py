@@ -107,6 +107,42 @@ class MergeThreadsCallsItTests(unittest.TestCase):
             self.assertEqual(read_json(applied)["rewrite"], ["t-730", "t-2"])
 
 
+class PendingCountTests(unittest.TestCase):
+    """경고 숫자는 합치기·다시 쓰기 **뒤에** 센다 (2026-11-13)."""
+
+    def _pending(self, path):
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with mock.patch.object(ar, "APPLIED", path), \
+             mock.patch.object(sys, "argv", ["apply_replies", "--pending"]), \
+             contextlib.redirect_stdout(buf):
+            self.assertEqual(ar.main(), 0)
+        return buf.getvalue().strip()
+
+    def test_pending_only_counts_and_touches_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "replies-applied.json"
+            write_json(p, {"rewrite": ["t-1", "t-2"]})
+            before = p.read_bytes()
+            self.assertEqual(self._pending(p), "REWRITE_PENDING=2")
+            self.assertEqual(p.read_bytes(), before)
+
+    def test_no_file_counts_zero(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self._pending(Path(d) / "none.json"), "REWRITE_PENDING=0")
+
+    def test_runner_counts_after_the_merge_step(self):
+        daily = (ROOT / "scripts" / "run_daily.ps1").read_text(encoding="utf-8")
+        merge = daily.index("python -m scripts.merge_threads --apply")
+        call = daily.index("\nAdd-RewritePendingWarn")
+        self.assertLess(merge, call)
+        # 답장 반영 단계에서는 더 이상 경고를 올리지 않는다.
+        apply_step = daily[daily.index("python -m scripts.apply_replies --apply"):merge]
+        func = apply_step.index("function Add-RewritePendingWarn")
+        self.assertNotIn("Add-StepWarn", apply_step[:func])
+
+
 class RunnerSurfacesItTests(unittest.TestCase):
     def test_runner_reads_the_marker_and_warns(self):
         daily = (ROOT / "scripts" / "run_daily.ps1").read_text(encoding="utf-8")
