@@ -287,7 +287,16 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); border
   font-size: 13px; cursor: pointer; }
 .thread-line:hover { color: var(--accent); }
 .thread-line .tl-date { color: var(--ink-faint); font-size: 11px; white-space: nowrap; }
-.thread-line .tl-n { color: var(--ink-faint); font-size: 11px; margin-left: auto; }
+.thread-line .tl-n { color: var(--ink-faint); font-size: 11px; margin-left: auto; white-space: nowrap; }
+/* 좁은 화면: 날짜에 시각이 붙어 길어지자(2026-11-13) 한 줄에 셋을 두면 제목이
+   두세 줄로 접혔다. 제목·글 수를 첫 줄에, 날짜(보조 분류는 원래 분류 배지)를
+   제목 아래 둘째 줄에 둔다. */
+@media (max-width: 760px) {
+  .thread-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; row-gap: 1px; }
+  .thread-line b { grid-column: 1; grid-row: 1; }
+  .thread-line .tl-n { grid-column: 2; grid-row: 1; }
+  .thread-line .tl-date, .thread-line .tl-home { grid-column: 1; grid-row: 2; justify-self: start; }
+}
 /* 보조 분류로 걸린 주제 — 소속 주제와 눈으로 구별되게 연하게, 원래 분류를 배지로 */
 .thread-line.also b { font-weight: 600; color: var(--ink-soft); }
 .thread-line.also .tl-home { font-size: 10.5px; padding: 1px 7px; border-radius: 999px;

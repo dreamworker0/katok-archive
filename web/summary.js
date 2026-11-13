@@ -231,7 +231,11 @@
           String(b.start_date || "").localeCompare(String(a.start_date || ""));
       });
       function tl(t) {
-        var range = t.start_date === t.end_date ? t.start_date : t.start_date + " ~ " + t.end_date;
+        // 요지의 주제 목록에는 시각이 없다 — 전체 주제에서 찾아 붙인다(2026-11-13).
+        // 못 찾으면 날짜만 보인다.
+        var full = ctx.data().THREAD_BY_ID[t.id] || t;
+        var range = ctx.whenRange({ start_date: t.start_date, end_date: t.end_date,
+                                    start_time: full.start_time, end_time: full.end_time });
         return '<div class="thread-line" role="link" tabindex="0" data-start="t-' + esc(t.id) + '"><b>' + esc(t.title) +
           '</b><span class="tl-date">' + esc(range) + '</span><span class="tl-n">💬 ' + t.count + "</span></div>";
       }

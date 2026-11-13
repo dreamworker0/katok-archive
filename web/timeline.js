@@ -62,18 +62,6 @@
       return (t.start_date || "") + " " + (t.start_time || "");
     }
 
-    /** 카드 머리의 때. 날짜만으로는 같은 날 여러 주제의 앞뒤를 못 가려 시각도
-     *  붙인다(2026-11-13 사용자 요청). 하루 안: '2026-11-12 18:17~18:19',
-     *  여러 날: '2026-11-11 23:50 ~ 2026-11-12 00:10'. 시각이 없으면 날짜만. */
-    function whenRange(t) {
-      var st = t.start_time || "", et = t.end_time || "";
-      var from = t.start_date + (st ? " " + st : "");
-      if (t.start_date === t.end_date) {
-        return et && st && et !== st ? from + "~" + et : from;
-      }
-      return from + " ~ " + t.end_date + (et ? " " + et : "");
-    }
-
     /* 글자 그대로 찾아서 하나도 없으면 말로 찾는다(web/ask.js smartSearch).
      * 검색창에 "한글 자동화 얘기 어디 있었지?" 를 치면 그 문장이 통째로 들어간
      * 주제는 없다. 추림(pick)이 걸려 있을 때는 하지 않는다 — 추린 것 안에서 찾는
@@ -701,7 +689,7 @@
       }).join("");
       var more = lk.rest.length > 6
         ? '<div class="tc-more">링크 ' + (lk.rest.length - 6) + "개 더</div>" : "";
-      var range = whenRange(t);
+      var range = ctx.whenRange(t);     // 날짜+시각, app.js
 
       return '<article class="tcard" id="t-' + esc(t.id) + '" style="--c:' + col + '">' +
         '<div class="tc-head">' +

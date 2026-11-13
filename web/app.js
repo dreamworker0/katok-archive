@@ -57,6 +57,19 @@
   };
   function colorFor(cid) { return CAT_COLORS[cid] || "#3b6fe0"; }
 
+  /** 주제의 때. 날짜만으로는 같은 날 여러 주제의 앞뒤를 못 가려 시각도 붙인다
+   *  (2026-11-13 사용자 요청). 타임라인 카드와 주제별 지식 목록이 함께 쓴다.
+   *  하루 안: '2026-11-12 18:17~18:19', 여러 날: '2026-11-11 23:50 ~ 2026-11-12 00:10'.
+   *  시각이 없으면 날짜만. */
+  function whenRange(t) {
+    var st = t.start_time || "", et = t.end_time || "";
+    var from = t.start_date + (st ? " " + st : "");
+    if (t.start_date === t.end_date) {
+      return et && st && et !== st ? from + "~" + et : from;
+    }
+    return from + " ~ " + t.end_date + (et ? " " + et : "");
+  }
+
   var el = {
     app: document.getElementById("appRoot"),
     view: document.getElementById("view"),
@@ -130,6 +143,7 @@
   // ---------- 주제별 지식 → web/summary.js ----------
   var SUMMARY = window.ArchiveSummary({
     data: appData, state: state, el: el, esc: esc, colorFor: colorFor, emptyState: emptyState,
+    whenRange: whenRange,
     tagFold: tagFold, jumpToTimeline: jumpToTimeline, pickThreads: pickThreads,
     runSearch: runSearch, setView: setView, writeHash: writeHash,
     stats: function () { return STATSV; },
@@ -152,6 +166,7 @@
   // ---------- 타임라인(주제 카드) → web/timeline.js ----------
   var TIMELINE = window.ArchiveTimeline({
     data: appData, state: state, el: el, esc: esc, colorFor: colorFor, emptyState: emptyState,
+    whenRange: whenRange,
     confirmAction: confirmAction, fmtDate: fmtDate, highlightText: highlightText, hostOf: hostOf,
     linkifyHosts: linkifyHosts, renderMarkdown: renderMarkdown, splitLinks: splitLinks,
     bindFiles: bindFiles, bindImages: bindImages, bindKeywordChips: bindKeywordChips,
