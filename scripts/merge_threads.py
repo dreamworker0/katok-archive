@@ -178,6 +178,11 @@ def fix_side_files(todo: list[dict], bak: Path) -> None:
 
     write_json(RETIRED, sorted(set(load_retired()) | set(to_keep)))
 
+    # 답장 반영이 남긴 '다시 써야 할 보고서' 목록에서도 사라진 주제를 남는 주제로
+    # 바꾼다 — 안 그러면 없는 주제가 목록에 영영 남는다(2026-11-13, t-731).
+    from scripts.apply_replies import retire_rewrites
+    retire_rewrites(to_keep)
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])

@@ -51,6 +51,62 @@ class ClearTests(unittest.TestCase):
         self.assertFalse(self.path.exists())
 
 
+class RetireTests(unittest.TestCase):
+    """합치기로 사라진 주제가 목록에 영영 남지 않는다 (2026-11-13, t-731 → t-730)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / "replies-applied.json"
+        p = mock.patch.object(ar, "APPLIED", self.path)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_merged_away_id_becomes_the_kept_one(self):
+        write_json(self.path, {"rewrite": ["t-1", "t-731", "t-9"], "removed_threads": ["t-5"]})
+        self.assertEqual(ar.retire_rewrites({"t-731": "t-730"}), 3)
+        data = read_json(self.path)
+        self.assertEqual(data["rewrite"], ["t-1", "t-730", "t-9"])
+        self.assertEqual(data["removed_threads"], ["t-5"])     # 다른 칸은 그대로
+
+    def test_kept_id_already_listed_is_not_doubled(self):
+        write_json(self.path, {"rewrite": ["t-730", "t-731"]})
+        self.assertEqual(ar.retire_rewrites({"t-731": "t-730"}), 1)
+        self.assertEqual(read_json(self.path)["rewrite"], ["t-730"])
+
+    def test_then_rewriting_the_kept_one_empties_the_list(self):
+        write_json(self.path, {"rewrite": ["t-731"]})
+        ar.retire_rewrites({"t-731": "t-730"})
+        self.assertEqual(ar.clear_rewrites(["t-730"]), 0)
+
+    def test_no_file_is_left_alone(self):
+        self.assertEqual(ar.retire_rewrites({"t-731": "t-730"}), 0)
+        self.assertFalse(self.path.exists())
+
+
+class MergeThreadsCallsItTests(unittest.TestCase):
+    def test_fix_side_files_retires_dropped_ids(self):
+        from scripts import merge_threads as mt
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            applied = d / "replies-applied.json"
+            write_json(applied, {"rewrite": ["t-731", "t-2"]})
+            (d / "bak").mkdir()
+            patches = [mock.patch.object(ar, "APPLIED", applied)]
+            for name in ("SECONDARY", "KNOWLEDGE", "AI_SKIPS"):
+                patches.append(mock.patch.object(mt, name, d / f"{name}.json"))
+            for name in ("REPORTS", "AI_REPORTS"):
+                patches.append(mock.patch.object(mt, name, d / name))
+            patches.append(mock.patch.object(mt, "RETIRED", d / "retired.json"))
+            patches.append(mock.patch.object(mt, "load_retired", return_value=[]))
+            for p in patches:
+                p.start()
+                self.addCleanup(p.stop)
+            mt.fix_side_files([{"keep": "t-730", "drop": ["t-731"],
+                                "ids": ["t-730", "t-731"], "category": "chat"}], d / "bak")
+            self.assertEqual(read_json(applied)["rewrite"], ["t-730", "t-2"])
+
+
 class RunnerSurfacesItTests(unittest.TestCase):
     def test_runner_reads_the_marker_and_warns(self):
         daily = (ROOT / "scripts" / "run_daily.ps1").read_text(encoding="utf-8")

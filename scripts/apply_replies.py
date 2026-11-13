@@ -227,6 +227,33 @@ def merge_rewrites(prev: list[str], new: list[str], gone: list[str]) -> list[str
     return out
 
 
+def retire_rewrites(to_keep: dict[str, str]) -> int:
+    """합치기로 사라진 주제를 목록에서 남는 주제로 바꿔 적는다. 남은 편수를 돌려준다.
+
+    같은 날 주제 합치기(merge_threads)는 답장 반영보다 **뒤에** 돈다. 그래서 다시 써야
+    할 목록에 오른 주제가 그날 밤 합쳐져 사라지면, 없는 주제가 목록에 영영 남아 밤마다
+    '다시 써야 할 보고서' 경고를 띄웠다(실측 2026-11-12 밤: t-731 → t-730). 없는 주제는
+    --rewrite-ids 로 다시 쓸 수도 없으니 손으로 빼기 전엔 비지 않는다.
+
+    빼지 않고 남는 주제로 바꾸는 것은, 옮겨 온 답장이 이제 그 주제에 들어 있어서다.
+    밤 갱신은 합친 주제를 그 자리에서 다시 쓰고(clear_rewrites 로 빠진다), 손으로
+    합쳤을 때는 남는 주제가 목록에 남아 다시 쓰기를 기다린다. (2026-11-13)
+    """
+    if not APPLIED.exists():
+        return 0
+    data = load_applied()
+    old = data.get("rewrite") or []
+    new: list[str] = []
+    for tid in old:
+        tid = to_keep.get(tid, tid)
+        if tid not in new:
+            new.append(tid)
+    if new != old:
+        data["rewrite"] = new
+        write_json(APPLIED, data)
+    return len(new)
+
+
 def clear_rewrites(done: list[str]) -> int:
     """다시 쓴 주제를 목록에서 뺀다. 남은 편수를 돌려준다. 목록이 없으면 0."""
     if not APPLIED.exists():
