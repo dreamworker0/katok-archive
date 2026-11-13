@@ -619,7 +619,7 @@
         "title: " + t.title,
         "summary: " + (t.summary || ""),
         "keywords: " + (t.keywords || []).join(", "),
-        "date: " + t.start_date + (t.end_date !== t.start_date ? " ~ " + t.end_date : ""),
+        "date: " + ctx.whenRange(t),       // 카드 머리와 같은 날짜+시각(2026-11-13)
         "participants: " + (t.participants || []).join(", "),
         "messages: " + (t.count || 0),
         "---", ""].join("\n");
