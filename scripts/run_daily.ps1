@@ -21,6 +21,7 @@
   8. 테스트로 정합성 확인 (적재 전에)          unittest
   9. Firestore·Storage 적재                    upload_firestore.js
   9b. 원본 데이터 백업 (비치명적)               backup_data.py (C: 매일 · 구글 드라이브 7일마다)
+      — 어느 단계에서 멈춰 중단하는 밤에도 끝내기 전에 돈다
  10. 결과를 화면에 남기기                      report_run.js
  11. 작업 폴더 마름질(로그·스크린샷)          prune_workspace.py
 
@@ -244,9 +245,17 @@ function Invoke-Step {
             foreach ($l in $summary) { Say "    $l" }
         }
         Say "$name 실패 (exit $code) — 중단합니다." 'ERROR'
+        # 멈춰도 백업은 하고 끝낸다(2026-11-13). 실패한 밤에도 그 전 단계에서 받은
+        # 원본(대화 내보내기·서랍 첨부)은 이미 들어와 있다 — 서랍 첨부는 14일 뒤 만료라
+        # 다시 못 받는다. 실측 2026-11-11 밤: 첨부 201개를 받은 뒤 '사진 개인정보 검사'
+        # 에서 멈춰 그날 밤 백업이 통째로 빠졌다(다음 날 아침 재실행이 메웠다).
+        # Invoke-Backup 은 스스로 실패를 삼키므로 여기서 또 죽지 않는다.
+        Invoke-Backup
+        $reason = ($summary -join "`n")
+        if ($script:backupWarn) { $reason = (@($reason, "⚠ $($script:backupWarn)") | Where-Object { $_ }) -join "`n" }
         # 어느 단계에서 멈췄는지까지 남긴다. 로그를 열지 않고도 관리 탭에서 보인다.
         # 사유도 함께 — 단계 이름은 '어디서' 이고 사람의 다음 물음은 '왜' 다.
-        Report-Run -status 'failed' -step $name -code $code -reason ($summary -join "`n")
+        Report-Run -status 'failed' -step $name -code $code -reason $reason
         exit $code
     }
     , $out
