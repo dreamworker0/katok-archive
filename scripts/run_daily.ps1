@@ -401,15 +401,19 @@ $prevEap = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 try {
     $attachOut = & python -m scripts.audit_attachments 2>&1
-    $attachUrgent = 0; $attachLost = 0
+    $attachUrgent = 0; $attachLost = 0; $attachStuck = 0
     foreach ($l in $attachOut) {
         if ("$l" -match '^ATTACH_URGENT=(\d+)') { $attachUrgent = [int]$Matches[1]; continue }
+        if ("$l" -match '^ATTACH_STUCK=(\d+)') { $attachStuck = [int]$Matches[1]; continue }
         if ("$l" -match '^ATTACH_LOST=(\d+)') { $attachLost = [int]$Matches[1]; continue }
         if ("$l" -match '^WARN (.*)') { Say "    $($Matches[1])" 'WARN' } else { Say "    $l" }
     }
-    if ($attachUrgent -gt 0 -or $attachLost -gt 0) {
+    # 밀림(2026-11-15) — 만료까진 멀어도 하루 넘게 못 받았으면 서랍이 막힌 것일 수 있다.
+    # 이것 없이 13일을 조용히 보냈다(audit_attachments.py 머리말).
+    if ($attachUrgent -gt 0 -or $attachLost -gt 0 -or $attachStuck -gt 0) {
         $attachWarn = @()
         if ($attachUrgent -gt 0) { $attachWarn += "첨부 $attachUrgent 건 곧 만료(아직 못 받음)" }
+        if ($attachStuck -gt 0) { $attachWarn += "첨부 $attachStuck 건 하루 넘게 못 받음(서랍 확인)" }
         if ($attachLost -gt 0) { $attachWarn += "첨부 $attachLost 건 만료되어 잃음" }
         $attachWarn = $attachWarn -join ', '
         $script:drawerWarn = (@($script:drawerWarn, $attachWarn) | Where-Object { $_ }) -join ' · '

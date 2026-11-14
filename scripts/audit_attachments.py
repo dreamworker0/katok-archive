@@ -20,7 +20,15 @@
     서랍의 첨부는 공유일 + 14일에 만료된다(그 날짜에 닿으면 이미 못 받는다).
       - **잃음**     만료일이 지났는데 없다. 되돌릴 수 없다.
       - **곧 만료**  만료까지 URGENT_DAYS 일 이하인데 아직 없다. 지금 손쓰면 된다.
-      - 대기       그보다 여유가 있다. 다음 밤에 받으면 된다.
+      - **밀림**     여유는 있지만 공유한 지 STUCK_DAYS 일이 넘도록 아직 없다. 그 사이
+                   밤 갱신이 한 번 이상 돌았는데 못 받았으니, 서랍 쪽이 고장 났을 수 있다.
+      - 대기       그보다 여유가 있고 아직 하루가 안 됐다. 다음 밤에 받으면 된다.
+
+    '밀림' 은 2026-11-15 에 더했다. 카톡 26.9.2(11-02)부터 파일 저장 전에 '친구가 아닌
+    사용자가 보낸 파일…다운로드 받으시겠습니까?' 창이 떴고 서랍 스크립트가 그 창을 닫아
+    (=취소) 13일 동안 파일이 하나도 안 받아졌다. 그동안 이 대조는 만료 사흘 전 것만
+    외쳤으므로 나머지는 '대기 9' 로 조용했고, 사용자가 '오늘 올린 파일 왜 안 받았냐' 고
+    물어서야 드러났다. 받을 수 있는데 하루 넘게 못 받았다면 그날 바로 알린다.
     자동 수집을 시작하기 전(COLLECT_SINCE)의 것은 따지지 않는다 — 그때 빠진 41건은
     서랍이 생기기 전 일이라 다시 받을 길이 없고, 매일 같은 목록을 읽게 할 뿐이다.
 
@@ -54,6 +62,11 @@ EXPIRE_DAYS = 14
 # 만료까지 이만큼 남았는데 아직 없으면 사람을 부른다. 밤마다 한 번 도니 사흘이면
 # 자동으로 세 번 더 시도한 뒤이고, 사람이 손쓸 틈도 남는다.
 URGENT_DAYS = 3
+# 공유한 지 이만큼 지났는데 아직 없으면 '밀림'. 1 = 공유한 날 밤 갱신이 돌고 나서도
+# 다음 날 밤까지 없다는 뜻이다(밤 23:40 뒤에 올라온 것도 그다음 밤엔 받는다).
+STUCK_DAYS = 1
+# 밀림 목록을 줄로 풀 때의 상한 — 사진이 수십 장 밀리면 나머지는 숫자로만.
+STUCK_LINES = 10
 # 만료된 지 이만큼 안의 것만 '새로 잃음' 으로 외친다.
 FRESH_LOSS_DAYS = 3
 
@@ -87,6 +100,7 @@ def audit(messages: list[dict], missing_files: set[str], images: list[dict],
         rows.append({
             "id": m["id"], "kind": kind, "name": name, "date": m["date"],
             "expires": expires.isoformat(), "days_left": (expires - today).days,
+            "age": (today - _day(m["date"])).days,
         })
 
     lost = [r for r in rows if r["days_left"] <= 0]
@@ -94,6 +108,7 @@ def audit(messages: list[dict], missing_files: set[str], images: list[dict],
         "lost": lost,
         "fresh_lost": [r for r in lost if -r["days_left"] < FRESH_LOSS_DAYS],
         "urgent": [r for r in rows if 0 < r["days_left"] <= URGENT_DAYS],
+        "stuck": [r for r in rows if r["days_left"] > URGENT_DAYS and r["age"] >= STUCK_DAYS],
         "waiting": [r for r in rows if r["days_left"] > URGENT_DAYS],
     }
 
@@ -109,11 +124,19 @@ def report(result: dict, before: int) -> list[tuple[str, str]]:
         out.append(("WARN", "[첨부 대조] 곧 만료인데 아직 없음 — %d일 남음: %s" % (r["days_left"], _line(r))))
     for r in result["fresh_lost"]:
         out.append(("WARN", "[첨부 대조] 만료되어 잃음: " + _line(r)))
+    stuck = sorted(result["stuck"], key=lambda r: (r["date"], r["id"]))
+    for r in stuck[:STUCK_LINES]:
+        out.append(("WARN", "[첨부 대조] 받을 수 있는데 %d일째 못 받음: %s" % (r["age"], _line(r))))
+    if len(stuck) > STUCK_LINES:
+        out.append(("WARN", "[첨부 대조] 받을 수 있는데 못 받은 것 %d건 더" % (len(stuck) - STUCK_LINES)))
     if result["urgent"]:
         out.append(("WARN", "[첨부 대조] 카카오톡 '채팅방 서랍' 창이 우리 방을 보고 열려 있는지 확인하고, "
                             "급하면 서랍에서 손으로 저장하세요(받은 파일 폴더로 가면 다음 갱신이 붙입니다)."))
-    out.append(("INFO", "[첨부 대조] %s 이후 첨부: 곧 만료 %d · 대기 %d · 잃음 누계 %d건 (자동 수집 전 원본 없음 %d건은 따지지 않음)"
-                % (COLLECT_SINCE, len(result["urgent"]), len(result["waiting"]), len(result["lost"]), before)))
+    if stuck:
+        out.append(("WARN", "[첨부 대조] 서랍 수집이 막혔을 수 있습니다 — logs/kakao-drawer-*.log 의 '팝업 글자' 줄을 보세요"
+                            "(카톡이 업데이트되면 저장 전 확인 창이 바뀌곤 합니다)."))
+    out.append(("INFO", "[첨부 대조] %s 이후 첨부: 곧 만료 %d · 밀림 %d · 대기 %d · 잃음 누계 %d건 (자동 수집 전 원본 없음 %d건은 따지지 않음)"
+                % (COLLECT_SINCE, len(result["urgent"]), len(stuck), len(result["waiting"]), len(result["lost"]), before)))
     return out
 
 
@@ -134,6 +157,7 @@ def main(argv: list[str] | None = None) -> int:
     for level, line in report(result, before):
         print(("WARN " if level == "WARN" else "") + line)
     print("ATTACH_URGENT=%d" % len(result["urgent"]))
+    print("ATTACH_STUCK=%d" % len(result["stuck"]))
     print("ATTACH_LOST=%d" % len(result["fresh_lost"]))
     return 0
 

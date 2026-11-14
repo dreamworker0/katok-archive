@@ -68,6 +68,22 @@ class AuditTest(unittest.TestCase):
         r = aa.audit(msgs, {"a.pdf"}, [], TODAY)
         self.assertEqual([], r["lost"] + r["urgent"] + r["waiting"])
 
+    def test_missing_for_more_than_a_day_is_stuck(self):
+        """받을 수 있는데 하루 넘게 못 받으면 서랍이 막힌 것 — 2026-11-15 이것 없이 13일을 보냈다."""
+        r = aa.audit([file_msg("msg-1", "a.pdf", "2026-10-30")], {"a.pdf"}, [], TODAY)
+        self.assertEqual(["msg-1"], [x["id"] for x in r["stuck"]])
+        self.assertEqual(2, r["stuck"][0]["age"])
+
+    def test_shared_today_is_not_stuck_yet(self):
+        r = aa.audit([file_msg("msg-1", "a.pdf", "2026-11-01")], {"a.pdf"}, [], TODAY)
+        self.assertEqual([], r["stuck"])
+        self.assertEqual(["msg-1"], [x["id"] for x in r["waiting"]])
+
+    def test_urgent_is_not_also_stuck(self):
+        """곧 만료는 이미 따로 외친다 — 같은 것을 두 번 세지 않는다."""
+        r = aa.audit([file_msg("msg-1", "a.pdf", "2026-10-21")], {"a.pdf"}, [], TODAY)
+        self.assertEqual([], r["stuck"])
+
     def test_text_messages_are_ignored(self):
         r = aa.audit([{"id": "msg-1", "kind": "text", "text": "파일: x", "date": "2026-10-30"}],
                      {"x"}, [], TODAY)
@@ -82,6 +98,20 @@ class ReportTest(unittest.TestCase):
         self.assertTrue(any("곧 만료" in w and "a.pdf" in w for w in warns))
         self.assertTrue(any("잃음" in w and "b.pdf" in w for w in warns))
         self.assertTrue(any("서랍" in w for w in warns))
+
+    def test_stuck_is_a_warning_that_points_at_the_drawer_log(self):
+        msgs = [file_msg("msg-1", "a.pdf", "2026-10-30")]
+        lines = aa.report(aa.audit(msgs, {"a.pdf"}, [], TODAY), before=0)
+        warns = [line for level, line in lines if level == "WARN"]
+        self.assertTrue(any("2일째 못 받음" in w and "a.pdf" in w for w in warns))
+        self.assertTrue(any("kakao-drawer" in w for w in warns))
+
+    def test_many_stuck_are_capped(self):
+        msgs = [photo_msg("msg-%d" % i, "2026-10-28") for i in range(25)]
+        lines = aa.report(aa.audit(msgs, set(), [], TODAY), before=0)
+        per_item = [line for _, line in lines if "일째 못 받음" in line]
+        self.assertEqual(aa.STUCK_LINES, len(per_item))
+        self.assertTrue(any("15건 더" in line for _, line in lines))
 
     def test_quiet_day_is_one_info_line(self):
         lines = aa.report(aa.audit([], set(), [], TODAY), before=41)
@@ -107,6 +137,8 @@ class RunnerWiringTest(unittest.TestCase):
         block = block[:block.index("finally {")]
         self.assertIn("ATTACH_URGENT", block)
         self.assertIn("ATTACH_LOST", block)
+        self.assertIn("ATTACH_STUCK", block)
+        self.assertIn("$attachStuck -gt 0", block)
         self.assertIn("$script:drawerWarn", block)
         self.assertIn("scripts\\notify.js", block)
 
