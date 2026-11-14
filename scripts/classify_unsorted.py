@@ -59,7 +59,7 @@ import re
 import sys
 from pathlib import Path
 
-from scripts import jsonio, llm
+from scripts import attachment_text, jsonio, llm
 from scripts import ontology
 from scripts import tags as taglib
 
@@ -223,6 +223,9 @@ def build_prompt(msgs: list[dict], categories: list[dict],
             f"{m.get('nickname')} | {text}{extra}"
         )
     msgs_block = "\n".join(msg_lines)
+    # 첨부 파일의 글(2026-11-15). 알맹이가 파일에 있는 대화가 '파일을 공유했다' 로
+    # 끝나지 않게 — scripts/attachment_text.py 머리말.
+    attach = attachment_text.prompt_block(msgs)
 
     return f"""당신은 카카오톡 대화 아카이브의 주제 분류를 맡았습니다.
 
@@ -237,7 +240,7 @@ def build_prompt(msgs: list[dict], categories: list[dict],
 
 ## 분류할 메시지
 {msgs_block}
-
+{attach}
 ## 규칙
 - 모든 메시지가 **정확히 하나의** 스레드에 들어가야 합니다. 빠뜨리거나 중복시키지
   마세요. 목록에 없는 메시지 ID 를 만들지 마세요.
@@ -512,7 +515,9 @@ def write_report(thread_id: str, thread: dict, raw_chars: int,
     #
     # 그래서 '약간 김'이 아니라 '터무니없이 김'만 막는다. 두 문장짜리 대화에서
     # 원고지 몇 장이 나오면 그건 지어낸 것이다.
-    limit = max(400, raw_chars * 2)
+    # 첨부 글을 읽고 쓴 보고서는 대화 두 줄보다 길 수 있다 — 넘겨준 파일 글만큼 더 둔다.
+    attach_chars = attachment_text.prompt_chars(msgs or [])
+    limit = max(400, (raw_chars + attach_chars) * 2)
     if len(body) > limit:
         return f"본문이 원문에 비해 너무 깁니다 ({len(body)} > {limit})"
 
@@ -546,6 +551,10 @@ def write_report(thread_id: str, thread: dict, raw_chars: int,
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     # 원자적으로 — 다시 쓰다 끊겨도 옛 보고서가 반쯤 잘린 채 남지 않는다(2026-11-11)
     jsonio.write_text_atomic(REPORTS_DIR / f"{thread_id}.md", text)
+    # 이 보고서가 첨부 글을 읽었다고 적는다 — 밤마다 '아직 안 읽은 보고서' 를 고를 때
+    # 쓴다(attachment_text.pending_threads). 프롬프트 둘 다 prompt_block 을 넣는다.
+    if attach_chars:
+        attachment_text.mark_reported(msgs or [], thread_id)
     return None
 
 
@@ -703,6 +712,7 @@ def build_report_prompt(thread: dict, msgs: list[dict],
         lines.append(f"  {m.get('id')}{kind} | {m.get('date')} {m.get('time')} | "
                      f"{m.get('nickname')} | {text}{extra}")
     assets = asset_lines(msgs)
+    attach = attachment_text.prompt_block(msgs)
     if min_chars:
         # 분량을 말하되 '채워 넣어라'로 읽히지 않게 한다. 없는 내용을 지어내는 것보다
         # 얇은 채로 남는 편이 낫다 — 원문을 발행하지 않으니 거짓이 검증되지 않는다.
@@ -727,7 +737,7 @@ def build_report_prompt(thread: dict, msgs: list[dict],
 
 ## 대화
 {chr(10).join(lines)}
-{assets}
+{assets}{attach}
 ## 규칙
 - report 는 본문 산문. 사실만 쓰고, 대화에 없는 내용을 채우지 마세요.
 {length_rule}

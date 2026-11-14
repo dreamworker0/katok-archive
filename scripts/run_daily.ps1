@@ -428,6 +428,22 @@ try {
 catch { Say "    첨부 대조 실패(갱신은 계속합니다): $_" 'WARN' }
 finally { $ErrorActionPreference = $prevEap }
 
+# 4b-3) 첨부 파일의 글 뽑기 (2026-11-15) — 주제 분류(5) **앞**
+#
+#     보고서는 대화 글만 읽고 써서, 알맹이가 파일에 있는 대화는 '파일을 공유했다' 로
+#     끝났고 AI 검증도 확인할 주장이 없었다. 첨부 대장의 docx·pdf·hwpx·html·md 에서
+#     글을 뽑아 output/attachment-text.json 에 둔다 — 분류·보고서 프롬프트가 읽는다.
+#     같은 파일은 다시 뽑지 않아 조용한 밤엔 1초 안팎. 실패해도 갱신은 계속한다.
+#     자세한 사정은 scripts/attachment_text.py 머리말.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    foreach ($l in (& python -m scripts.attachment_text 2>&1)) { Say "    $l" }
+    if ($LASTEXITCODE -ne 0) { Say "    첨부 글 뽑기 실패(exit $LASTEXITCODE) — 보고서는 대화 글만으로 씁니다." 'WARN' }
+}
+catch { Say "    첨부 글 뽑기 실패(갱신은 계속합니다): $_" 'WARN' }
+finally { $ErrorActionPreference = $prevEap }
+
 # 4c) 답장 관계 건져오기 — 실패해도 갱신을 멈추지 않는다
 #
 #     대화 내보내기(txt)는 답장 구조를 통째로 버린다. '누구에게 답장' 머리글도,
@@ -651,6 +667,32 @@ try {
     }
 }
 catch { Say "삭제 반영 보고서 다시 쓰기가 실패했습니다 — 보류한 채 계속합니다: $_" 'WARN' }
+finally { $ErrorActionPreference = $prevEap }
+
+# 5a-4) 첨부 글을 아직 안 읽은 보고서를 다시 쓴다 (2026-11-15)
+#
+#     첨부 글(4b-3)이 생기기 전에 쓴 보고서, 또는 파일이 나중에 받아진 주제. 새로 쓰는
+#     보고서는 처음부터 첨부 글을 읽으므로 여기 오지 않는다. 최근 공유한 것부터
+#     **하룻밤 세 편**(보고서 + AI 주석 합쳐 편당 약 $0.8). 첨부 글이 1,000자 안 되는
+#     화면 시안은 다시 쓰지 않는다. AI 주석(5b-2) **앞** — 새 보고서로 주석을 쓰게.
+Say '--- 첨부를 읽고 보고서 다시 쓰기 ---'
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $attIds = ''
+    foreach ($l in (& { python -m scripts.attachment_text --pending 3 } 2>&1)) {
+        if ("$l" -match '^ATTACH_REWRITE=(.*)$') { $attIds = $Matches[1].Trim(); continue }
+        if ("$l" -match '^ATTACH_PENDING=') { continue }
+        Say "    $l"
+    }
+    if ($attIds -and -not $DryRun) {
+        foreach ($l in (& { python -m scripts.classify_unsorted --rewrite-ids $attIds } 2>&1)) { Say "    $l" }
+        Test-StepExit '첨부 읽고 보고서 다시 쓰기' $LASTEXITCODE
+        foreach ($l in (& { python -m scripts.ai_reports --ids $attIds } 2>&1)) { Say "    $l" }
+        Test-StepExit '첨부 읽고 AI 주석' $LASTEXITCODE
+    }
+}
+catch { Say "첨부 읽고 다시 쓰기가 실패했습니다 — 옛 보고서로 계속합니다: $_" 'WARN' }
 finally { $ErrorActionPreference = $prevEap }
 
 # 5b-2) AI 검증 주석 (agy 검색 전용 에이전트 + 주소 열기 + LLM 작성)
