@@ -180,7 +180,7 @@ class TheRoomIsCheckedBeforeAnythingIsReadTests(unittest.TestCase):
 
     def test_the_check_runs_before_the_tabs(self):
         check = DRAWER.index("Assert-DrawerRoom)")
-        tabs = DRAWER.index("foreach ($tab in @(")
+        tabs = DRAWER.index("foreach ($tab in $Tabs)")
         self.assertLess(check, tabs, "탭을 훑기 전에 방을 확인해야 한다")
 
     def test_a_wrong_room_stops_the_run(self):

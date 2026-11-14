@@ -77,7 +77,11 @@ param(
     # 한 탭에서 훑을 화면 수. 사진 28장이 3~4화면이라 넉넉히 둔다.
     [int]$MaxScreens = 10,
     # 서랍 창이 없어도 직접 열지 않고 중단한다(예전 동작).
-    [switch]$NoAutoOpen
+    [switch]$NoAutoOpen,
+    # 훑을 탭. 진단할 때 한 탭만 돌리려고 둔다(밤 실행은 기본값 그대로).
+    [string[]]$Tabs = @('파일', '사진/동영상'),
+    # 한 화면에서 고를 카드 수 상한. 0 = 전부. 진단용 — '파일 하나만 저장해 보기'.
+    [int]$MaxCards = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -171,6 +175,22 @@ public class DW {
             RECT r; GetWindowRect(h, out r);
             int w = r.Right - r.Left;
             if (w > 0 && w <= maxW) all.Add(h);
+            return true;
+        }, IntPtr.Zero);
+        return all;
+    }
+    // 그 프로세스가 띄운 보이는 최상위 창 전부 — 저장 뒤 무엇이 떴는지 남기려고.
+    public static List<string> WindowsOf(uint pid) {
+        var all = new List<string>();
+        EnumWindows((h, p) => {
+            if (!IsWindowVisible(h)) return true;
+            uint owner; GetWindowThreadProcessId(h, out owner);
+            if (owner != pid) return true;
+            var t = new StringBuilder(256); GetWindowText(h, t, 256);
+            var c = new StringBuilder(256); GetClassName(h, c, 256);
+            RECT r; GetWindowRect(h, out r);
+            all.Add(string.Format("0x{0:X} '{1}' class={2} {3}x{4} @{5},{6}",
+                (long)h, t.ToString(), c.ToString(), r.Right - r.Left, r.Bottom - r.Top, r.Left, r.Top));
             return true;
         }, IntPtr.Zero);
         return all;
@@ -558,6 +578,8 @@ function Wait-SaveResult { param([int]$TimeoutSec = 180, [int]$QuietSec = 10)
     $lastChange = Get-Date
     $seenPopup = $false
     $expired = $false
+    $popShot = $null
+    $confirms = 0
     while ($true) {
         $elapsed = ((Get-Date) - $t0).TotalSeconds
         $pops = [DW]::NamelessPopups([uint32]$pidOut, 700)
@@ -565,6 +587,20 @@ function Wait-SaveResult { param([int]$TimeoutSec = 180, [int]$QuietSec = 10)
         if ($pops.Count -gt 0) {
             $seenPopup = $true
             $text = Read-PopupText $pops[0]
+            $popShot = Save-PopupShot $pops[0] $popShot
+            if ($text -match '다운로드\s*받으시겠|안전하지\s*않을') {
+                # 위 Confirm-Download 참고. 누른 뒤에는 저장이 새로 시작되므로 시계를 되돌린다.
+                if ($confirms -ge 60) {
+                    Write-Log '    다운로드 확인 창이 60번 넘게 떴습니다 — 더 누르지 않습니다' 'WARN'
+                } elseif (Confirm-Download $pops[0]) {
+                    $confirms++
+                    if ($confirms -eq 1) { Write-Log "    '친구가 아닌 사용자가 보낸 파일' 확인 창 — 확인을 누릅니다" }
+                    $lastChange = Get-Date
+                    $popShot = $null
+                    Start-Sleep -Milliseconds 700
+                    continue
+                }
+            }
             # 파일 탭에서 만료된 것을 같이 고르면 '원본 파일이 만료된 일부 파일을 저장할
             # 수 없습니다' 가 뜬다(실측 2026-08-21). 고장이 아니라 예정된 일이다.
             if ($text -match '만료') { $expired = $true }
@@ -594,6 +630,11 @@ function Wait-SaveResult { param([int]$TimeoutSec = 180, [int]$QuietSec = 10)
             }
             $script:SaveUnsure++
             Write-Log ("    저장 결과를 읽지 못했습니다 — 받은 파일이 {0}초째 그대로라 끝난 것으로 봅니다" -f $QuietSec) 'WARN'
+            # 무엇을 닫는지 남긴다(2026-11-15: 카톡 26.9.2 뒤 파일 탭이 13일간 0개였는데
+            # 이 창의 글자를 버리고 닫아서 원인을 못 봤다).
+            Write-Log ("      팝업 글자: '{0}'" -f $text)
+            if ($popShot) { Write-Log ("      팝업 그림: {0}" -f $popShot) }
+            foreach ($w in [DW]::WindowsOf([uint32]$pidOut)) { Write-Log ("      카톡 창: {0}" -f $w) }
             return $false
         }
         if ($elapsed -ge $TimeoutSec) {
@@ -603,6 +644,46 @@ function Wait-SaveResult { param([int]$TimeoutSec = 180, [int]$QuietSec = 10)
         }
         Start-Sleep -Milliseconds 700
     }
+}
+
+# 카톡 26.9.2(2026-11-02 자동 업데이트)부터 파일 탭 저장을 누르면 먼저 이 창이 뜬다:
+#   '친구가 아닌 사용자가 보낸 파일은 안전하지 않을 수 있습니다. 다운로드 받으시겠습니까?
+#    [확인] [취소]'   (제목 없는 392x228, 단추는 아래 띠 왼쪽 반=확인 / 오른쪽 반=취소)
+# 수집 계정은 방 사람들과 친구가 아니라 파일마다 묻는다. 예전 코드는 이 창을 '저장 결과'
+# 로 알고 WM_CLOSE 로 닫았다 = 취소. 그래서 11-02~11-14 파일 10개가 하나도 안 받아졌다
+# (사진 탭은 묻지 않는다). 그 자리가 정말 이 창인지 확인하고 '확인' 을 누른다.
+function Confirm-Download { param([IntPtr]$h)
+    $r = New-Object DW+RECT
+    if (-not [DW]::GetWindowRect($h, [ref]$r)) { return $false }
+    $w = $r.Right - $r.Left; $ht = $r.Bottom - $r.Top
+    $sx = $r.Left + [int]($w * 0.25)
+    $sy = $r.Top + [int]($ht * 0.85)
+    $saved = New-Object DW+POINT; [void][DW]::GetCursorPos([ref]$saved)
+    [void][DW]::SetCursorPos($sx, $sy)
+    Start-Sleep -Milliseconds 220
+    if ([DW]::RootAt($sx, $sy) -ne $h) {
+        Write-Log ("    '다운로드 받으시겠습니까' 의 확인 자리({0},{1})가 그 창이 아닙니다 — 누르지 않습니다" -f $sx, $sy) 'WARN'
+        [void][DW]::SetCursorPos($saved.X, $saved.Y)
+        return $false
+    }
+    [DW]::mouse_event([DW]::LEFTDOWN, 0, 0, 0, [IntPtr]::Zero)
+    Start-Sleep -Milliseconds 60
+    [DW]::mouse_event([DW]::LEFTUP, 0, 0, 0, [IntPtr]::Zero)
+    Start-Sleep -Milliseconds 500
+    [void][DW]::SetCursorPos($saved.X, $saved.Y)
+    return $true
+}
+
+function Save-PopupShot { param([IntPtr]$h, $already)
+    <# 저장 팝업을 한 번만 그림으로 남긴다. 이미 남겼으면 그 경로를 그대로 돌려준다. #>
+    if ($already) { return $already }
+    try {
+        $bmp = [DW]::Shoot($h)
+        if ($null -eq $bmp) { return $null }
+        $path = Join-Path $ShotDir ("{0}-popup.png" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+        $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
+        return $path
+    } catch { return $null }
 }
 
 function Count-Saved {
@@ -775,7 +856,7 @@ if (-not (Assert-DrawerRoom)) {
 $totalClicked = 0
 $totalCards = 0
 try {
-    foreach ($tab in @('파일', '사진/동영상')) {
+    foreach ($tab in $Tabs) {
         # 한 탭이 넘어져도 다른 탭과 그날 갱신을 끌고 내려가지 않게 감싼다.
         #
         # 실측 2026-08-21: 저장 단계에서 한 번 예외가 나 탭 하나를 남긴 채 스크립트가
@@ -843,7 +924,9 @@ try {
                 }
 
                 $clicked = 1
-                foreach ($c in $grid.cards) {
+                $targets = @($grid.cards)
+                if ($MaxCards -gt 0) { $targets = @($targets | Select-Object -First $MaxCards) }
+                foreach ($c in $targets) {
                     # 첫 카드는 이미 선택돼 있다. 다시 누르면 해제된다.
                     if ($c.circle[0] -eq $first.circle[0] -and $c.circle[1] -eq $first.circle[1]) { continue }
                     if (Invoke-Click $c.circle[0] $c.circle[1] '카드') { $clicked++ }
