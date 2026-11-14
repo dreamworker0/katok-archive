@@ -153,9 +153,11 @@ class PromptTest(unittest.TestCase):
         self.assertEqual("", at.prompt_block([MSG], {"msg-9": entry(status="empty")}))
 
     def test_contacts_are_masked(self):
-        # (9876-5432 같은 연속 숫자는 pii 가 예시 번호로 보고 넘긴다 — 실제 모양으로 시험한다)
-        block = at.prompt_block([MSG], {"msg-9": entry(KOREAN + " 연락처 010-2345-6789")})
-        self.assertNotIn("010-2345-6789", block)
+        # 9876-5432 같은 연속 숫자는 pii 가 예시 번호로 보고 넘긴다. 실제 모양이어야 하지만
+        # 저장소에 실제 같은 번호를 두면 test_repo_is_publishable 이 막는다 — 그 검사가
+        # 허용한 합성 번호(SYNTHETIC)를 쓴다.
+        block = at.prompt_block([MSG], {"msg-9": entry(KOREAN + " 연락처 010-0000-4321")})
+        self.assertNotIn("010-0000-4321", block)
 
     def test_caps_per_file_and_total(self):
         big = "가" * 50000
